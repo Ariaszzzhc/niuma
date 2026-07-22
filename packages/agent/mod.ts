@@ -16,9 +16,18 @@ export {
   estimateRequestTokens,
   estimateTokens,
   eventsToMessages,
+  projectEvent,
   resultContentToString,
 } from "./src/context.ts";
-export { buildSummary, compactMessages } from "./src/compaction.ts";
+export {
+  buildSummary,
+  compactMessages,
+  isSummaryMessage,
+  SUMMARIZATION_PROMPT,
+  SUMMARY_PREFIX,
+  summarizeHistory,
+} from "./src/compaction.ts";
+export type { SummarizeDeps } from "./src/compaction.ts";
 export { makeToolPipeline } from "./src/tool_pipeline.ts";
 export type { MakeToolPipelineOptions } from "./src/tool_pipeline.ts";
 
