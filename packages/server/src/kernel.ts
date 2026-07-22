@@ -1,0 +1,232 @@
+import { Context, Deferred, Effect, Layer, Ref, Stream } from "effect";
+import {
+  type ApprovalRequestedData,
+  type ApprovalResolvedData,
+  type LiveEvent,
+  type RecordedEvent,
+  type SseEvent,
+  SCHEMA_VERSION,
+} from "@niuma/schema";
+import { ApprovalRegistry, makeApprovalRegistry } from "./eventBus.ts";
+import type { EventLog } from "./eventLog.ts";
+import type { Projection } from "./projection.ts";
+
+const defaultNow = (): number => Date.now();
+
+// A recorded event variant minus the fields the kernel assigns. Distributive
+// over the RecordedEvent union so each member keeps its discriminated
+// `{ type, data }` shape; without the conditional, TS collapses the
+// discriminators when Omit is applied to the union as a whole.
+type WithoutSeqTs<T> = T extends unknown ? Omit<T, "seq" | "ts"> : never;
+type AppendInput = WithoutSeqTs<RecordedEvent> & {
+  sessionId: string;
+  ts?: number;
+};
+
+export interface Kernel {
+  readonly version: string;
+  readonly append: (
+    input: AppendInput,
+  ) => Effect.Effect<RecordedEvent, never, never>;
+  readonly replay: (
+    sessionId: string,
+    fromSeq?: number,
+  ) => Stream.Stream<RecordedEvent, never, never>;
+  readonly subscribe: (
+    sessionId: string,
+    fromCursor?: number,
+  ) => Stream.Stream<SseEvent, never, never>;
+  readonly live: (event: LiveEvent) => Effect.Effect<void, never, never>;
+  readonly lastSeq: (sessionId: string) => Effect.Effect<number, never, never>;
+  readonly projection: () => Effect.Effect<Projection, never, never>;
+  readonly eventLog: () => Effect.Effect<EventLog, never, never>;
+  readonly resolveApproval: (
+    approvalId: string,
+    decision: ApprovalResolvedData,
+  ) => Effect.Effect<boolean, never, never>;
+  readonly askForApproval: (
+    sessionId: string,
+    callId: string,
+    name: string,
+    input: unknown,
+  ) => Effect.Effect<ApprovalResolvedData, never, never>;
+  readonly shutdown: () => Effect.Effect<void, never, never>;
+}
+
+export const Kernel = Context.Service<Kernel, Kernel>()(
+  "@niuma/server/Kernel",
+);
+
+const newApprovalId = (): string => {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return "ap_" +
+    Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+};
+
+export interface KernelDeps {
+  readonly eventLog: EventLog;
+  readonly projection: Projection;
+  readonly approvals?: ApprovalRegistry;
+  readonly now?: () => number;
+  readonly bus?: {
+    readonly subscribe: (
+      sessionId: string,
+      fromCursor?: number,
+    ) => Stream.Stream<SseEvent, never, never>;
+    readonly publish: (event: SseEvent) => Effect.Effect<void, never, never>;
+    readonly live: (event: LiveEvent) => Effect.Effect<void, never, never>;
+  };
+}
+
+export const makeKernel = (
+  deps: KernelDeps,
+): Effect.Effect<Kernel, never, never> =>
+  Effect.gen(function* () {
+    const now = deps.now ?? defaultNow;
+    const bus = deps.bus;
+    const registry: ApprovalRegistry = deps.approvals ??
+      (yield* makeApprovalRegistry());
+    const seqBySession = yield* Ref.make(new Map<string, number>());
+    // Track which sessions we've already hydrated from the JSONL so we only
+    // touch eventLog.lastSeq once per session per process.
+    const hydrated = yield* Ref.make(new Set<string>());
+
+    // Hydrate the in-memory seq counter for `sessionId` from the JSONL tail.
+    // Without this, a server restart would re-mint seq=1,2,… and collide with
+    // already-recorded events (silent drop in projection's onConflict-doNothing,
+    // broken SSE cursors).
+    const ensureHydrated = (
+      sessionId: string,
+    ): Effect.Effect<number, never, never> =>
+      Effect.gen(function* () {
+        const done = yield* Ref.get(hydrated);
+        if (done.has(sessionId)) {
+          return (yield* Ref.get(seqBySession)).get(sessionId) ?? 0;
+        }
+        const last = yield* Effect.promise(() =>
+          deps.eventLog.lastSeq(sessionId)
+        );
+        yield* Ref.update(seqBySession, (m) =>
+          new Map(m).set(sessionId, last)
+        );
+        yield* Ref.update(hydrated, (s) => new Set(s).add(sessionId));
+        return last;
+      });
+
+    const nextSeq = (
+      sessionId: string,
+    ): Effect.Effect<number, never, never> =>
+      Effect.gen(function* () {
+        yield* ensureHydrated(sessionId);
+        let seq = 0;
+        yield* Ref.update(seqBySession, (mm) => {
+          const m = new Map(mm);
+          const current = m.get(sessionId) ?? 0;
+          seq = current + 1;
+          m.set(sessionId, seq);
+          return m;
+        });
+        return seq;
+      });
+
+    const append: Kernel["append"] = (input) =>
+      Effect.gen(function* () {
+        const ts = input.ts ?? now();
+        const seq = yield* nextSeq(input.sessionId);
+        const event = { ...input, seq, ts } as RecordedEvent;
+        yield* Effect.promise(() => deps.eventLog.append(event));
+        yield* Effect.promise(() => deps.projection.apply(event)).pipe(
+          Effect.catchCause((cause) =>
+            Effect.sync(() => {
+              console.error("projection apply failed:", cause);
+            })
+          ),
+        );
+        const sse: SseEvent = { cursor: seq, event };
+        if (bus) yield* bus.publish(sse);
+        return event;
+      });
+
+    const replay: Kernel["replay"] = (sessionId, fromSeq = 0) =>
+      Stream.fromAsyncIterable(
+        deps.eventLog.replay(sessionId, fromSeq),
+        (e): never => {
+          throw e;
+        },
+      );
+
+    const subscribe: Kernel["subscribe"] = (sessionId, fromCursor = 0) =>
+      bus
+        ? bus.subscribe(sessionId, fromCursor)
+        : Stream.empty;
+
+    const live: Kernel["live"] = (event) =>
+      bus ? bus.live(event) : Effect.void;
+
+    const lastSeq: Kernel["lastSeq"] = (sessionId) =>
+      Effect.gen(function* () {
+        yield* ensureHydrated(sessionId);
+        const m = yield* Ref.get(seqBySession);
+        return m.get(sessionId) ?? 0;
+      });
+
+    const projection: Kernel["projection"] = () =>
+      Effect.succeed(deps.projection);
+    const eventLog: Kernel["eventLog"] = () => Effect.succeed(deps.eventLog);
+
+    const resolveApproval: Kernel["resolveApproval"] = (approvalId, decision) =>
+      registry.resolve(approvalId, decision);
+
+    const askForApproval: Kernel["askForApproval"] = (
+      sessionId,
+      callId,
+      name,
+      input,
+    ) =>
+      Effect.gen(function* () {
+        const approvalId = newApprovalId();
+        const request: ApprovalRequestedData = {
+          approvalId,
+          callId,
+          name,
+          input,
+        };
+        const deferred = yield* registry.register(request);
+        yield* append({
+          type: "approval.requested",
+          sessionId,
+          data: request,
+        });
+        const resolved = yield* Deferred.await(deferred);
+        yield* append({
+          type: "approval.resolved",
+          sessionId,
+          data: resolved,
+        });
+        return resolved;
+      });
+
+    const shutdown: Kernel["shutdown"] = () => Effect.void;
+
+    return {
+      version: SCHEMA_VERSION,
+      append,
+      replay,
+      subscribe,
+      live,
+      lastSeq,
+      projection,
+      eventLog,
+      resolveApproval,
+      askForApproval,
+      shutdown,
+    } satisfies Kernel;
+  });
+
+export const KernelLive = (
+  deps: KernelDeps,
+): Layer.Layer<Kernel, never, never> =>
+  Layer.effect(Kernel, makeKernel(deps));
+
+export { SCHEMA_VERSION };
