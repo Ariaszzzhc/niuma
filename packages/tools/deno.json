@@ -1,0 +1,10 @@
+{
+  "name": "@niuma/tools",
+  "version": "0.0.0",
+  "exports": "./mod.ts",
+  "imports": {
+    "@niuma/schema": "../schema/mod.ts",
+    "@niuma/permission": "../permission/mod.ts",
+    "@niuma/provider": "../provider/mod.ts"
+  }
+}
