@@ -1,8 +1,40 @@
+import { Effect, Stream } from "effect";
 import type { RecordedEvent } from "@niuma/schema";
-import type { Message as ProviderMessage } from "@niuma/provider";
+import type {
+  ChatRequest,
+  Message as ProviderMessage,
+  ProviderAdapter,
+  ProviderError,
+} from "@niuma/provider";
 
 const MUTATING = new Set(["write", "edit", "apply_patch"]);
 const READING = new Set(["read", "grep", "glob"]);
+
+// Adapted verbatim from codex prompts/templates/compact/prompt.md. Sent as the
+// final user message of the summarization call; instructs the model to write a
+// handoff summary for the next LLM that will resume from the compacted state.
+export const SUMMARIZATION_PROMPT =
+  `You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
+
+Include:
+- Current progress and key decisions made
+- Important context, constraints, or user preferences
+- What remains to be done (clear next steps)
+- Any critical data, examples, or references needed to continue
+
+Be concise, structured, and focused on helping the next LLM seamlessly continue the work.`;
+
+// Adapted verbatim from codex prompts/templates/compact/summary_prefix.md.
+// Prepended to the summary body (both LLM and template modes) so the bridge
+// message is recognisable by isSummaryMessage regardless of how the body was
+// produced — matches codex's single-marker design.
+export const SUMMARY_PREFIX =
+  `Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:`;
+
+// Marker for prior compaction bridge messages so callers can recognise them.
+// A bridge message is always SUMMARY_PREFIX + "\n" + body.
+export const isSummaryMessage = (text: string): boolean =>
+  text.startsWith(`${SUMMARY_PREFIX}\n`);
 
 const asRecord = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
@@ -77,4 +109,41 @@ export function compactMessages(
   const cut = userIdx[userIdx.length - keepUserTurns];
   const summary: ProviderMessage = { role: "user", content: summaryText };
   return [summary, ...messages.slice(cut)];
+}
+
+export interface SummarizeDeps {
+  readonly provider: ProviderAdapter;
+  readonly model: string;
+  readonly signal?: AbortSignal;
+}
+
+// Ask the model to write the handoff summary. The summarization request is a
+// dedicated, tool-free, system-free provider call whose message list is the
+// FULL current conversation plus one final user message (the prompt above).
+// Returns the raw model text, or null when the stream yielded no text. Errors
+// propagate — the caller falls back to the template (compactNow in loop.ts).
+// Sampled WITHOUT the sample() retry wrapper (one shot; transport withRetry
+// still applies to the initial fetch) so worst-case latency stays bounded.
+export function summarizeHistory(
+  deps: SummarizeDeps,
+  messages: ReadonlyArray<ProviderMessage>,
+): Effect.Effect<string | null, ProviderError> {
+  const req: ChatRequest = {
+    model: deps.model,
+    messages: [...messages, { role: "user", content: SUMMARIZATION_PROMPT }],
+    tools: [],
+    ...(deps.signal ? { abort: deps.signal } : {}),
+  };
+  return Effect.gen(function* () {
+    let text = "";
+    yield* deps.provider.stream(req).pipe(
+      Stream.runForEach((ev) =>
+        Effect.sync(() => {
+          if (ev._tag === "TextDelta") text += ev.text;
+        }),
+      ),
+    );
+    const trimmed = text.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  });
 }

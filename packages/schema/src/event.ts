@@ -164,6 +164,11 @@ export type TurnAbortedEvent = Schema.Schema.Type<typeof TurnAbortedEvent>;
 
 export const CompactionPerformedData = Schema.Struct({
   summaryMessageId: Schema.optional(Schema.String),
+  // "llm" = model-generated handoff summary (the summarizer call succeeded
+  // and returned non-empty text); "template" = deterministic fallback used
+  // when the summary call failed or returned empty. Optional → old JSONL
+  // logs decode unchanged.
+  mode: Schema.optional(Schema.Literals(["llm", "template"])),
 });
 export type CompactionPerformedData = Schema.Schema.Type<
   typeof CompactionPerformedData
@@ -325,8 +330,26 @@ export const ToolProgressLive = Schema.Struct({
 });
 export type ToolProgressLive = Schema.Schema.Type<typeof ToolProgressLive>;
 
-export const LiveEvent = Schema.Union([TextDeltaLive, ToolProgressLive]);
+// Live-only reset signal: emitted before re-sampling after a mid-stream retry
+// so clients clear their streaming text buffer. Never persisted to the JSONL
+// log (no replay concerns — niuma has no client-side dedup, so we reset live).
+export const TextResetLive = Schema.Struct({
+  ...liveBase,
+  type: Schema.Literal("text.reset"),
+  data: Schema.Struct({}),
+});
+export type TextResetLive = Schema.Schema.Type<typeof TextResetLive>;
+
+export const LiveEvent = Schema.Union([
+  TextDeltaLive,
+  ToolProgressLive,
+  TextResetLive,
+]);
 export type LiveEvent = Schema.Schema.Type<typeof LiveEvent>;
 
-export const LiveEventType = Schema.Literals(["text.delta", "tool.progress"]);
+export const LiveEventType = Schema.Literals([
+  "text.delta",
+  "tool.progress",
+  "text.reset",
+]);
 export type LiveEventType = Schema.Schema.Type<typeof LiveEventType>;
