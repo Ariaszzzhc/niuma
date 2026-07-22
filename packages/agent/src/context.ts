@@ -40,6 +40,43 @@ export const resultContentToString = (content: ToolResultContent): string =>
     ? content
     : content.map((b) => b.text).join("\n");
 
+// Append the provider-message projection of a single event (when message-
+// relevant) onto `out`. Shared by eventsToMessages (full replay) and the agent
+// loop's incremental mirror (Fix D: replay once per turn, then maintain the
+// message list by mirroring each appended event). Metadata event types
+// (turn/approval/compaction/error/tool.call.requested) hit `default` and are
+// no-ops here — they carry no provider message.
+export const projectEvent = (
+  out: ProviderMessage[],
+  ev: RecordedEvent,
+): void => {
+  switch (ev.type) {
+    case "user.message": {
+      out.push({ role: "user", content: textOfParts(ev.data.parts) });
+      break;
+    }
+    case "assistant.message": {
+      const calls = toolCallsOfParts(ev.data.parts);
+      const base: ProviderMessage = {
+        role: "assistant",
+        content: textOfParts(ev.data.parts),
+      };
+      out.push(calls.length > 0 ? { ...base, toolCalls: calls } : base);
+      break;
+    }
+    case "tool.result": {
+      out.push({
+        role: "tool",
+        content: resultContentToString(ev.data.content),
+        toolCallId: ev.data.callId,
+      });
+      break;
+    }
+    default:
+      break;
+  }
+};
+
 // Replay the event log into the provider message list the model consumes.
 // user.message / assistant.message / tool.result map 1:1; everything else
 // (turn markers, approvals, compaction, errors) is orchestration metadata.
@@ -47,33 +84,7 @@ export function eventsToMessages(
   events: ReadonlyArray<RecordedEvent>,
 ): ProviderMessage[] {
   const messages: ProviderMessage[] = [];
-  for (const ev of events) {
-    switch (ev.type) {
-      case "user.message": {
-        messages.push({ role: "user", content: textOfParts(ev.data.parts) });
-        break;
-      }
-      case "assistant.message": {
-        const calls = toolCallsOfParts(ev.data.parts);
-        const base: ProviderMessage = {
-          role: "assistant",
-          content: textOfParts(ev.data.parts),
-        };
-        messages.push(calls.length > 0 ? { ...base, toolCalls: calls } : base);
-        break;
-      }
-      case "tool.result": {
-        messages.push({
-          role: "tool",
-          content: resultContentToString(ev.data.content),
-          toolCallId: ev.data.callId,
-        });
-        break;
-      }
-      default:
-        break;
-    }
-  }
+  for (const ev of events) projectEvent(messages, ev);
   return messages;
 }
 
