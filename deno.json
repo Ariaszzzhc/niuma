@@ -1,0 +1,48 @@
+{
+  "nodeModulesDir": "auto",
+  "workspace": [
+    "packages/schema",
+    "packages/provider",
+    "packages/store",
+    "packages/permission",
+    "packages/tools",
+    "packages/agent",
+    "packages/server",
+    "packages/cli"
+  ],
+  "imports": {
+    "effect": "npm:effect@^4.0.0-beta.100",
+    "effect/": "npm:/effect@^4.0.0-beta.100/",
+    "hono": "npm:hono@^4.6.0",
+    "zod": "npm:zod@^4.0.0",
+    "kysely": "npm:kysely@^0.28.0",
+    "@logtape/logtape": "npm:@logtape/logtape@^1.0.0",
+    "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/fs": "jsr:@std/fs@^1.0.0",
+    "@std/encoding": "jsr:@std/encoding@^1.0.0",
+    "@std/cli": "jsr:@std/cli@^1.0.0",
+    "@std/json": "jsr:@std/json@^1.0.0",
+    "@niuma/schema": "./packages/schema/mod.ts",
+    "@niuma/provider": "./packages/provider/mod.ts",
+    "@niuma/store": "./packages/store/mod.ts",
+    "@niuma/store/vendor/": "./packages/store/vendor/",
+    "@niuma/permission": "./packages/permission/mod.ts",
+    "@niuma/tools": "./packages/tools/mod.ts",
+    "@niuma/agent": "./packages/agent/mod.ts",
+    "@niuma/server": "./packages/server/mod.ts",
+    "@std/dotenv": "jsr:@std/dotenv@^0.225.0"
+  },
+  "tasks": {
+    "check": "deno check packages/*/mod.ts packages/cli/main.ts",
+    "cli": "deno run --allow-all --unstable-worker-options packages/cli/main.ts",
+    "test": "deno test --allow-all packages/"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "lib": [
+      "deno.window",
+      "deno.unstable",
+      "dom"
+    ]
+  }
+}
