@@ -1,0 +1,11 @@
+node_modules/
+*.dylib
+*.so
+*.dll
+.DS_Store
+.env
+.env.local
+*.log
+dist/
+build/
+target/
