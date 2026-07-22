@@ -20,3 +20,9 @@ export const withRetry = <A, R>(
   isAborted?: () => boolean,
 ): Effect.Effect<A, ProviderError, R> =>
   eff.pipe(Effect.retry(retryOptions(isAborted)));
+
+// Mid-stream retry budget for the agent loop's stream layer (codex-style layer
+// 2). This complements the transport-layer `withRetry` above, which only wraps
+// the initial fetch. Retries after the initial attempt: 4 (5 total samples).
+// Distinct from providerRetrySchedule on purpose — different base/budget.
+export const STREAM_MAX_RETRIES = 4;

@@ -27,7 +27,7 @@ export type { ProviderError } from "./errors.ts";
 export { Provider, provideAdapter } from "./contract.ts";
 export type { ProviderAdapter } from "./contract.ts";
 
-export { providerRetrySchedule, retryOptions, withRetry } from "./retry.ts";
+export { providerRetrySchedule, retryOptions, withRetry, STREAM_MAX_RETRIES } from "./retry.ts";
 
 export {
   messagesToOpenAI,

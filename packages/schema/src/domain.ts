@@ -9,6 +9,10 @@ export const StopReason = Schema.Literals([
   "tool_calls",
   "content_filter",
   "abort",
+  // Terminal provider/stream failure mid-turn (retries exhausted or fatal
+  // error). Flows into turn.completed + sessions.last_stop_reason; the column
+  // is unconstrained TEXT so no migration is needed.
+  "error",
 ]);
 export type StopReason = Schema.Schema.Type<typeof StopReason>;
 

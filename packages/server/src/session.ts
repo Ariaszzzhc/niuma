@@ -1,4 +1,5 @@
 import {
+  Cause,
   Context,
   Effect,
   Fiber,
@@ -190,12 +191,24 @@ export const makeSessionManager = (
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
+              // Failure isolation. runTurn records error.occurred for every
+              // provider-classified failure (transient retries + terminal), so
+              // reaching here means a defect/panic or interruption outside the
+              // provider path — never a typed provider error. Label retryable
+              // by inspection: a pure defect (a Die with no interrupt) is a
+              // genuine programming error → terminal; an interrupt (user or
+              // manager cancelled the turn) or any combined/unknown cause
+              // defaults to retryable so the UI does not mark the session
+              // permanently failed. (Equivalent to `!Cause.isDieType`; this
+              // effect build exposes hasDies/hasInterrupts instead.)
+              const retryable = !Cause.hasDies(cause) ||
+                Cause.hasInterrupts(cause);
               yield* kernel.append({
                 type: "error.occurred",
                 sessionId,
                 data: {
-                  message: `turn failed: ${String(cause)}`,
-                  retryable: false,
+                  message: `turn failed: ${Cause.pretty(cause)}`,
+                  retryable,
                 },
               });
             }),
