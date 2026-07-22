@@ -650,6 +650,163 @@ Deno.test("projectEvent: no-ops metadata, projects message types identically to 
 });
 
 // ---------------------------------------------------------------------------
+// Orphan tool_call pairing (synthetic `aborted` outputs)
+// ---------------------------------------------------------------------------
+
+Deno.test("orphan tool_call at end of history gets synthetic aborted output", () => {
+  const base = { seq: 0, ts: 0, sessionId: "s" };
+  // Turn interrupted between the assistant message and the tool batch:
+  // assistant carries a tool_call, no tool.result ever lands.
+  const events: RecordedEvent[] = [
+    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [{ type: "tool_call", id: "t1", name: "write", input: { path: "x" } }],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+    {
+      ...base,
+      type: "tool.call.requested",
+      data: { callId: "t1", name: "write", input: { path: "x" } },
+    },
+    { ...base, type: "turn.aborted", data: { reason: "signal" } },
+  ];
+  const messages = eventsToMessages(events);
+  assertEquals(messages.length, 3);
+  assertEquals(messages[2].role, "tool");
+  assertEquals(messages[2].toolCallId, "t1");
+  assertEquals(messages[2].content, "aborted");
+});
+
+Deno.test("orphan tool_call is closed before the next user message", () => {
+  const base = { seq: 0, ts: 0, sessionId: "s" };
+  // The scenario that broke the live serve test: approval left pending, turn
+  // never produces tool.result, then the user prompts again. The replay must
+  // close the dangling call BEFORE the user message or the API 400s.
+  const events: RecordedEvent[] = [
+    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [{ type: "tool_call", id: "t1", name: "write", input: { path: "x" } }],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+    {
+      ...base,
+      type: "approval.requested",
+      data: { approvalId: "a1", callId: "t1", name: "write", input: {} },
+    },
+    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u2" }] } },
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [{ type: "text", text: "ok" }],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+  ];
+  const messages = eventsToMessages(events);
+  // user, assistant(tool_call), tool(aborted), user, assistant
+  assertEquals(messages.map((m) => m.role), [
+    "user",
+    "assistant",
+    "tool",
+    "user",
+    "assistant",
+  ]);
+  assertEquals(messages[2].toolCallId, "t1");
+  assertEquals(messages[2].content, "aborted");
+});
+
+Deno.test("multi-call batch with partial results closes only the missing calls", () => {
+  const base = { seq: 0, ts: 0, sessionId: "s" };
+  const events: RecordedEvent[] = [
+    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [
+          { type: "tool_call", id: "t1", name: "read", input: { path: "a" } },
+          { type: "tool_call", id: "t2", name: "read", input: { path: "b" } },
+          { type: "tool_call", id: "t3", name: "write", input: { path: "c" } },
+        ],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+    { ...base, type: "tool.result", data: { callId: "t1", content: "ra", isError: false, durationMs: 1 } },
+    { ...base, type: "tool.result", data: { callId: "t2", content: "rb", isError: false, durationMs: 1 } },
+    // t3 denied → reject path returns isError result; simulate its absence
+    // (e.g. turn died right after t2) so t3 stays orphaned.
+    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u2" }] } },
+  ];
+  const messages = eventsToMessages(events);
+  const tools = messages.filter((m) => m.role === "tool");
+  assertEquals(tools.length, 3);
+  assertEquals(tools[0].toolCallId, "t1");
+  assertEquals(tools[0].content, "ra");
+  assertEquals(tools[1].toolCallId, "t2");
+  assertEquals(tools[2].toolCallId, "t3");
+  assertEquals(tools[2].content, "aborted");
+  // Real results stay adjacent to their assistant message, before synthetics.
+  assertEquals(messages.map((m) => m.role), [
+    "user",
+    "assistant",
+    "tool",
+    "tool",
+    "tool",
+    "user",
+  ]);
+});
+
+Deno.test("orphan tool.result with no surviving call is dropped", () => {
+  const base = { seq: 0, ts: 0, sessionId: "s" };
+  // Compaction-style prefix loss: a tool.result whose assistant message was
+  // cut from the window. Codex drops orphan outputs; so do we (no pending
+  // call to home it to).
+  const events: RecordedEvent[] = [
+    { ...base, type: "tool.result", data: { callId: "ghost", content: "x", isError: false, durationMs: 1 } },
+    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+  ];
+  const messages = eventsToMessages(events);
+  assertEquals(messages.length, 1);
+  assertEquals(messages[0].role, "user");
+});
+
+Deno.test("complete round-trips are untouched by pairing", () => {
+  const base = { seq: 0, ts: 0, sessionId: "s" };
+  const events: RecordedEvent[] = [
+    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [{ type: "tool_call", id: "t1", name: "read", input: { path: "a" } }],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+    { ...base, type: "tool.result", data: { callId: "t1", content: "ok", isError: false, durationMs: 1 } },
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [{ type: "text", text: "done" }],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+  ];
+  const messages = eventsToMessages(events);
+  assertEquals(messages.map((m) => m.role), ["user", "assistant", "tool", "assistant"]);
+  assertEquals(messages[2].content, "ok");
+});
+
+// ---------------------------------------------------------------------------
 // FIX B — LLM-written compaction summary with template fallback
 // ---------------------------------------------------------------------------
 //

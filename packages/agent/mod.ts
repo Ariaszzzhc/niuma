@@ -13,6 +13,7 @@ export { makeApprovalGateway } from "./src/approval.ts";
 
 export { buildSystemPrompt } from "./src/prompt.ts";
 export {
+  ABORTED_TOOL_OUTPUT,
   estimateRequestTokens,
   estimateTokens,
   eventsToMessages,
