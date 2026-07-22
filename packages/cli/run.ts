@@ -215,6 +215,13 @@ export const runOneshot = async (
           break;
         }
         case "turn.completed": {
+          // recordTerminal emits turn.completed with stopReason "error" when a
+          // turn dies on a provider failure (retry exhaustion, AuthFailed, …).
+          // That is a failed turn, not a successful one — surface it via a
+          // non-zero exit code so scripts/CI gating on `$?` do not silently
+          // pass on empty stdout. The diagnostic itself was already printed by
+          // the preceding error.occurred event.
+          if (data["stopReason"] === "error") exitCode = 1;
           done = true;
           break;
         }
