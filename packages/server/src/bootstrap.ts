@@ -9,7 +9,16 @@ import {
   type SessionManagerInfra,
 } from "./session.ts";
 import { dataPaths, type DataPaths } from "./paths.ts";
-import { makeOpenAIAdapter, loadConfigFromEnv, makeMockProvider } from "@niuma/provider";
+import { makeOpenAIAdapter } from "@niuma/provider";
+import {
+  ConfigError,
+  loadConfigFile,
+  readAuthFile,
+  resolveModelRef,
+  substituteEnv,
+  niumaPaths,
+  type NiumaConfig,
+} from "@niuma/config";
 import {
   MemoryPermissionEngine,
   ToolRegistry,
@@ -29,6 +38,8 @@ export interface BootstrapDeps {
   readonly projection?: Projection;
   readonly bus?: EventBus;
   readonly infra?: Partial<SessionManagerInfra>;
+  /** Pre-loaded config; tests/smoke inject this to skip the filesystem. */
+  readonly config?: NiumaConfig;
 }
 
 export interface BootstrapResult {
@@ -37,6 +48,7 @@ export interface BootstrapResult {
   readonly projection: Projection;
   readonly bus: EventBus;
   readonly infra: SessionManagerInfra;
+  readonly config: NiumaConfig;
   readonly kernelLayer: Layer.Layer<Kernel, never, never>;
   readonly sessionLayer: Layer.Layer<SessionManager, never, Kernel>;
 }
@@ -73,6 +85,13 @@ export const bootstrap = async (
   const projection = deps.projection ?? await ensureSchema(paths.db);
   const bus = deps.bus ?? await Effect.runPromise(makeEventBus());
 
+  // ---- Configuration: config.toml + auth.json. ----
+  // The provider package takes an explicit config; where it comes from is
+  // resolved here, once, at boot. Tests/smoke inject `deps.config` and a
+  // `deps.infra.provider` so neither the config file nor the network is
+  // touched.
+  const config = deps.config ?? await loadConfigFile(niumaPaths().configFile);
+
   // Build the kernel eagerly so the spawn_subagent closure below can capture
   // it. The Layer we hand downstream wraps the same value (Layer.succeed),
   // keeping a single kernel instance across the bootstrap + session layer.
@@ -80,22 +99,28 @@ export const bootstrap = async (
     makeKernel({ eventLog, projection, bus }),
   );
 
-  // ---- Agent infra: OpenAI-compatible provider + tool pipeline. ----
+  // ---- Agent infra: provider + tool pipeline. ----
   // makeOpenAIAdapter only touches the network on stream()/listModels(),
   // so constructing it here never fetches.
-  const providerConfig = loadConfigFromEnv();
-  // NIUMA_MOCK_PROVIDER=1 swaps in a network-free scripted provider so the
-  // smoke harness can drive a full tunnel→worker→agent→tool round-trip
-  // without hitting a real backend. Production code paths are unchanged.
-  const useMockProvider = envGet("NIUMA_MOCK_PROVIDER") === "1";
   const provider = deps.infra?.provider ??
-    (useMockProvider
-      ? makeMockProvider()
-      : makeOpenAIAdapter(providerConfig));
+    (await makeProviderFromConfig(config));
   const registry = new ToolRegistry();
   const workspace = envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
   const engine = new MemoryPermissionEngine({ cwd: workspace });
-  const defaultModel = providerConfig.defaultModel;
+
+  // Default model: config.toml's top-level `model` (provider/model-id). Its
+  // per-model limits feed the agent loop's compaction threshold and output
+  // cap.
+  const defaultRef = config.model;
+  let defaultModel = deps.infra?.defaultModel ?? "";
+  let defaultContextWindow = deps.infra?.defaultContextWindow;
+  let defaultMaxTokens = deps.infra?.defaultMaxTokens;
+  if (defaultRef && !deps.infra?.provider) {
+    const resolved = resolveModelRef(config, defaultRef);
+    defaultModel = resolved.modelId;
+    defaultContextWindow = resolved.model.contextWindow;
+    defaultMaxTokens = resolved.model.maxOutput;
+  }
 
   // spawn_subagent wiring: create a child session, record lineage events,
   // and recursively run a turn on the child. Depth is bounded by
@@ -150,6 +175,12 @@ export const bootstrap = async (
           model: defaultModel,
           workspace,
           mode: req.mode === "read-only" ? "read-only" : "full",
+          ...(defaultContextWindow !== undefined
+            ? { contextWindow: defaultContextWindow }
+            : {}),
+          ...(defaultMaxTokens !== undefined
+            ? { maxTokens: defaultMaxTokens }
+            : {}),
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.sync(() => ({
@@ -183,6 +214,10 @@ export const bootstrap = async (
     tools,
     defaultModel,
     defaultWorkspace: workspace,
+    ...(defaultContextWindow !== undefined
+      ? { defaultContextWindow }
+      : {}),
+    ...(defaultMaxTokens !== undefined ? { defaultMaxTokens } : {}),
   };
 
   // Wrap the eagerly-built kernel in a Layer so downstream consumers (the
@@ -197,9 +232,48 @@ export const bootstrap = async (
     projection,
     bus,
     infra,
+    config,
     kernelLayer,
     sessionLayer,
   };
+};
+
+/**
+ * Build the provider adapter from config.toml + auth.json.
+ *
+ * The adapter is bound to the config's default provider (the one named by
+ * the top-level `model` reference). Credential lookup order:
+ *   1. auth.json[<providerId>]      (the canonical credential store)
+ *   2. provider api_key with {env:VAR} substitution (explicit escape hatch)
+ * Missing credentials fail at boot with a pointer to both locations.
+ */
+const makeProviderFromConfig = async (config: NiumaConfig) => {
+  if (!config.model) {
+    throw new ConfigError(
+      `config: no default model set. Add e.g.\n  model = "myprovider/my-model"` +
+        `\nto ${niumaPaths().configFile}`,
+    );
+  }
+  const resolved = resolveModelRef(config, config.model);
+  const auth = await readAuthFile(niumaPaths().authFile);
+  const entry = auth[resolved.provider.id];
+  const apiKey = entry?.type === "api"
+    ? entry.key
+    : resolved.provider.apiKey !== undefined
+    ? substituteEnv(resolved.provider.apiKey)
+    : undefined;
+  if (!apiKey) {
+    throw new ConfigError(
+      `config: no credentials for provider "${resolved.provider.id}". ` +
+        `Add an entry to ${niumaPaths().authFile}:\n` +
+        `  { "${resolved.provider.id}": { "type": "api", "key": "..." } }`,
+    );
+  }
+  return makeOpenAIAdapter({
+    baseUrl: resolved.provider.baseUrl,
+    apiKey,
+    defaultModel: resolved.modelId,
+  });
 };
 
 export { Kernel, SessionManager, KernelLive };

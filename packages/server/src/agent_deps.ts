@@ -167,4 +167,8 @@ export interface AgentInfra {
   readonly tools: ToolPipeline;
   readonly defaultModel: string;
   readonly defaultWorkspace: string;
+  /** Per-model limits from config.toml ([provider.*.models.*]); the agent
+   * loop falls back to its own defaults when unset. */
+  readonly defaultContextWindow?: number;
+  readonly defaultMaxTokens?: number;
 }

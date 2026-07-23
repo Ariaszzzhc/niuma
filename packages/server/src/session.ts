@@ -188,6 +188,12 @@ export const makeSessionManager = (
           model,
           workspace,
           emitLive,
+          ...(infra.defaultContextWindow !== undefined
+            ? { contextWindow: infra.defaultContextWindow }
+            : {}),
+          ...(infra.defaultMaxTokens !== undefined
+            ? { maxTokens: infra.defaultMaxTokens }
+            : {}),
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
