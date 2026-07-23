@@ -1,4 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { dirname } from "@std/path";
 import { Effect } from "effect";
 import { MemoryPermissionEngine, type PermissionEngine } from "@niuma/tools";
 import { makeToolPipeline } from "../src/tool_pipeline.ts";
@@ -65,7 +66,10 @@ Deno.test("tool_pipeline: read tool round-trip executes via runPipeline", async 
   const pipe = makeToolPipeline({ engine: approvingEngine() });
   const results = await Effect.runPromise(pipe.run(
     [{ callId: "c1", name: "read", input: { path: tmp } }],
-    approvingCtx("s", "/", "full"),
+    // Workspace is the temp file's own dir: "/" only contains everything on
+    // Unix — on Windows it resolves to the current drive's root (e.g. D:\)
+    // and the temp dir may live on another drive, tripping the escape check.
+    approvingCtx("s", dirname(tmp), "full"),
   ));
   assertEquals(results.length, 1);
   assertEquals(results[0]!.isError, false);

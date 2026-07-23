@@ -203,9 +203,11 @@ Deno.test("policy: sensitive guard fires for read tools touching .git", () => {
 });
 
 Deno.test("policy: explicit deny on a sensitive path still returns Deny (deny > sensitive)", () => {
-  // Deny is stricter than the sensitive Ask, so an effective deny wins.
+  // Deny is stricter than the sensitive Ask, so an effective deny wins. The
+  // pattern uses a `**/` suffix match rather than `/**` so it also matches
+  // Windows home paths (C:\...) that have no leading slash.
   const v = runPolicy(
-    [r("write", "/**", "deny")],
+    [r("write", "**/.ssh/id_rsa", "deny")],
     "write",
     HOME + "/.ssh/id_rsa",
     CWD,

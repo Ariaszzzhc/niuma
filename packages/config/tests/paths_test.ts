@@ -1,4 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { join } from "@std/path";
 import { niumaPaths } from "../mod.ts";
 
 const withEnv = async <T>(
@@ -27,11 +28,12 @@ Deno.test("niumaPaths: XDG defaults under HOME", async () => {
     () => {
       const home = Deno.env.get("HOME")!;
       const p = niumaPaths();
-      assertEquals(p.data, `${home}/.local/share/niuma`);
-      assertEquals(p.config, `${home}/.config/niuma`);
-      assertEquals(p.log, `${home}/.local/share/niuma/log`);
-      assertEquals(p.authFile, `${home}/.local/share/niuma/auth.json`);
-      assertEquals(p.configFile, `${home}/.config/niuma/config.toml`);
+      // Expectations go through join() so they hold with Windows separators.
+      assertEquals(p.data, join(home, ".local", "share", "niuma"));
+      assertEquals(p.config, join(home, ".config", "niuma"));
+      assertEquals(p.log, join(home, ".local", "share", "niuma", "log"));
+      assertEquals(p.authFile, join(home, ".local", "share", "niuma", "auth.json"));
+      assertEquals(p.configFile, join(home, ".config", "niuma", "config.toml"));
     },
   );
 });
@@ -46,9 +48,9 @@ Deno.test("niumaPaths: XDG_DATA_HOME / XDG_CONFIG_HOME honoured", async () => {
     },
     () => {
       const p = niumaPaths();
-      assertEquals(p.data, "/tmp/xdg-data/niuma");
-      assertEquals(p.config, "/tmp/xdg-config/niuma");
-      assertEquals(p.authFile, "/tmp/xdg-data/niuma/auth.json");
+      assertEquals(p.data, join("/tmp/xdg-data", "niuma"));
+      assertEquals(p.config, join("/tmp/xdg-config", "niuma"));
+      assertEquals(p.authFile, join("/tmp/xdg-data", "niuma", "auth.json"));
     },
   );
 });
@@ -60,8 +62,8 @@ Deno.test("niumaPaths: NIUMA_DATA_DIR keeps the single-root layout", async () =>
       const p = niumaPaths();
       assertEquals(p.data, "/tmp/niuma-x");
       assertEquals(p.config, "/tmp/niuma-x");
-      assertEquals(p.authFile, "/tmp/niuma-x/auth.json");
-      assertEquals(p.configFile, "/tmp/niuma-x/config.toml");
+      assertEquals(p.authFile, join("/tmp/niuma-x", "auth.json"));
+      assertEquals(p.configFile, join("/tmp/niuma-x", "config.toml"));
     },
   );
 });

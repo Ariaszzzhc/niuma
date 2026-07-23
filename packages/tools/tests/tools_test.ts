@@ -48,7 +48,7 @@ Deno.test("ToolRegistry resolves subset and exposes toolDefs", () => {
 
 Deno.test("bash executes and surfaces non-zero exit as isError", async () => {
   const out = await bashTool.execute(
-    { command: "echo hello && exit 0" },
+    { command: "echo hello; exit 0" },
     mkCtx(),
   );
   assertEquals(out.isError, undefined);

@@ -19,7 +19,7 @@ export const bashTool: Tool<BashInput> = {
   def: {
     name: "bash",
     description:
-      "Run a shell command. Captures stdout+stderr (each capped), exits non-zero on failure. Use `timeout_ms` for long-running commands; default 120s.",
+      "Run a shell command — PowerShell on Windows, /bin/sh on macOS/Linux; write the command for the shell of the OS you are running on. Captures stdout+stderr (each capped), exits non-zero on failure. Use `timeout_ms` for long-running commands; default 120s.",
     parameters: zodToJsonSchema(BashInput),
   },
   accesses: { process: true },

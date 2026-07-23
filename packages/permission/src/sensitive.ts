@@ -30,11 +30,21 @@ export const SENSITIVE_PATTERNS: ReadonlyArray<string> = [
   "**/.git/**",
 ];
 
+/**
+ * Matching happens in forward-slash space: every glob pattern in this file
+ * (and every rule users write) uses `/` as the separator, and the matcher
+ * escapes `\` literally — so a Windows path like `C:\work\.env` would never
+ * match the `.env` sensitive glob. Normalise both targets and patterns to
+ * `/` form before matching; the result is still a valid Windows path for
+ * display purposes.
+ */
+const toSlashes = (p: string): string => p.replaceAll("\\", "/");
+
 function expandHome(p: string): string {
   if (p === "~" || p.startsWith("~/")) {
     const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "";
-    if (p === "~") return home;
-    return home + p.slice(1);
+    if (p === "~") return toSlashes(home);
+    return toSlashes(home) + p.slice(1);
   }
   return p;
 }
@@ -44,9 +54,12 @@ function expandHome(p: string): string {
  *
  * `~` and `~/...` are expanded to the user's home directory first; then the
  * path is resolved against `cwd` using `@std/path`'s `resolve`, which
- * collapses `.` and `..` segments and yields an absolute path. This is
- * security-relevant: without collapsing, a target like `foo/./bar/id_rsa`
- * could slip past the `id_rsa` sensitive guard.
+ * collapses `.` and `..` segments and yields an absolute path; finally any
+ * Windows `\` separators are converted to `/` so glob matching is identical
+ * on every platform. This is security-relevant: without collapsing, a
+ * target like `foo/./bar/id_rsa` could slip past the `id_rsa` sensitive
+ * guard, and without slash normalisation a Windows `C:\work\.env` target
+ * would slip past the `.env` guard.
  */
 export function normalizePath(p: string, cwd: string): string {
   if (p.length === 0) return p;
@@ -54,15 +67,15 @@ export function normalizePath(p: string, cwd: string): string {
   // `resolve` treats an absolute second arg as authoritative (returns it
   // unchanged after collapsing), and joins relative paths onto cwd while
   // collapsing . and .. segments.
-  return resolve(cwd, expanded);
+  return toSlashes(resolve(cwd, expanded));
 }
 
 /** Normalise a glob pattern's leading `~/` so it can be matched against absolute paths. */
 export function normalizePattern(pattern: string): string {
   if (pattern === "~" || pattern.startsWith("~/")) {
     const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "";
-    if (pattern === "~") return home;
-    return home + pattern.slice(1);
+    if (pattern === "~") return toSlashes(home);
+    return toSlashes(home) + pattern.slice(1);
   }
   return pattern;
 }
@@ -79,7 +92,7 @@ export function isSensitivePath(target: string, cwd: string): boolean {
   for (const raw of SENSITIVE_PATTERNS) {
     const expanded = normalizePattern(raw);
     if (matchPattern(expanded, normalised)) return true;
-    if (matchPattern(expanded, target)) return true;
+    if (matchPattern(expanded, toSlashes(target))) return true;
   }
   return false;
 }

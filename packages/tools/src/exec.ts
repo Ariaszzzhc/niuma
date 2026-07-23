@@ -43,8 +43,9 @@ export const DEFAULT_MAX_OUTPUT_BYTES = 1 << 20; // 1 MiB per stream.
 /**
  * Run a command, capturing stdout/stderr.
  *
- * cmd as a string is executed through the shell (/bin/sh -c on Unix,
- * cmd.exe /c on Windows). cmd as string[] is an argv vector (no shell).
+ * cmd as a string is executed through the shell (/bin/sh -c on macOS/Linux,
+ * powershell.exe -Command on Windows). cmd as string[] is an argv vector
+ * (no shell).
  */
 export async function execCapture(
   cmd: string | string[],
@@ -55,8 +56,10 @@ export async function execCapture(
   let args: string[];
   if (typeof cmd === "string") {
     if (isWindows) {
-      exe = "cmd.exe";
-      args = ["/d", "/s", "/c", cmd];
+      // Windows PowerShell (powershell.exe) ships with every Windows install;
+      // -NoProfile/-NonInteractive keep startup deterministic and non-blocking.
+      exe = "powershell.exe";
+      args = ["-NoProfile", "-NonInteractive", "-Command", cmd];
     } else {
       exe = "/bin/sh";
       args = ["-c", cmd];

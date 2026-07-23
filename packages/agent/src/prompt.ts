@@ -101,7 +101,9 @@ async function gitListFiles(workspace: string): Promise<string[] | null> {
 // Bounded recursive walk used when git is unavailable/not a repo. Iterative
 // DFS; collects up to FILES_CAP+1 entries (the +1 signals truncation without
 // needing to traverse the whole tree). Skips the skip-listed dirs and any
-// hidden dot-directory. Paths are relative to the workspace root.
+// hidden dot-directory. Paths are relative to the workspace root and always
+// joined with "/" (never platform join()) so the listing matches git
+// ls-files output and stays stable for the model on Windows.
 async function walkFiles(workspace: string): Promise<string[]> {
   const out: string[] = [];
   const stack: string[] = ["."];
@@ -118,9 +120,9 @@ async function walkFiles(workspace: string): Promise<string[]> {
     for (const entry of entries) {
       if (entry.isDirectory) {
         if (SKIP_DIRS.has(entry.name) || entry.name.startsWith(".")) continue;
-        stack.push(rel === "." ? entry.name : join(rel, entry.name));
+        stack.push(rel === "." ? entry.name : `${rel}/${entry.name}`);
       } else if (entry.isFile) {
-        out.push(rel === "." ? entry.name : join(rel, entry.name));
+        out.push(rel === "." ? entry.name : `${rel}/${entry.name}`);
         if (out.length > FILES_CAP) return out; // collected cap+1 → stop early
       }
     }
@@ -149,10 +151,13 @@ export async function listWorkspaceFiles(
   return { paths, total, truncated: paths.length < total };
 }
 
-// Detect the user's shell for the environment block. Falls back to "bash" if
-// SHELL is unset or unreadable (Deno env permission). We take only the
-// basename so "/bin/zsh" renders as "zsh".
+// Detect the user's shell for the environment block. On Windows the bash tool
+// executes through powershell.exe (see tools/exec.ts) and SHELL is typically
+// unset, so report "powershell" instead of guessing from the environment.
+// On Unix we take the basename of SHELL so "/bin/zsh" renders as "zsh",
+// falling back to "bash" if SHELL is unset or unreadable (Deno env permission).
 function detectShell(): string {
+  if (Deno.build.os === "windows") return "powershell";
   try {
     return basename(Deno.env.get("SHELL") ?? "bash");
   } catch {
@@ -161,11 +166,13 @@ function detectShell(): string {
 }
 
 // Render the codex-shaped <environment_context> block. cwd/shell/current_date
-// mirror codex's block verbatim; <files> is a niuma extension (codex does not
-// inject a file listing) that gives the model at-a-glance workspace shape.
-// Paths are flush-left inside <files> so the listing reads as a plain file
-// list, not indented XML text; count is the total seen and truncated flags
-// whether the displayed listing is incomplete.
+// mirror codex's block verbatim; <os> (Deno.build.os: windows/darwin/linux/...)
+// tells the model which platform syntax to write for tools like bash, and
+// <files> is a niuma extension (codex does not inject a file listing) that gives
+// the model at-a-glance workspace shape. Paths are flush-left inside <files>
+// so the listing reads as a plain file list, not indented XML text; count is
+// the total seen and truncated flags whether the displayed listing is
+// incomplete.
 export function environmentContext(
   workspace: string,
   listing: { paths: string[]; truncated: boolean; total: number },
@@ -175,6 +182,7 @@ export function environmentContext(
   return [
     "<environment_context>",
     `  <cwd>${workspace}</cwd>`,
+    `  <os>${Deno.build.os}</os>`,
     `  <shell>${shell}</shell>`,
     `  <current_date>${date}</current_date>`,
     `  <files count="${listing.total}" truncated="${listing.truncated}">`,
