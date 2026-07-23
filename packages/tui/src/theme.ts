@@ -68,11 +68,12 @@ interface RawPalette {
   readonly codeBg: Color;
 }
 
-// Dark palette — light text on a dark background. Pinks/blues in the
-// dracula/starship family for vivid accents; muted blue-gray for borders.
+// Dark palette — light text on a dark background. Blue accents (starship /
+// tokyonight family) — primary is a lighter blue, accent a vivid one; muted
+// blue-gray for borders.
 const DARK_RAW: RawPalette = {
   primary: rgb(122, 180, 255),
-  accent: rgb(255, 121, 198),
+  accent: rgb(100, 150, 255),
   success: rgb(80, 220, 140),
   warning: rgb(241, 196, 100),
   error: rgb(255, 110, 110),
@@ -87,7 +88,7 @@ const DARK_RAW: RawPalette = {
 // retuned for contrast on light terminals.
 const LIGHT_RAW: RawPalette = {
   primary: rgb(40, 90, 200),
-  accent: rgb(200, 60, 130),
+  accent: rgb(50, 100, 220),
   success: rgb(20, 150, 80),
   warning: rgb(170, 110, 0),
   error: rgb(200, 50, 50),
