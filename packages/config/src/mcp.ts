@@ -18,9 +18,9 @@
 //
 // Three levels are merged, lowest priority first (3 > 2 > 1):
 //
-//   1. <global config dir>/mcp.json   (~/.config/niuma/mcp.json)
-//   2. <dir>/mcp.json for every dir on the project-config path (the dirs
-//      projectConfigDirs finds walking from the workspace up to $HOME;
+//   1. <global config dir>/mcp.json   (~/.niuma/mcp.json)
+//   2. <dir>/.niuma/mcp.json for every dir on the project-config path (the
+//      dirs projectConfigDirs finds walking from the workspace up to $HOME;
 //      closer dirs win, all of them beat level 1)
 //   3. <workspace>/.mcp.json          (Claude Code's project location)
 //
@@ -37,7 +37,7 @@
 // config.toml).
 
 import { join } from "@std/path";
-import { projectConfigDirs } from "./config.ts";
+import { PROJECT_DIR_BASENAME, projectConfigDirs } from "./config.ts";
 
 const envGet = (name: string): string | undefined => {
   try {
@@ -265,7 +265,7 @@ export interface LoadMergedMcpOptions {
 
 /**
  * Load the effective MCP config: global mcp.json, then every project-dir
- * mcp.json (shallow → deep, so the closest directory wins), then the
+ * .niuma/mcp.json (shallow → deep, so the closest directory wins), then the
  * workspace's own .mcp.json on top. Priority: 3 > 2 > 1.
  */
 export const loadMergedMcpConfig = async (
@@ -275,9 +275,9 @@ export const loadMergedMcpConfig = async (
     await loadMcpConfigFile(join(opts.globalConfigDir, MCP_CONFIG_BASENAME)),
   ];
   // projectConfigDirs is leaf-first; merge shallow-first so the closest
-  // directory wins (same convention as niuma.toml).
+  // directory wins (same convention as .niuma/config.toml).
   const projectFiles = projectConfigDirs(opts.workspace)
-    .map((dir) => join(dir, MCP_CONFIG_BASENAME))
+    .map((dir) => join(dir, PROJECT_DIR_BASENAME, MCP_CONFIG_BASENAME))
     .reverse();
   for (const file of projectFiles) {
     levels.push(await loadMcpConfigFile(file));

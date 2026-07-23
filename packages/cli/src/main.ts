@@ -63,8 +63,9 @@ const main = async (): Promise<number> => {
   let model: string | undefined;
   if (!mockProvider) {
     try {
-      // Project-level niuma.toml files (walked up from the workspace) merge
-      // over the global config, so a project can pin its own default model.
+      // Project-level .niuma/config.toml files (walked up from the workspace)
+      // merge over the global config, so a project can pin its own default
+      // model.
       const config = await loadMergedConfig(niumaPaths().configFile, {
         projectDir: workspace,
       });

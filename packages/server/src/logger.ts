@@ -1,13 +1,14 @@
 // Logging setup for niuma.
 //
 // Level comes from `[core] log_level` in the GLOBAL config.toml (default
-// "info") — no environment variable. Project-level niuma.toml files are NOT
-// consulted here: logging is per-process (one log file per PID), while the
+// "info") — no environment variable. Project-level .niuma/config.toml files
+// are NOT consulted here: logging is per-process (one log file per PID), while
+// the
 // server can host sessions from many workspaces, so a per-project log level
 // has no coherent meaning.
 //
-// The ONLY sink is a JSON-lines file under <data>/log/ (opencode's
-// convention: XDG data dir + app name + "log"). There is deliberately no
+// The ONLY sink is a JSON-lines file under <data>/log/ (~/.niuma/log by
+// default). There is deliberately no
 // console/stream sink: the server runs either inside a worker thread
 // (interactive / one-shot CLI), where worker stdio is the parent's terminal
 // — the TUI owns the alternate screen and any stray write corrupts the

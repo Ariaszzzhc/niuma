@@ -14,6 +14,7 @@ export {
   parseConfig,
   parseModelRef,
   PROJECT_CONFIG_BASENAME,
+  PROJECT_DIR_BASENAME,
   projectConfigDirs,
   resolveModelRef,
   substituteEnv,

@@ -172,7 +172,7 @@ Deno.test("mergeMcpConfigs: later levels replace per server id", () => {
   assertEquals(merged.b!.command, "low-b");
 });
 
-Deno.test("loadMergedMcpConfig: priority .mcp.json > project mcp.json > global mcp.json", async () => {
+Deno.test("loadMergedMcpConfig: priority .mcp.json > project .niuma/mcp.json > global mcp.json", async () => {
   const root = await Deno.makeTempDir();
   try {
     const globalDir = join(root, "global");
@@ -186,15 +186,16 @@ Deno.test("loadMergedMcpConfig: priority .mcp.json > project mcp.json > global m
     );
     const repo = join(root, "repo");
     const pkg = join(repo, "packages", "x");
+    await Deno.mkdir(join(repo, ".niuma"), { recursive: true });
     await Deno.mkdir(pkg, { recursive: true });
     await Deno.writeTextFile(
-      join(repo, "mcp.json"),
+      join(repo, ".niuma", "mcp.json"),
       `{"mcpServers": {
         "shared": { "command": "repo-shared" },
         "off-here": { "command": "global-would-add" }
       }}`,
     );
-    // The workspace's own .mcp.json outranks every mcp.json.
+    // The workspace's own .mcp.json outranks every .niuma/mcp.json.
     await Deno.writeTextFile(
       join(pkg, ".mcp.json"),
       `{"mcpServers": {
@@ -219,13 +220,14 @@ Deno.test("loadMergedMcpConfig: nearer project dir wins over farther one", async
   try {
     const repo = join(root, "repo");
     const pkg = join(repo, "pkg");
-    await Deno.mkdir(pkg, { recursive: true });
+    await Deno.mkdir(join(repo, ".niuma"), { recursive: true });
+    await Deno.mkdir(join(pkg, ".niuma"), { recursive: true });
     await Deno.writeTextFile(
-      join(repo, "mcp.json"),
+      join(repo, ".niuma", "mcp.json"),
       `{"mcpServers": {"a": {"command": "repo"}}}`,
     );
     await Deno.writeTextFile(
-      join(pkg, "mcp.json"),
+      join(pkg, ".niuma", "mcp.json"),
       `{"mcpServers": {"a": {"command": "pkg"}}}`,
     );
     const c = await loadMergedMcpConfig({

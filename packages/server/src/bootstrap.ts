@@ -108,15 +108,15 @@ export const bootstrap = async (
   // touched.
   //
   // The effective config is the global config.toml with project-level
-  // niuma.toml files (walked up from the workspace) merged on top — so a
-  // project can pick its own default model or tune per-model limits without
+  // .niuma/config.toml files (walked up from the workspace) merged on top — so
+  // a project can pick its own default model or tune per-model limits without
   // restating provider credentials.
   const registry = new ToolRegistry();
   const workspace = envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
   const config = deps.config ??
     await loadMergedConfig(niumaPaths().configFile, { projectDir: workspace });
 
-  // ---- MCP servers (mcp.json: global < project dirs < workspace/.mcp.json). ----
+  // ---- MCP servers (mcp.json: global < project .niuma/ dirs < workspace/.mcp.json). ----
   // Connected before the pipelines are built so their tools land in the one
   // registry shared by the parent session and subagents. Best-effort: a
   // server that won't connect is skipped with a warning, not fatal.

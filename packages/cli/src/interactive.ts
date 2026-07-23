@@ -90,7 +90,7 @@ export const runInteractive = async (
   let model: string | undefined;
   if (!mockProvider) {
     try {
-      // Project-level niuma.toml files merge over the global config.
+      // Project-level .niuma/config.toml files merge over the global config.
       const config = await loadMergedConfig(niumaPaths().configFile, {
         projectDir: workspace,
       });

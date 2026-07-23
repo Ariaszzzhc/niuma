@@ -1,4 +1,4 @@
-// TOML configuration for niuma (`~/.config/niuma/config.toml`).
+// TOML configuration for niuma (`~/.niuma/config.toml`).
 //
 // Shape (mirrors opencode's provider/model split, in TOML):
 //
@@ -21,7 +21,7 @@
 //
 // A file may also carry a PARTIAL provider table — just `[provider.x.models.y]`
 // limits with no base_url — when another file in the merge stack (global
-// config.toml or a shallower niuma.toml) defines that provider. base_url is
+// config.toml or a shallower .niuma/config.toml) defines that provider. base_url is
 // only enforced where the provider is actually used (resolveModelRef), which
 // always runs against the merged result.
 //
@@ -43,8 +43,13 @@ const envGet = (name: string): string | undefined => {
 const home = (): string =>
   envGet("HOME") ?? envGet("USERPROFILE") ?? Deno.cwd();
 
-/** Project-level config file name, discovered walking up from the workspace. */
-export const PROJECT_CONFIG_BASENAME = "niuma.toml";
+/** Project-level directory name: config and resources live in
+ * `<dir>/.niuma/` for every dir on the projectConfigDirs path. Data
+ * (sessions, db, logs) NEVER goes here — user-level ~/.niuma only. */
+export const PROJECT_DIR_BASENAME = ".niuma";
+
+/** Project-level config file: `<dir>/.niuma/config.toml`. */
+export const PROJECT_CONFIG_BASENAME = "config.toml";
 
 export const LOG_LEVELS = [
   "trace",
@@ -272,8 +277,8 @@ export const mergeConfig = (
   };
 };
 
-/** Directories to search for a project niuma.toml, leaf-first, stopping at
- * $HOME (a niuma.toml in $HOME itself is still honoured; nothing above it).
+/** Directories to search for a project .niuma/ dir, leaf-first, stopping at
+ * $HOME (a .niuma/ in $HOME itself is still honoured; nothing above it).
  * Exported as the shared project-config discovery path — also used by the
  * mcp.json loader (src/mcp.ts) for its level-2 files. */
 export const projectConfigDirs = (start: string): string[] => {
@@ -301,13 +306,13 @@ export interface LoadMergedOptions {
 
 /**
  * Load the effective config: the global file with every applicable
- * project-level niuma.toml merged on top.
+ * project-level .niuma/config.toml merged on top.
  *
  * Discovery walks from opts.projectDir up to $HOME (opencode's convention;
  * its filename is opencode.json), so running inside a monorepo picks up both
- * the repo root's and the package's niuma.toml. Shallower files are merged
- * first, so the closest directory wins on conflicts; all of them win over
- * the global file.
+ * the repo root's and the package's .niuma/config.toml. Shallower files are
+ * merged first, so the closest directory wins on conflicts; all of them win
+ * over the global file.
  */
 export const loadMergedConfig = async (
   globalPath: string,
@@ -316,7 +321,7 @@ export const loadMergedConfig = async (
   let config = await loadConfigFile(globalPath);
   const start = opts.projectDir ?? envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
   const files = projectConfigDirs(start).map((dir) =>
-    join(dir, PROJECT_CONFIG_BASENAME)
+    join(dir, PROJECT_DIR_BASENAME, PROJECT_CONFIG_BASENAME)
   );
   for (const file of files.reverse()) {
     config = mergeConfig(config, await loadConfigFile(file));

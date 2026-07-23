@@ -214,13 +214,15 @@ Deno.test("loadMergedConfig: project file overrides the global one", async () =>
     const pkg = join(repo, "packages", "x");
     await Deno.mkdir(pkg, { recursive: true });
     // Repo-level file re-points the default model at the same provider.
+    await Deno.mkdir(join(repo, ".niuma"), { recursive: true });
     await Deno.writeTextFile(
-      join(repo, "niuma.toml"),
+      join(repo, ".niuma", "config.toml"),
       `model = "g/repo-model"\n`,
     );
     // Package-level file adds model limits only.
+    await Deno.mkdir(join(pkg, ".niuma"), { recursive: true });
     await Deno.writeTextFile(
-      join(pkg, "niuma.toml"),
+      join(pkg, ".niuma", "config.toml"),
       `[provider.g.models.repo-model]\ncontext_window = 4242\n`,
     );
     const c = await loadMergedConfig(global, { projectDir: pkg });

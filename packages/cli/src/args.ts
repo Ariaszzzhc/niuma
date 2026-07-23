@@ -264,7 +264,7 @@ SERVE OPTIONS
       --host <addr>                   Bind address (default: 127.0.0.1).
 
 CONFIGURATION
-  ~/.config/niuma/config.toml          Providers, models, [core] options. Example:
+  ~/.niuma/config.toml                 Providers, models, [core] options. Example:
                                         model = "deepseek/deepseek-chat"
                                         [core]
                                         log_level = "info"
@@ -273,13 +273,14 @@ CONFIGURATION
                                         [provider.deepseek.models.deepseek-chat]
                                         context_window = 128000
                                         max_output = 8192
-  ~/.local/share/niuma/auth.json       API credentials keyed by provider id (0600):
+  ~/.niuma/auth.json                   API credentials keyed by provider id (0600):
                                         { "deepseek": { "type": "api", "key": "sk-..." } }
-  ~/.local/share/niuma/log/            Per-process JSON-lines logs.
-  ./niuma.toml                         Project-level config, discovered walking up
-                                      from the workspace to $HOME. Merged over the
-                                      global file (closest directory wins) — e.g.
-                                      pin a project model: model = "deepseek/deepseek-chat"
+  ~/.niuma/log/                        Per-process JSON-lines logs.
+  ./.niuma/config.toml                 Project-level config, discovered walking up
+                                      from the workspace to $HOME (every dir's
+                                      .niuma/config.toml loads, closest wins).
+                                      Merged over the global file — e.g. pin a
+                                      project model: model = "deepseek/deepseek-chat"
 
 ENVIRONMENT (path overrides only — no provider configuration)
   NIUMA_DATA_DIR                       Override data dir (also relocates config).
