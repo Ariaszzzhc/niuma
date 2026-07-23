@@ -3,8 +3,9 @@
 // What this proves:
 //   - The full main-thread → Worker tunnel → Hono app → Effect runtime →
 //     agent loop → tool pipeline → bash/read tool path is wired and runs.
-//   - The MockProvider (NIUMA_MOCK_PROVIDER=1) drives a scripted 3-turn flow
-//     without touching the network: read → bash → final text.
+//   - The MockProvider (injected via the CLI's --mock-provider flag, which
+//     forwards to the worker over the tunnel init message) drives a scripted
+//     3-turn flow without touching the network: read → bash → final text.
 //   - The MANUAL permission UX works end-to-end: bash triggers an
 //     approval.requested event, the CLI reads "y\n" from stdin, the
 //     approval is resolved, and the bash tool executes.
@@ -54,6 +55,7 @@ const main = async (): Promise<void> => {
     "run the smoke",
     "--workspace",
     workspace,
+    "--mock-provider",
   ];
   console.error(`[smoke] spawning: deno ${args.join(" ")}`);
   console.error(`[smoke] workspace: ${workspace}`);
@@ -64,10 +66,11 @@ const main = async (): Promise<void> => {
     cwd: ROOT,
     env: {
       ...Deno.env.toObject(),
-      NIUMA_MOCK_PROVIDER: "1",
+      // Isolate the run from the developer's real ~/.config/niuma and
+      // ~/.local/share/niuma: sessions, the sqlite projection, and logs all
+      // land under the temp dir. The mock provider means no config.toml /
+      // auth.json is consulted either.
       NIUMA_DATA_DIR: dataDir,
-      // Mute logtape's INFO banner so stderr stays readable.
-      NIUMA_LOG: "warning",
     },
     stdin: "piped",
     stdout: "piped",

@@ -5,6 +5,8 @@ import { bootstrap } from "./src/bootstrap.ts";
 import { makeEventLog } from "./src/eventLog.ts";
 import { ensureSchema } from "./src/projection.ts";
 import { makeEventBus } from "./src/eventBus.ts";
+import { makeMockProvider } from "@niuma/provider";
+import { parseConfig } from "@niuma/config";
 import { Effect } from "effect";
 
 // Use a temp data dir so the smoke test never touches ~/.config/niuma.
@@ -26,6 +28,10 @@ async function buildApp() {
     eventLog,
     projection,
     bus,
+    // Inject the network-free provider and an in-memory config so the test
+    // never reads config.toml / auth.json / the real backend.
+    config: parseConfig(""),
+    infra: { provider: makeMockProvider() },
   });
   return await createServerApp({ bootstrap: boot });
 }
