@@ -6,7 +6,8 @@
 // for block structure, recursive-descent for inline spans:
 //
 //   block-level:  ATX headings, fenced code blocks, bullet/ordered lists,
-//                 blockquotes, thematic breaks, paragraphs (hard-wrapped).
+//                 blockquotes, thematic breaks, GFM tables, paragraphs
+//                 (hard-wrapped).
 //   inline:       **bold** / __bold__, *italic* / _italic_, `inline code`,
 //                 [link](url) -> underlined text + dimmed URL. Backslash
 //                 escapes for the active punctuation.
@@ -168,6 +169,23 @@ export const renderMarkdown = (
       continue;
     }
 
+    // -- GFM table (header row + delimiter row, then body rows) ------------
+    // Two-line lookahead: the current line is a candidate header only when
+    // the NEXT line is a delimiter (`| --- | --- |`). While streaming, the
+    // delimiter may not have arrived yet — fall through to paragraph so the
+    // header text is not swallowed.
+    if (isTableRow(line) && i + 1 < lines.length && isTableDelimiter(lines[i + 1])) {
+      const header = splitTableRow(line);
+      i += 2; // consume header + delimiter
+      const rows: string[][] = [];
+      while (i < lines.length && isTableRow(lines[i]) && !matchThematicBreak(lines[i])) {
+        rows.push(splitTableRow(lines[i]));
+        i++;
+      }
+      out.push(...renderTable(header, rows, width, opts.theme));
+      continue;
+    }
+
     // -- bullet list item (consecutive items fold into one list) ----------
     const bullet = matchBullet(line);
     if (bullet) {
@@ -210,7 +228,8 @@ export const renderMarkdown = (
         matchBullet(next) ||
         matchOrdered(next) ||
         matchBlockquote(next) ||
-        matchThematicBreak(next)
+        matchThematicBreak(next) ||
+        (isTableRow(next) && i + 1 < lines.length && isTableDelimiter(lines[i + 1]))
       ) {
         break;
       }
@@ -445,6 +464,41 @@ const matchThematicBreak = (line: string): boolean => {
 };
 
 // ---------------------------------------------------------------------------
+// GFM tables
+// ---------------------------------------------------------------------------
+
+/**
+ * A pipe-table row candidate: contains at least one `|` that is NOT the whole
+ * trimmed content. Delimiter rows and body rows both match; the caller decides
+ * via `isTableDelimiter`. Stray prose with a single `|` ("a | b") also matches
+ * — that is fine, it only becomes a table when a delimiter row follows.
+ */
+const isTableRow = (line: string): boolean => {
+  const t = line.trim();
+  return t.length > 1 && t.includes("|");
+};
+
+/** The delimiter row: cells of 3+ dashes with optional leading/trailing colon. */
+const isTableDelimiter = (line: string): boolean => {
+  const t = line.trim();
+  if (t.length < 3) return false;
+  return splitTableRow(t).every((cell) => /^:?-{3,}:?$/.test(cell));
+};
+
+/**
+ * Split a pipe row into trimmed cells. Leading/trailing pipes are stripped;
+ * `\|` escapes a literal pipe inside a cell.
+ */
+const splitTableRow = (line: string): string[] => {
+  let t = line.trim();
+  if (t.startsWith("|")) t = t.slice(1);
+  if (t.endsWith("|")) t = t.slice(0, -1);
+  return t.replace(/\\\|/g, "").split("|").map((c) =>
+    c.trim().replace(//g, "|")
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Block renderers
 // ---------------------------------------------------------------------------
 
@@ -594,6 +648,120 @@ const renderBlockquote = (text: string, width: number, theme: Theme): StyledLine
   return wrapped.map((line, idx) => ({
     spans: idx === 0 ? [bar, ...line.spans] : [indent, ...line.spans],
   }));
+};
+
+// ---------------------------------------------------------------------------
+// GFM table renderer
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a pipe table as rows of cells separated by `│`, with a `─┼─` rule
+ * under the header. Column widths are content-proportional (longest cell,
+ * capped), shrunk to fit `width` from the widest column inward; cells are
+ * inline-tokenised (bold/code survive) and truncated to the column width.
+ * A short row (fewer cells than the header) is blank-padded; extra cells are
+ * dropped. Degenerate widths (columns don't fit even at min width) collapse
+ * to one column so the table degrades to stacked cells instead of overflowing.
+ */
+const renderTable = (
+  header: readonly string[],
+  rows: readonly string[][],
+  width: number,
+  theme: Theme,
+): StyledLine[] => {
+  const cols = Math.max(1, header.length);
+  const SEP_W = 3; // " │ "
+  const MIN_COL = 3;
+
+  // Normalise every row to `cols` cells.
+  const norm = (cells: readonly string[]): string[] =>
+    Array.from({ length: cols }, (_, i) => cells[i] ?? "");
+  let normHeader = norm(header);
+  let normRows = rows.map(norm);
+
+  // A table is only rendered when at least one column fits with its padding.
+  // With n columns the row uses 3n + 2 cells of chrome (space-padding +
+  // separators) plus the column text itself, so on a very narrow viewport we
+  // TRIM trailing columns until the remaining ones fit at MIN_COL. A caller
+  // that passes width < 5 gets a one-column table truncated to width.
+  const maxColsByChrome = Math.max(1, Math.floor((width - 2) / (MIN_COL + SEP_W)) + 1);
+  if (normHeader.length > maxColsByChrome) {
+    normHeader = normHeader.slice(0, maxColsByChrome);
+    normRows = normRows.map((r) => r.slice(0, maxColsByChrome));
+  }
+  const usedCols = normHeader.length;
+
+  // Natural column widths (content cells, no inline markers counted — width
+  // is measured on the RAW text; bold markers render wider than measured, so
+  // subtract a fudge factor per cell that has delimiters. Close enough for a
+  // fixed-grid renderer; the final truncate pass guarantees no overflow.)
+  const natural = normHeader.map((h, c) => {
+    let w = stringWidth(h);
+    for (const r of normRows) w = Math.max(w, stringWidth(r[c]));
+    return Math.max(MIN_COL, w);
+  });
+
+  // Total width if we used natural widths everywhere.
+  const budget = Math.max(usedCols, width - SEP_W * (usedCols - 1) - 2 * usedCols);
+  const naturalTotal = natural.reduce((a, b) => a + b, 0);
+
+  // Shrink proportionally from the widest columns until we fit the budget.
+  const colW = natural.slice();
+  let over = naturalTotal - budget;
+  if (over > 0) {
+    // Sort column indices by current width, widest first; shrink round-robin.
+    const order = colW.map((_, i) => i).sort((a, b) => colW[b] - colW[a]);
+    while (over > 0) {
+      let shrunk = false;
+      for (const c of order) {
+        if (over <= 0) break;
+        if (colW[c] > MIN_COL) {
+          const take = Math.min(colW[c] - MIN_COL, over);
+          colW[c] -= take;
+          over -= take;
+          shrunk = true;
+        }
+      }
+      if (!shrunk) break; // everything at MIN_COL — accept the overflow
+    }
+  }
+
+  const rule = (mid: string): StyledLine => ({
+    spans: [{
+      text: colW.map((w) => "─".repeat(w + 2)).join(`─${mid}─`),
+      style: { fg: theme.border, dim: true },
+    }],
+  });
+
+  const cellSpans = (text: string, col: number, bold: boolean): StyledSpan[] => {
+    const truncated = truncateToWidth(text, colW[col], false);
+    const pad = colW[col] - stringWidth(truncated);
+    const spans = tokenizeInline(truncated, theme, {
+      fg: bold ? theme.text : theme.text,
+      ...(bold ? { bold: true } : {}),
+    });
+    return [
+      ...spans,
+      ...(pad > 0 ? [{ text: " ".repeat(pad), style: {} }] : []),
+    ];
+  };
+
+  const rowLine = (cells: readonly string[], bold: boolean): StyledLine => {
+    const spans: StyledSpan[] = [];
+    cells.forEach((cell, c) => {
+      if (c > 0) spans.push({ text: " │ ", style: { fg: theme.border, dim: true } });
+      spans.push({ text: " ", style: {} });
+      spans.push(...cellSpans(cell, c, bold));
+      spans.push({ text: " ", style: {} });
+    });
+    return { spans };
+  };
+
+  const out: StyledLine[] = [];
+  out.push(rowLine(normHeader, true));
+  out.push(rule("┼"));
+  for (const r of normRows) out.push(rowLine(r, false));
+  return out;
 };
 
 // ---------------------------------------------------------------------------

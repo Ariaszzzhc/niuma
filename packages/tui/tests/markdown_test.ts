@@ -298,3 +298,69 @@ Deno.test("markdown: streaming — unclosed trailing bold is literal text", () =
   assertEquals(allSpans(lines).some((s) => hasFlag(s, "bold")), false);
   assertEquals(allText(lines).includes("world"), true);
 });
+
+// ===========================================================================
+// GFM tables
+// ===========================================================================
+
+Deno.test("markdown: GFM table renders aligned rows + header rule", () => {
+  const lines = render("| a | b |\n| --- | --- |\n| 1 | 2 |\n| 333 | 4 |");
+  assertEquals(lines.length, 4); // header + rule + 2 rows
+  const rule = lineText(lines[1]);
+  assert(rule.includes("┼"), "header rule must contain ┼");
+  assert(rule.includes("─"), "header rule must contain ─");
+  // Columns align: every line has the same display width.
+  const widths = lines.map((l) => l.spans.reduce((n, s) => n + stringWidth(s.text), 0));
+  assertEquals(new Set(widths).size, 1, `widths differ: ${widths.join(",")}`);
+  assertNoOverflow(lines);
+});
+
+Deno.test("markdown: GFM table CJK cells align by display width", () => {
+  const lines = render(
+    "| 特性 | 状态 |\n| --- | --- |\n| Agent 循环 | ✅ 已完成 |\n| 工具系统 | ✅ 已完成 |",
+  );
+  const widths = lines.map((l) => l.spans.reduce((n, s) => n + stringWidth(s.text), 0));
+  assertEquals(new Set(widths).size, 1, `CJK widths differ: ${widths.join(",")}`);
+});
+
+Deno.test("markdown: GFM table shrinks columns to fit a narrow viewport", () => {
+  const lines = renderMarkdown(
+    "| 特性 | 说明 | 状态 |\n| --- | --- | --- |\n| Agent 循环 | 自主感知-推理-行动 | ✅ 已完成 |",
+    { width: 30, streaming: false, theme: THEME },
+  );
+  assertNoOverflow(lines, 30);
+  const text = allText(lines);
+  assert(text.includes("┼"), "header rule still present when narrow");
+});
+
+Deno.test("markdown: table header without a delimiter row renders as a paragraph", () => {
+  // A lone pipe row (no `| --- |` next line) is prose, not a table.
+  const lines = render("| a | b |\nsome text after");
+  const text = allText(lines);
+  assert(text.includes("| a | b |"), "raw pipe row kept as paragraph text");
+  assertFalse(text.includes("┼"), "no header rule without a delimiter");
+});
+
+Deno.test("markdown: streaming — header row before delimiter arrives is not swallowed", () => {
+  const partial = render("| a | b |", true);
+  assertEquals(allText(partial).includes("| a | b |"), true);
+  assertFalse(allText(partial).includes("┼"));
+});
+
+Deno.test("markdown: streaming — partial body rows render as they arrive", () => {
+  const lines = render("| a | b |\n| --- | --- |\n| 1 | 2 |", true);
+  const text = allText(lines);
+  assert(text.includes("┼"), "table with delimiter renders even while streaming");
+  assert(text.includes("1"), "first body row present");
+});
+
+Deno.test("markdown: short table row is blank-padded to the column count", () => {
+  const lines = render("| a | b | c |\n| --- | --- | --- |\n| 1 |");
+  const widths = lines.map((l) => l.spans.reduce((n, s) => n + stringWidth(s.text), 0));
+  assertEquals(new Set(widths).size, 1, `ragged row misaligned: ${widths.join(",")}`);
+});
+
+Deno.test("markdown: bold inside a table cell survives as a bold span", () => {
+  const lines = render("| a |\n| --- |\n| **x** |");
+  assertEquals(allSpans(lines).some((s) => hasFlag(s, "bold") && s.text.includes("x")), true);
+});
