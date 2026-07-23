@@ -364,6 +364,11 @@ export const run = async <Model, Msg>(
     }
   }
   offResize();
+  // Final frame: force a FULL repaint rather than a diff. Nothing will diff
+  // against this frame afterwards, and a self-contained last write makes the
+  // terminal's final state deterministic (a diff would only carry the cells
+  // that changed since the last coalesced render).
+  firstRender = true;
   renderNow(); // final frame: terminal state on screen matches the last model
   await writeChain; // flush pending render bytes before tearing down the screen
 
