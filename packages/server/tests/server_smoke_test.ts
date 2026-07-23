@@ -184,3 +184,70 @@ Deno.test({
     assert(text.includes("data: "), `expected data: line, got: ${text.slice(0, 200)}`);
   },
 });
+
+Deno.test({
+  name: "GET /events live tail delivers text.delta after replay drains",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { app, kernel } = await buildApp();
+    const { Effect } = await import("effect");
+    // One recorded event so the session exists and replay has something to
+    // drain before the live tail takes over.
+    await Effect.runPromise(kernel.append({
+      type: "session.created",
+      sessionId: "sse_live",
+      data: { workspace: "/tmp", model: "smoke-model" },
+    }));
+
+    const res = await app.fetch(
+      new Request("http://niuma.internal/events?session=sse_live"),
+    );
+    assertEquals(res.status, 200);
+    assert(res.body, "expected a streaming body");
+    const reader = res.body.getReader();
+
+    // Read until the replayed session.created frame arrives — that proves the
+    // handler has drained the JSONL and flipped to the live tail.
+    const readLine = async (): Promise<string> => {
+      const { value, done } = await reader.read();
+      assert(!done && value, "stream ended before the expected frame");
+      return new TextDecoder().decode(value);
+    };
+    let chunk = await readLine();
+    for (let i = 0; i < 20 && !chunk.includes("session.created"); i++) {
+      chunk += await readLine();
+    }
+    assert(
+      chunk.includes("session.created"),
+      `replay frame never arrived: ${chunk.slice(0, 200)}`,
+    );
+
+    // The bounded PubSub drops events published before the subscriber
+    // attaches, and the handler's `subscribe` runs after replay drains — give
+    // the live tail a tick to attach before emitting. Then emit through the
+    // kernel: if subscribe() merges the live PubSub, the delta shows up as an
+    // SSE frame promptly.
+    await new Promise((r) => setTimeout(r, 100));
+    await Effect.runPromise(kernel.live({
+      type: "text.delta",
+      ts: Date.now(),
+      sessionId: "sse_live",
+      data: { delta: "hello-live" },
+    }));
+
+    let liveChunk = await readLine();
+    for (let i = 0; i < 20 && !liveChunk.includes("text.delta"); i++) {
+      liveChunk += await readLine();
+    }
+    await reader.cancel();
+    assert(
+      liveChunk.includes("event: text.delta"),
+      `live text.delta never arrived on the SSE stream: ${liveChunk.slice(0, 200)}`,
+    );
+    assert(
+      liveChunk.includes("hello-live"),
+      `live frame missing the delta payload: ${liveChunk.slice(0, 200)}`,
+    );
+  },
+});

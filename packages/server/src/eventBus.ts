@@ -62,12 +62,21 @@ export const makeEventBus = (
       Stream.unwrap(
         Effect.gen(function* () {
           const ps = yield* getOrCreate(sessionId);
-          // Live-only events share the same stream boundary, but cursor only
-          // advances on recorded events (see publish()). The caller is
-          // responsible for filtering.
-          return Stream.fromPubSub(ps).pipe(
+          const recorded = Stream.fromPubSub(ps).pipe(
             Stream.filter((sse) => sse.cursor >= fromCursor),
           );
+          // Live-only events (text.delta / tool.progress / text.reset) ride
+          // the same subscription stream. They have no seq, so their cursor
+          // repeats the last recorded seq — consumers must treat a repeated
+          // cursor as live, never as a resumable position. Without this merge
+          // the live PubSub had no readers at all and the SSE consumer only
+          // saw recorded events — the text appeared in one shot at
+          // assistant.message instead of streaming.
+          const livePs = yield* getOrCreateLive(sessionId);
+          const liveStream = Stream.fromPubSub(livePs).pipe(
+            Stream.map((event) => ({ cursor: fromCursor - 1, event })),
+          );
+          return Stream.merge(recorded, liveStream);
         }),
       );
 
