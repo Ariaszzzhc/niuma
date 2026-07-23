@@ -1,17 +1,16 @@
 import { join } from "@std/path";
 import { ensureDirSync } from "jsr:@std/fs@^1.0.0/ensure-dir";
+import { niumaPaths } from "@niuma/config";
 
 const OUTPUT_LIMIT_BYTES = 30 * 1024;
 const OUTPUT_DIR = "output";
 
 let _resolvedRoot: string | null = null;
 
-/** ~/.config/niuma — same root the store package uses. */
+/** ~/.niuma — the user-level data root (niumaPaths().data). */
 export function dataDir(): string {
   if (_resolvedRoot) return _resolvedRoot;
-  const env = Deno.env.get("NIUMA_DATA_DIR");
-  const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "/tmp";
-  const root = env ?? join(home, ".config", "niuma");
+  const root = niumaPaths().data;
   ensureDirSync(root);
   _resolvedRoot = root;
   return root;
@@ -45,7 +44,7 @@ export function safeCallId(callId: string): string {
 
 /**
  * Cap `text` at 30 KiB. Anything past the cap is written to
- * ~/.config/niuma/output/<callId>.log and the returned `content` is
+ * ~/.niuma/output/<callId>.log and the returned `content` is
  * annotated with a `[truncated, full at <spillPath>]` line so the model can
  * still see a hint without paying the token cost.
  */

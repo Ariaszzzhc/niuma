@@ -1,4 +1,4 @@
-// Credential store: ~/.local/share/niuma/auth.json (mode 0600).
+// Credential store: ~/.niuma/auth.json (mode 0600).
 //
 // Same convention as opencode (packages/opencode/src/auth/index.ts): a flat
 // JSON object keyed by provider id, values tagged by auth type. Only the

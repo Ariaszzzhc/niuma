@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { join } from "@std/path";
 import type { PermissionRule } from "@niuma/schema";
 import { parseRule, parseRuleWithAction } from "./parser.ts";
 
@@ -15,7 +16,7 @@ export const DEFAULT_BUILTINS: ReadonlyArray<PermissionRule> = [];
 /** Default path to the user config file. */
 export function defaultConfigPath(): string {
   const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "~";
-  return home + "/.config/niuma/config.json";
+  return join(home, ".niuma", "config.json");
 }
 
 function coerceRule(input: unknown): PermissionRule | null {

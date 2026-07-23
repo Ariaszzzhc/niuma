@@ -1,15 +1,15 @@
-// XDG directory layout for niuma, following opencode's convention
-// (packages/core/src/global.ts):
+// Directory layout for niuma:
 //
-//   data   = $XDG_DATA_HOME/niuma   (~/.local/share/niuma)  — auth.json, log/,
-//          mutable user data owned by the app
-//   config = $XDG_CONFIG_HOME/niuma (~/.config/niuma)       — config.toml,
-//          plus the session event logs / sqlite projection that predate the
-//          config split (migrating those is out of scope for this change)
+//   user-level    = ~/.niuma — the single data root: config.toml, mcp.json,
+//                   auth.json, log/, sessions/, niuma.db, tool-output spills
+//   project-level = <workspace>/.niuma — config and resources only, NEVER
+//                   data (sessions, db, logs live user-level only)
+//
+// When neither HOME nor USERPROFILE is set, the user-level root falls back
+// to <cwd>/.niuma.
 //
 // Overrides:
-//   NIUMA_DATA_DIR    — replaces BOTH roots (the historical single-root
-//                      layout the store/tools packages already honour)
+//   NIUMA_DATA_DIR    — replaces the user-level root
 //   NIUMA_CONFIG      — path to an explicit config.toml file
 //
 // Deno.env is read defensively: under --deny-env the getters throw, which
@@ -29,15 +29,15 @@ const home = (): string =>
   envGet("HOME") ?? envGet("USERPROFILE") ?? Deno.cwd();
 
 export interface NiumaPaths {
-  /** Root for mutable app data (auth.json, log/). */
+  /** User-level data root: config.toml, mcp.json, sessions/, niuma.db. */
   readonly data: string;
-  /** Root for user configuration (config.toml). */
+  /** Root for user configuration — same as `data`. */
   readonly config: string;
   /** Log directory: <data>/log. */
   readonly log: string;
   /** Path to auth.json: <data>/auth.json. */
   readonly authFile: string;
-  /** Path to the config file: NIUMA_CONFIG override or <config>/config.toml. */
+  /** Path to the config file: NIUMA_CONFIG override or <data>/config.toml. */
   readonly configFile: string;
 }
 
@@ -45,15 +45,12 @@ export const niumaPaths = (): NiumaPaths => {
   const override = envGet("NIUMA_DATA_DIR");
   const data = override && override.length > 0
     ? override
-    : join(envGet("XDG_DATA_HOME") ?? join(home(), ".local", "share"), "niuma");
-  const config = override && override.length > 0
-    ? override
-    : join(envGet("XDG_CONFIG_HOME") ?? join(home(), ".config"), "niuma");
+    : join(home(), ".niuma");
   return {
     data,
-    config,
+    config: data,
     log: join(data, "log"),
     authFile: join(data, "auth.json"),
-    configFile: envGet("NIUMA_CONFIG") ?? join(config, "config.toml"),
+    configFile: envGet("NIUMA_CONFIG") ?? join(data, "config.toml"),
   };
 };

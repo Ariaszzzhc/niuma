@@ -9,7 +9,7 @@ import { makeMockProvider } from "@niuma/provider";
 import { parseConfig } from "@niuma/config";
 import { Effect } from "effect";
 
-// Use a temp data dir so the smoke test never touches ~/.config/niuma.
+// Use a temp data dir so the smoke test never touches ~/.niuma.
 const TMP_DIR = await Deno.makeTempDir({ prefix: "niuma_smoke_" });
 const sessionsDir = join(TMP_DIR, "sessions");
 const dbPath = join(TMP_DIR, "niuma.db");

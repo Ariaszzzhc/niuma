@@ -94,7 +94,7 @@ export interface ToolOutput {
   isError?: boolean;
   /**
    * When truncation kicked in, the full output was spilled to
-   * ~/.config/niuma/output/<callId>.log and this points at it.
+   * ~/.niuma/output/<callId>.log and this points at it.
    */
   spillPath?: string;
   /** Echoed by the pipeline so consumers (agent adapter) don't lose track. */

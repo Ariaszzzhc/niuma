@@ -22,35 +22,18 @@ const withEnv = async <T>(
   }
 };
 
-Deno.test("niumaPaths: XDG defaults under HOME", async () => {
+Deno.test("niumaPaths: defaults under HOME", async () => {
   await withEnv(
-    { NIUMA_DATA_DIR: undefined, NIUMA_CONFIG: undefined, XDG_DATA_HOME: undefined, XDG_CONFIG_HOME: undefined },
+    { NIUMA_DATA_DIR: undefined, NIUMA_CONFIG: undefined },
     () => {
       const home = Deno.env.get("HOME")!;
       const p = niumaPaths();
       // Expectations go through join() so they hold with Windows separators.
-      assertEquals(p.data, join(home, ".local", "share", "niuma"));
-      assertEquals(p.config, join(home, ".config", "niuma"));
-      assertEquals(p.log, join(home, ".local", "share", "niuma", "log"));
-      assertEquals(p.authFile, join(home, ".local", "share", "niuma", "auth.json"));
-      assertEquals(p.configFile, join(home, ".config", "niuma", "config.toml"));
-    },
-  );
-});
-
-Deno.test("niumaPaths: XDG_DATA_HOME / XDG_CONFIG_HOME honoured", async () => {
-  await withEnv(
-    {
-      NIUMA_DATA_DIR: undefined,
-      NIUMA_CONFIG: undefined,
-      XDG_DATA_HOME: "/tmp/xdg-data",
-      XDG_CONFIG_HOME: "/tmp/xdg-config",
-    },
-    () => {
-      const p = niumaPaths();
-      assertEquals(p.data, join("/tmp/xdg-data", "niuma"));
-      assertEquals(p.config, join("/tmp/xdg-config", "niuma"));
-      assertEquals(p.authFile, join("/tmp/xdg-data", "niuma", "auth.json"));
+      assertEquals(p.data, join(home, ".niuma"));
+      assertEquals(p.config, join(home, ".niuma"));
+      assertEquals(p.log, join(home, ".niuma", "log"));
+      assertEquals(p.authFile, join(home, ".niuma", "auth.json"));
+      assertEquals(p.configFile, join(home, ".niuma", "config.toml"));
     },
   );
 });

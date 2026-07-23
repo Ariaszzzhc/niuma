@@ -1,4 +1,5 @@
 import { join } from "@std/path";
+import { niumaPaths } from "@niuma/config";
 
 export interface DataPaths {
   readonly root: string;
@@ -6,21 +7,9 @@ export interface DataPaths {
   readonly db: string;
 }
 
-const envGet = (name: string): string | undefined => {
-  try {
-    return Deno.env.get(name);
-  } catch {
-    return undefined;
-  }
-};
-
-export const defaultDataRoot = (): string => {
-  const override = envGet("NIUMA_DATA_DIR");
-  if (override && override.length > 0) return override;
-  const home = envGet("HOME");
-  if (!home) return join(Deno.cwd(), ".niuma");
-  return join(home, ".config", "niuma");
-};
+// The canonical root resolution (NIUMA_DATA_DIR override, ~/.niuma default,
+// <cwd>/.niuma fallback) lives in packages/config/src/paths.ts.
+export const defaultDataRoot = (): string => niumaPaths().data;
 
 export const dataPaths = (root: string = defaultDataRoot()): DataPaths => ({
   root,

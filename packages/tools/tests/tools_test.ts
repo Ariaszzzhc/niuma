@@ -386,10 +386,9 @@ Deno.test("truncate spills to disk when output > 30KB", async () => {
   assertEquals(onDisk.length, big.length);
 });
 
-Deno.test("dataDir resolves under ~/.config/niuma by default", () => {
+Deno.test("dataDir resolves under ~/.niuma by default", () => {
   const dir = dataDir();
-  assertStringIncludes(dir, ".config");
-  assertStringIncludes(dir, "niuma");
+  assertStringIncludes(dir, ".niuma");
 });
 
 Deno.test("safeCallId strips path separators and shell-meaningful chars", () => {

@@ -1,11 +1,10 @@
 import { ensureDirSync } from "@std/fs";
 import { join } from "@std/path";
+import { niumaPaths } from "@niuma/config";
 
-// Honour NIUMA_DATA_DIR the same way packages/server/src/paths.ts does, so
-// sessions/*.jsonl, niuma.db and tool-output spills all share one root.
-export const DEFAULT_DATA_DIR: string =
-  Deno.env.get("NIUMA_DATA_DIR") ||
-  join(Deno.env.get("HOME") ?? "", ".config", "niuma");
+// Honour NIUMA_DATA_DIR via packages/config/src/paths.ts, so sessions/*.jsonl,
+// niuma.db and tool-output spills all share one root (~/.niuma by default).
+export const DEFAULT_DATA_DIR: string = niumaPaths().data;
 
 export const DEFAULT_SESSIONS_DIR = join(DEFAULT_DATA_DIR, "sessions");
 export const DEFAULT_DB_PATH = join(DEFAULT_DATA_DIR, "niuma.db");

@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { join } from "@std/path";
 import {
   DEFAULT_BUILTINS,
   defaultConfigPath,
@@ -28,10 +29,10 @@ Deno.test("config: DEFAULT_BUILTINS is empty (conservative)", () => {
   assertEquals(DEFAULT_BUILTINS.length, 0);
 });
 
-Deno.test("config: defaultConfigPath points at ~/.config/niuma/config.json", () => {
+Deno.test("config: defaultConfigPath points at ~/.niuma/config.json", () => {
   const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "";
   if (home.length === 0) return;
-  assertEquals(defaultConfigPath(), home + "/.config/niuma/config.json");
+  assertEquals(defaultConfigPath(), join(home, ".niuma", "config.json"));
 });
 
 Deno.test("config: missing file → []", async () => {

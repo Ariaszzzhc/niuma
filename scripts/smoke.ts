@@ -66,10 +66,9 @@ const main = async (): Promise<void> => {
     cwd: ROOT,
     env: {
       ...Deno.env.toObject(),
-      // Isolate the run from the developer's real ~/.config/niuma and
-      // ~/.local/share/niuma: sessions, the sqlite projection, and logs all
-      // land under the temp dir. The mock provider means no config.toml /
-      // auth.json is consulted either.
+      // Isolate the run from the developer's real ~/.niuma: sessions, the
+      // sqlite projection, and logs all land under the temp dir. The mock
+      // provider means no config.toml / auth.json is consulted either.
       NIUMA_DATA_DIR: dataDir,
     },
     stdin: "piped",
