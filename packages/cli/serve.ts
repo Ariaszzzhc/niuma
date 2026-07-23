@@ -16,7 +16,7 @@ export interface ServeOptions {
 export const runServe = async (opts: ServeOptions): Promise<number> => {
   // Logger goes to stdout via logtape's console sink — fine for a long-running
   // server process where there is no "final answer" reservation.
-  await setupLogger();
+  await setupLogger({ console: "stdout" });
 
   let app;
   try {
