@@ -14,9 +14,10 @@ export interface ServeOptions {
 }
 
 export const runServe = async (opts: ServeOptions): Promise<number> => {
-  // Logger goes to stdout via logtape's console sink — fine for a long-running
-  // server process where there is no "final answer" reservation.
-  await setupLogger({ console: "stdout" });
+  // Logging goes to the JSON-lines file under <data>/log only — no console
+  // sink (see logger.ts). The lifecycle lines below stay on stderr: they are
+  // operator feedback printed once at startup/shutdown, not log records.
+  await setupLogger();
 
   let app;
   try {

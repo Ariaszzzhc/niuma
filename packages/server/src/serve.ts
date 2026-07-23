@@ -8,7 +8,7 @@ import { setupLogger, log } from "./logger.ts";
 if (import.meta.main) {
   const port = 4096;
   const host = "127.0.0.1";
-  await setupLogger({ console: "stdout" });
+  await setupLogger();
   const { app } = await createServerApp();
   log("niuma.server").info("serving on http://{host}:{port}", { host, port });
   Deno.serve({ port, hostname: host }, app.fetch);

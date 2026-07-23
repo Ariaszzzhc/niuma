@@ -12,8 +12,10 @@
 // as `{kind:"response" | "chunk" | "end" | "error"}` messages per the
 // tunnel protocol defined in ./tunnel.ts.
 //
-// All logging is redirected to stderr (logtape's default console sink would
-// pollute stdout, which the one-shot flow reserves for the final answer).
+// Logging goes to a JSON-lines file under <data>/log only — never to the
+// console: a worker thread shares the parent's stdio, and both callers own
+// the terminal (the TUI draws into the alternate screen; one-shot reserves
+// stdout for the final answer).
 
 import { bootstrap, createServerApp, setupLogger } from "@niuma/server";
 import { parseConfig } from "@niuma/config";
@@ -45,9 +47,9 @@ self.onmessage = async (e: MessageEvent) => {
   if (msg.kind === "init") {
     const port: MessagePort = msg.port;
     try {
-      // stderr console + JSON-lines file under <data>/log; level from
-      // [core] log_level in config.toml.
-      await setupLogger({ console: "stderr" });
+      // JSON-lines file under <data>/log; level from [core] log_level in
+      // config.toml. No console sink — see the header comment.
+      await setupLogger();
       const app = msg.mockProvider === true
         ? (await createServerApp({
           bootstrap: await bootstrap({

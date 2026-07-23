@@ -4,21 +4,17 @@
 // "info") — no environment variable. Project-level niuma.toml files are NOT
 // consulted here: logging is per-process (one log file per PID), while the
 // server can host sessions from many workspaces, so a per-project log level
-// has no coherent meaning. Two sinks:
-//   - a console/stream sink chosen by the caller (stderr for the one-shot
-//     worker where stdout is reserved for the final answer, stdout for the
-//     long-running `niuma serve` process)
-//   - a JSON-lines file under <data>/log/ (opencode's convention: XDG data
-//     dir + app name + "log"), so post-mortems don't depend on the terminal
-//     still being around.
+// has no coherent meaning.
+//
+// The ONLY sink is a JSON-lines file under <data>/log/ (opencode's
+// convention: XDG data dir + app name + "log"). There is deliberately no
+// console/stream sink: the server runs either inside a worker thread
+// (interactive / one-shot CLI), where worker stdio is the parent's terminal
+// — the TUI owns the alternate screen and any stray write corrupts the
+// frame — or as a plain daemon (`niuma serve`), where nobody is watching the
+// terminal and the file is the durable record either way.
 
-import {
-  configure,
-  getConsoleSink,
-  getLogger,
-  getStreamSink,
-  type Sink,
-} from "@logtape/logtape";
+import { configure, getLogger, type Sink } from "@logtape/logtape";
 import { loadConfigFile, niumaPaths, type LogLevel } from "@niuma/config";
 import { join } from "@std/path";
 
@@ -33,8 +29,6 @@ const CATEGORIES: ReadonlyArray<string | readonly string[]> = [
 ];
 
 export interface LoggerOptions {
-  /** Console sink: "stdout" (serve) or "stderr" (one-shot worker). */
-  readonly console?: "stdout" | "stderr";
   /** Skip the file sink (tests). Default: write to <data>/log/. */
   readonly file?: boolean;
 }
@@ -78,39 +72,25 @@ export const setupLogger = async (
     // Unreadable/invalid config must not prevent startup logging.
   }
 
-  const sinks: Record<string, Sink> = {};
-  const activeSinks: string[] = [];
+  if (opts.file === false) return;
 
-  if (opts.console !== undefined) {
-    sinks.console = opts.console === "stderr"
-      ? getStreamSink(Deno.stderr.writable)
-      : getConsoleSink();
-    activeSinks.push("console");
+  try {
+    const { log: logDir } = niumaPaths();
+    await Deno.mkdir(logDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const sinks = { file: makeFileSink(join(logDir, `${stamp}-${Deno.pid}.log`)) };
+    await configure({
+      sinks,
+      filters: {},
+      loggers: CATEGORIES.map((category) => ({
+        category: category as string,
+        lowestLevel: level,
+        sinks: ["file"],
+      })),
+    });
+  } catch {
+    // No writable log dir — run without logging rather than crash.
   }
-
-  if (opts.file !== false) {
-    try {
-      const { log: logDir } = niumaPaths();
-      await Deno.mkdir(logDir, { recursive: true });
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      sinks.file = makeFileSink(join(logDir, `${stamp}-${Deno.pid}.log`));
-      activeSinks.push("file");
-    } catch {
-      // No writable log dir — console-only it is.
-    }
-  }
-
-  if (activeSinks.length === 0) return;
-
-  await configure({
-    sinks,
-    filters: {},
-    loggers: CATEGORIES.map((category) => ({
-      category: category as string,
-      lowestLevel: level,
-      sinks: activeSinks,
-    })),
-  });
 };
 
 export const log = (category: string = "niuma.server") => getLogger(category);
