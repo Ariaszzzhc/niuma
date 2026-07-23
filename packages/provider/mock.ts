@@ -17,8 +17,8 @@ import type { ChatRequest, ModelRef, StreamEvent, Usage } from "./domain.ts";
  * listModels returns a single placeholder model so any caller that probes
  * the catalog before streaming never touches the network.
  *
- * Wiring lives in @niuma/server's bootstrap (gated on NIUMA_MOCK_PROVIDER=1)
- * so production runs are unaffected.
+ * Wiring: tests and the smoke harness inject it via BootstrapDeps.infra
+ * (or construct it directly), so production runs are unaffected.
  */
 export const makeMockProvider = (): ProviderAdapter => {
   const listModels = (): Effect.Effect<ReadonlyArray<ModelRef>> =>

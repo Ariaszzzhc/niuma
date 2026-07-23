@@ -43,9 +43,9 @@ export type {
 export { parseOpenAISSE } from "./sse.ts";
 
 export {
-  OpenAIProviderLive,
-  loadConfigFromEnv,
   makeOpenAIAdapter,
+  normalizeConfig,
+  OpenAIProviderLive,
 } from "./openai.ts";
 export type { OpenAIProviderConfig } from "./openai.ts";
 

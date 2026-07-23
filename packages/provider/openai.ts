@@ -20,17 +20,16 @@ export interface OpenAIProviderConfig {
   readonly defaultModel: string;
 }
 
+// NOTE: this package deliberately knows nothing about where configuration
+// comes from. Credentials/endpoints are loaded by @niuma/config (config.toml
+// + auth.json) and passed in explicitly by the caller (server bootstrap).
+// No Deno.env reads here.
+
 const trimUrl = (u: string): string => u.replace(/\/+$/, "");
 
-export const loadConfigFromEnv = (
-  env: Record<string, string | undefined> = typeof Deno !== "undefined"
-    ? Deno.env.toObject()
-    : {},
-): OpenAIProviderConfig => ({
-  baseUrl: trimUrl(env.NIUMA_BASE_URL ?? "https://api.openai.com/v1"),
-  apiKey: env.NIUMA_API_KEY ?? "",
-  defaultModel: env.NIUMA_MODEL ?? "gpt-5-mini",
-});
+export const normalizeConfig = (
+  config: OpenAIProviderConfig,
+): OpenAIProviderConfig => ({ ...config, baseUrl: trimUrl(config.baseUrl) });
 
 const isAbortError = (e: unknown): boolean =>
   e instanceof Error &&
@@ -142,8 +141,10 @@ const fetchModels = (
 
 export const makeOpenAIAdapter = (
   config: OpenAIProviderConfig,
-): ProviderAdapter => ({
-  listModels: () => fetchModels(config),
+): ProviderAdapter => {
+  const cfg = normalizeConfig(config);
+  return {
+    listModels: () => fetchModels(cfg),
 
   stream: (req: ChatRequest) =>
     Stream.unwrap(
@@ -170,7 +171,7 @@ export const makeOpenAIAdapter = (
         }
 
         const fetched = yield* withRetry(
-          fetchCompletion(config, req, controller.signal),
+          fetchCompletion(cfg, req, controller.signal),
           () => controller.signal.aborted,
         ).pipe(
           Effect.catchIf(
@@ -196,12 +197,13 @@ export const makeOpenAIAdapter = (
         );
       }),
     ),
-});
+  };
+};
 
 export const OpenAIProviderLive = (
-  config?: Partial<OpenAIProviderConfig>,
+  config: OpenAIProviderConfig,
 ): Layer.Layer<Provider> =>
   Layer.succeed(
     Provider,
-    makeOpenAIAdapter({ ...loadConfigFromEnv(), ...config }),
+    makeOpenAIAdapter(normalizeConfig(config)),
   );
