@@ -1,0 +1,337 @@
+// ===========================================================================
+// @niuma/tui — editor reducer table tests
+// ---------------------------------------------------------------------------
+// Pure reducer assertions over a table of scenarios. Each case feeds a
+// sequence of InputEvents and asserts the resulting EditorState / action.
+// ===========================================================================
+
+import { assert, assertStrictEquals } from "jsr:@std/assert";
+import { describe, it } from "jsr:@std/testing/bdd";
+import type { InputEvent, KeyMods, NamedKey } from "@niuma/tuikit";
+// Warm the native lib at module load: renderEditor reaches stringWidth, whose
+// lazy dlopen would otherwise trip the per-test resource sanitizer. Loading
+// during module eval (the pattern tuikit's own ffi_test uses) avoids that.
+import { stringWidth } from "@niuma/tuikit";
+void stringWidth(" ");
+import {
+  createEditorState,
+  editorIsEmpty,
+  editorReducer,
+  editorText,
+  renderEditor,
+} from "../src/components/editor.ts";
+
+// -- event builders ----------------------------------------------------------
+
+const noMods: KeyMods = { shift: false, alt: false, ctrl: false, super: false };
+
+const text = (ch: string, mods: Partial<KeyMods> = {}): InputEvent => ({
+  kind: "text",
+  text: ch,
+  mods: { ...noMods, ...mods },
+  eventType: "press",
+});
+
+const key = (k: NamedKey, mods: Partial<KeyMods> = {}): InputEvent => ({
+  kind: "key",
+  key: k,
+  mods: { ...noMods, ...mods },
+  eventType: "press",
+});
+
+const paste = (body: string): InputEvent => ({ kind: "paste", text: body });
+
+/** Feed a sequence of events into a fresh editor, returning the final state
+ *  and the first submit action encountered (if any). */
+const feed = (
+  events: readonly InputEvent[],
+  start = createEditorState(),
+): { state: typeof start; submit: string | null } => {
+  let state = start;
+  let submit: string | null = null;
+  for (const ev of events) {
+    const [next, action] = editorReducer(state, ev);
+    state = next;
+    if (action?.type === "submit") submit = action.text;
+  }
+  return { state, submit };
+};
+
+// ---------------------------------------------------------------------------
+
+describe("editor: printable insert", () => {
+  it("appends typed characters and tracks the caret", () => {
+    const { state } = feed([text("a"), text("b"), text("c")]);
+    assertStrictEquals(editorText(state), "abc");
+    assertStrictEquals(state.cursor.row, 0);
+    assertStrictEquals(state.cursor.col, 3);
+  });
+
+  it("inserts at the caret in the middle of the line", () => {
+    const { state } = feed([text("ac"), key("left"), text("b")]);
+    assertStrictEquals(editorText(state), "abc");
+    assertStrictEquals(state.cursor.col, 2);
+  });
+});
+
+describe("editor: paste", () => {
+  it("inserts a small multi-line paste verbatim", () => {
+    const { state } = feed([paste("line1\nline2\nline3")]);
+    assertStrictEquals(editorText(state), "line1\nline2\nline3");
+    assertStrictEquals(state.lines.length, 3);
+  });
+
+  it("collapses a >5-line paste into a marker line", () => {
+    const body = Array.from({ length: 6 }, (_, i) => `l${i}`).join("\n");
+    const { state } = feed([paste(body)]);
+    assertStrictEquals(state.lines.length, 1);
+    assertStrictEquals(state.lines[0], "[pasted 6 lines]");
+  });
+
+  it("does not collapse a 5-line paste (boundary)", () => {
+    const body = Array.from({ length: 5 }, (_, i) => `l${i}`).join("\n");
+    const { state } = feed([paste(body)]);
+    assertStrictEquals(state.lines.length, 5);
+  });
+});
+
+describe("editor: deletion", () => {
+  it("backspace removes the previous char", () => {
+    const { state } = feed([text("ab"), key("backspace")]);
+    assertStrictEquals(editorText(state), "a");
+  });
+
+  it("backspace at col 0 joins with the previous line", () => {
+    const { state } = feed([text("ab"), key("enter", { shift: true }), text("cd"), key("home"), key("backspace")]);
+    assertStrictEquals(editorText(state), "abcd");
+    assertStrictEquals(state.lines.length, 1);
+  });
+
+  it("delete removes the char at the caret", () => {
+    const { state } = feed([text("ab"), key("left"), key("delete")]);
+    // caret at "a|b"; delete removes "b" to the right of the caret -> "a"
+    assertStrictEquals(editorText(state), "a");
+  });
+});
+
+describe("editor: enter / submit", () => {
+  it("plain enter submits and clears the buffer, recording history", () => {
+    const { state, submit } = feed([text("hi"), key("enter")]);
+    assertStrictEquals(submit, "hi");
+    assert(editorIsEmpty(state));
+    assertStrictEquals(state.history.length, 1);
+    assertStrictEquals(state.history[0], "hi");
+  });
+
+  it("shift+enter inserts a newline instead of submitting", () => {
+    const { state, submit } = feed([text("a"), key("enter", { shift: true }), text("b")]);
+    assertStrictEquals(submit, null);
+    assertStrictEquals(editorText(state), "a\nb");
+  });
+
+  it("ctrl+m also submits", () => {
+    const { submit } = feed([text("yo"), text("m", { ctrl: true })]);
+    assertStrictEquals(submit, "yo");
+  });
+});
+
+describe("editor: word jumps", () => {
+  it("alt+right jumps over a word", () => {
+    const { state } = feed([text("hello world"), key("home"), key("right", { alt: true })]);
+    // after "hello " (the leading word + trailing space consumed up to "world")
+    assertStrictEquals(state.cursor.col, 6);
+  });
+
+  it("alt+left jumps back over a word", () => {
+    const { state } = feed([
+      text("hello world"),
+      key("home"),
+      key("right", { alt: true }),
+      key("left", { alt: true }),
+    ]);
+    assertStrictEquals(state.cursor.col, 0);
+  });
+});
+
+describe("editor: kill ring (readline-style)", () => {
+  it("ctrl+u kills to the start of the line", () => {
+    const { state } = feed([text("abcdef"), key("left"), key("left"), key("left"), text("\x15")]);
+    // legacy ctrl+u arrives as raw byte 0x15
+    assertStrictEquals(editorText(state), "def");
+    assertStrictEquals(state.cursor.col, 0);
+  });
+
+  it("ctrl+k kills to the end of the line", () => {
+    const { state } = feed([text("abcdef"), key("left"), key("left"), key("left"), text("\x0b")]);
+    assertStrictEquals(editorText(state), "abc");
+  });
+
+  it("ctrl+w deletes the previous word", () => {
+    const { state } = feed([text("hello world"), text("\x17")]);
+    assertStrictEquals(editorText(state), "hello ");
+  });
+
+  it("ctrl+a / ctrl+e move to line start / end", () => {
+    const { state: s1 } = feed([text("abc"), text("\x01")]); // ctrl+a
+    assertStrictEquals(s1.cursor.col, 0);
+    const { state: s2 } = feed([text("abc"), key("home"), text("\x05")]); // ctrl+e
+    assertStrictEquals(s2.cursor.col, 3);
+  });
+});
+
+describe("editor: history", () => {
+  it("up/down recall previously submitted prompts", () => {
+    let state = createEditorState();
+    let submitted: string[] = [];
+    for (const prompt of ["first", "second"]) {
+      const r = feed([text(prompt), key("enter")], state);
+      state = r.state;
+      if (r.submit) submitted.push(r.submit);
+    }
+    assertStrictEquals(submitted.join(","), "first,second");
+
+    // up -> most recent ("second")
+    const [s1] = editorReducer(state, key("up"));
+    assertStrictEquals(editorText(s1), "second");
+    // up -> older ("first")
+    const [s2] = editorReducer(s1, key("up"));
+    assertStrictEquals(editorText(s2), "first");
+    // down -> back to "second"
+    const [s3] = editorReducer(s2, key("down"));
+    assertStrictEquals(editorText(s3), "second");
+    // down past newest -> restores the (empty) draft
+    const [s4] = editorReducer(s3, key("down"));
+    assertStrictEquals(editorText(s4), "");
+    assertStrictEquals(s4.historyCursor, null);
+  });
+
+  it("history preserves an in-progress draft", () => {
+    let state = createEditorState();
+    const r = feed([text("first"), key("enter")], state);
+    state = r.state;
+    // start a draft, then browse history and come back
+    const d1 = feed([text("partial")], state).state;
+    const [up] = editorReducer(d1, key("up"));
+    assertStrictEquals(editorText(up), "first");
+    const [down] = editorReducer(up, key("down"));
+    assertStrictEquals(editorText(down), "partial");
+  });
+
+  it("up/down navigate rows when the buffer is multi-line", () => {
+    const { state } = feed([text("line0"), key("enter", { shift: true }), text("line1")]);
+    assertStrictEquals(state.lines.length, 2);
+    const [up] = editorReducer(state, key("up"));
+    assertStrictEquals(up.cursor.row, 0);
+  });
+});
+
+describe("editor: render", () => {
+  it("produces a bordered box with top + bottom borders", () => {
+    const state = feed([text("hi")]).state;
+    const lines = renderEditor(state, 30, true, {
+      border: { rgb: [1, 1, 1] },
+      accent: { rgb: [2, 2, 2] },
+      text: { rgb: [3, 3, 3] },
+      placeholder: { rgb: [4, 4, 4] },
+    });
+    assert(lines.length >= 3); // top + content + bottom
+    assertStrictEquals(lines[0].spans[0].text.startsWith("╭"), true);
+    assertStrictEquals(lines[lines.length - 1].spans[0].text.startsWith("╰"), true);
+  });
+
+  it("shows a dim placeholder when empty", () => {
+    const state = createEditorState("type here");
+    const lines = renderEditor(state, 30, true, {
+      border: "default",
+      accent: "default",
+      text: "default",
+      placeholder: { rgb: [9, 9, 9] },
+    });
+    const content = lines[1].spans.map((s) => s.text).join("");
+    assert(content.includes("type here"));
+  });
+});
+
+describe("editor: purity", () => {
+  it("does not mutate the input state", () => {
+    const before = createEditorState();
+    const snapshot = JSON.stringify(before);
+    editorReducer(before, text("x"));
+    assertStrictEquals(JSON.stringify(before), snapshot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// grapheme-aware cursor (emoji / combining sequences move + render as one cell)
+// ---------------------------------------------------------------------------
+
+describe("editor: grapheme cursor", () => {
+  it("arrow-left steps one grapheme at a time across an emoji", () => {
+    // "a👪b" is 3 graphemes but 4 UTF-16 code units. The caret must step
+    // 3 -> 2 -> 1 -> 0 (one cluster per press), never landing mid-surrogate.
+    const { state } = feed([text("a"), text("👪"), text("b")]);
+    assertStrictEquals(editorText(state), "a👪b");
+    assertStrictEquals(state.cursor.col, 3);
+
+    const [s1] = editorReducer(state, key("left"));
+    assertStrictEquals(s1.cursor.col, 2);
+    const [s2] = editorReducer(s1, key("left"));
+    assertStrictEquals(s2.cursor.col, 1);
+    const [s3] = editorReducer(s2, key("left"));
+    assertStrictEquals(s3.cursor.col, 0);
+  });
+
+  it("backspace removes a whole emoji cluster, not a surrogate half", () => {
+    const { state } = feed([text("a"), text("👪")]);
+    assertStrictEquals(editorText(state), "a👪");
+    const [after] = editorReducer(state, key("backspace"));
+    assertStrictEquals(editorText(after), "a");
+    assertStrictEquals(after.cursor.col, 1);
+  });
+
+  it("delete removes a whole emoji cluster at the caret", () => {
+    // "a👪b", caret between 'a' and the emoji (col 1) -> delete drops the emoji
+    const base = feed([text("a"), text("👪"), text("b")]).state;
+    const [at1] = editorReducer(base, key("left")); // 3 -> 2
+    const [atA] = editorReducer(at1, key("left")); // 2 -> 1
+    assertStrictEquals(atA.cursor.col, 1);
+    const [after] = editorReducer(atA, key("delete"));
+    assertStrictEquals(editorText(after), "ab");
+  });
+
+  it("word jump treats an emoji as part of a word (never splits it)", () => {
+    const { state } = feed([text("hello 👪world")]);
+    const [home] = editorReducer(state, key("home"));
+    const [jumped] = editorReducer(home, key("right", { alt: true }));
+    // lands after "hello " (6 clusters), the emoji stays attached to "world"
+    assertStrictEquals(jumped.cursor.col, 6);
+  });
+
+  it("render stamps the whole emoji cluster as the reverse caret cell", () => {
+    // caret on the emoji (col 1 of "a👪b"); the reversed span must be the full
+    // cluster, not a half-width surrogate.
+    const base = feed([text("a"), text("👪"), text("b")]).state;
+    const [atEmoji] = editorReducer(base, key("left")); // 3 -> 2
+    const [onEmoji] = editorReducer(atEmoji, key("left")); // 2 -> 1
+    const lines = renderEditor(onEmoji, 30, true, {
+      border: "default",
+      accent: "default",
+      text: "default",
+      placeholder: "default",
+    });
+    const cursorRow = lines[1];
+    const reversed = cursorRow.spans.find((s) => s.style.reverse === true);
+    assert(reversed !== undefined, "a reversed caret cell must exist");
+    assertStrictEquals(reversed!.text, "👪");
+  });
+
+  it("a ZWJ family sequence is one caret step", () => {
+    const family = "👨‍👩‍👧"; // one grapheme cluster
+    const { state } = feed([text("a"), text(family), text("b")]);
+    assertStrictEquals(state.cursor.col, 3); // a | family | b
+    const [s1] = editorReducer(state, key("left"));
+    assertStrictEquals(s1.cursor.col, 2);
+    const [after] = editorReducer(s1, key("backspace"));
+    assertStrictEquals(editorText(after), "ab");
+  });
+});

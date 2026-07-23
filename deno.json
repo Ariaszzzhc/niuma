@@ -10,7 +10,8 @@
     "packages/server",
     "packages/cli",
     "packages/config",
-    "packages/tuikit"
+    "packages/tuikit",
+    "packages/tui"
   ],
   "imports": {
     "effect": "npm:effect@^4.0.0-beta.100",
@@ -34,13 +35,14 @@
     "@niuma/agent": "./packages/agent/mod.ts",
     "@niuma/server": "./packages/server/mod.ts",
     "@niuma/config": "./packages/config/mod.ts",
-    "@niuma/tuikit": "./packages/tuikit/mod.ts"
+    "@niuma/tuikit": "./packages/tuikit/mod.ts",
+    "@niuma/tui": "./packages/tui/mod.ts"
   },
   "tasks": {
     "check": "deno check packages/*/mod.ts packages/cli/src/main.ts",
     "build:native": "cd packages/tuikit/native && cargo build --release",
     "cli": "deno run --allow-all --unstable-worker-options packages/cli/src/main.ts",
-    "test": "deno test --allow-all packages/"
+    "test": "deno test --allow-all --unstable-worker-options packages/"
   },
   "compilerOptions": {
     "strict": true,
