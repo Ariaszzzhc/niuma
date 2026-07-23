@@ -446,7 +446,8 @@ export type KeyRecordDecode = never; // marker type; see doc above.
 
 // -- src/ffi.ts ---------------------------------------------------------------
 // Owns Deno.dlopen, library path resolution per Deno.build.os
-// (native/target/release/libniuma_tuikit.{dylib,so,dll}), and a clear error
+// (native/target/release/libniuma_tuikit.{dylib,so} on Unix, niuma_tuikit.dll
+// on Windows), and a clear error
 // ("run deno task build:native") when the artifact is missing.
 
 /** Resolve the platform-specific library path relative to this package. */

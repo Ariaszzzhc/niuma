@@ -6,7 +6,8 @@ description = "Native hot-path core for @niuma/tuikit (width / cell buffer / dif
 publish = false
 
 [lib]
-# A single cdylib is what Deno.dlopen loads (libniuma_tuikit.{dylib,so,dll}).
+# A single cdylib is what Deno.dlopen loads (libniuma_tuikit.{dylib,so} on
+# Unix, niuma_tuikit.dll on Windows — no `lib` prefix there).
 # `rlib` is also produced so `cargo test` can link the unit tests against the
 # crate without the cdylib-only limitation.
 crate-type = ["cdylib", "rlib"]

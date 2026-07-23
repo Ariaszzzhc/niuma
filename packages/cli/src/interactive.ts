@@ -25,30 +25,31 @@ import type { InteractiveArgs } from "./args.ts";
 // ---------------------------------------------------------------------------
 
 /**
- * Platform shared-object suffix. Mirrors `@niuma/tuikit`'s `ffi.ts` so the
- * pre-check looks for exactly the artifact `openLib()` would dlopen.
+ * Compiled cdylib filename. Mirrors `@niuma/tuikit`'s `ffi.ts` — Cargo
+ * prefixes the crate name with `lib` on Unix targets but not on Windows —
+ * so the pre-check looks for exactly the artifact `openLib()` would dlopen.
  */
-const nativeSuffix = (): string => {
+const nativeLibFileName = (): string => {
   switch (Deno.build.os) {
     case "darwin":
-      return "dylib";
+      return "libniuma_tuikit.dylib";
     case "windows":
-      return "dll";
+      return "niuma_tuikit.dll";
     default:
-      return "so";
+      return "libniuma_tuikit.so";
   }
 };
 
 /**
  * True when the release cdylib is absent. Resolves the same path
  * `@niuma/tuikit`'s `libPath()` does (`packages/tuikit/native/target/release/
- * libniuma_tuikit.<suffix>`), relative to this module. Checked up front so a
+ * <platform cdylib filename>`), relative to this module. Checked up front so a
  * missing build surfaces the actionable fix instead of a raw dlopen fault
  * from inside `runTui` (which catches and rewrites every error).
  */
 const nativeLibMissing = (): boolean => {
   const libUrl = new URL(
-    `../../tuikit/native/target/release/libniuma_tuikit.${nativeSuffix()}`,
+    `../../tuikit/native/target/release/${nativeLibFileName()}`,
     import.meta.url,
   );
   try {

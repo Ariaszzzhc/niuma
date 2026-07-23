@@ -22,23 +22,21 @@ import { SYMBOLS, type TuikitLib } from "./binding-contract.ts";
 // Library path resolution
 // ---------------------------------------------------------------------------
 
-/** File stem of the compiled cdylib (matches `lib.name` / Cargo `name`). */
-const LIB_STEM = "libniuma_tuikit";
-
 /**
- * Platform shared-object suffix. Selected from `Deno.build.os`:
- *   darwin  -> dylib
- *   windows -> dll
- *   linux / android / freebsd / netbsd / aix / solaris -> so
+ * Compiled cdylib filename, platform-dependent. Cargo prefixes the crate
+ * name with `lib` on Unix targets but not on Windows:
+ *   darwin  -> libniuma_tuikit.dylib
+ *   windows -> niuma_tuikit.dll
+ *   linux / android / freebsd / netbsd / aix / solaris -> libniuma_tuikit.so
  */
-const libSuffix = (): string => {
+const libFileName = (): string => {
   switch (Deno.build.os) {
     case "darwin":
-      return "dylib";
+      return "libniuma_tuikit.dylib";
     case "windows":
-      return "dll";
+      return "niuma_tuikit.dll";
     default:
-      return "so";
+      return "libniuma_tuikit.so";
   }
 };
 
@@ -50,7 +48,7 @@ const libSuffix = (): string => {
 export const libPath = (): string => {
   const srcDir = dirname(fromFileUrl(import.meta.url)); // .../packages/tuikit/src
   const pkgRoot = join(srcDir, ".."); // .../packages/tuikit
-  return join(pkgRoot, "native", "target", "release", `${LIB_STEM}.${libSuffix()}`);
+  return join(pkgRoot, "native", "target", "release", libFileName());
 };
 
 // ---------------------------------------------------------------------------
