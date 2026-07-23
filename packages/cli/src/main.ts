@@ -42,12 +42,19 @@ const main = async (): Promise<number> => {
 
   // Resolve the model: --model flag wins, else config.toml's top-level
   // `model` (provider/model-id). Validated here so a typo fails fast with a
-  // config pointer instead of surfacing as a provider 404 mid-turn. The
-  // smoke harness skips this — the mock provider accepts any model id.
-  let model: string;
-  if (mockProvider) {
-    model = parsed.args.model ?? "mock-model";
-  } else {
+  // config pointer instead of surfacing as a provider 404 mid-turn.
+  //
+  // Two values are derived:
+  //   - modelRef: the raw provider/model-id ref, forwarded to the worker so
+  //     its bootstrap binds the provider adapter to the provider the user
+  //     actually picked (not just the config's default one).
+  //   - model: the bare model id recorded on the session and sent to the
+  //     provider in ChatRequests. Undefined under the mock provider — the
+  //     server falls back to the literal "default" (same as the server smoke
+  //     tests), which the scripted mock accepts.
+  let modelRef: string | undefined;
+  let model: string | undefined;
+  if (!mockProvider) {
     try {
       // Project-level niuma.toml files (walked up from the workspace) merge
       // over the global config, so a project can pin its own default model.
@@ -62,15 +69,16 @@ const main = async (): Promise<number> => {
             niumaPaths().configFile
           }`,
         );
-        return 2;
+        return 1;
       }
       const resolved = resolveModelRef(config, ref);
+      modelRef = ref;
       model = resolved.modelId;
     } catch (err) {
       console.error(
         `niuma: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return 2;
+      return 1;
     }
   }
 
@@ -89,7 +97,10 @@ const main = async (): Promise<number> => {
     deno: { permissions: "inherit" },
   });
 
-  const tunnel = setupTunnel(worker, { mockProvider });
+  const tunnel = setupTunnel(worker, {
+    mockProvider,
+    ...(modelRef !== undefined ? { defaultModelRef: modelRef } : {}),
+  });
 
   // Await the ready handshake (or surface an init failure). The worker
   // posts {kind:"ready"} once createServerApp resolves, or {kind:"init_error"}
@@ -127,7 +138,11 @@ const main = async (): Promise<number> => {
   let exitCode: number;
   try {
     const result = await runOneshot(
-      { prompt, workspace, model },
+      {
+        prompt,
+        workspace,
+        ...(model !== undefined ? { model } : {}),
+      },
       tunnel.fetch,
     );
     exitCode = result.exitCode;

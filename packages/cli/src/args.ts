@@ -37,6 +37,9 @@ export type ParsedArgs = OneShotArgs | ServeArgs;
 
 export type ParseResult =
   | { readonly ok: true; readonly args: ParsedArgs }
+  // exitCode follows the niuma-wide convention: 0 = success/help, 1 = every
+  // failure. There is deliberately no usage-vs-runtime split (no exit 2) —
+  // the CLI is for humans, and stderr already carries the "what to fix".
   | { readonly ok: false; readonly exitCode: number; readonly message?: string };
 
 const DEFAULT_PORT = 4096;
@@ -64,7 +67,7 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
       if (name.startsWith("-")) {
         console.error(`niuma: unknown option: ${name}`);
         console.error("Try `niuma --help` for usage.");
-        Deno.exit(2);
+        Deno.exit(1);
       }
       // Allow stray positionals to pass through; they are ignored.
       return true;
@@ -84,7 +87,7 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
   if (!prompt || prompt.length === 0) {
     console.error("niuma: missing required option -p/--prompt <text>");
     console.error("Try `niuma --help` for usage.");
-    return { ok: false, exitCode: 2 };
+    return { ok: false, exitCode: 1 };
   }
 
   const workspaceArg = parsed.workspace ?? Deno.cwd();
@@ -114,7 +117,7 @@ const parseServeArgs = (argv: string[]): ParseResult => {
       if (name.startsWith("-")) {
         console.error(`niuma serve: unknown option: ${name}`);
         console.error("Try `niuma serve --help` for usage.");
-        Deno.exit(2);
+        Deno.exit(1);
       }
       return true;
     },
@@ -130,7 +133,7 @@ const parseServeArgs = (argv: string[]): ParseResult => {
     !Number.isInteger(portNum) || portNum < 1 || portNum > 65535
   ) {
     console.error(`niuma serve: invalid port: ${parsed.port}`);
-    return { ok: false, exitCode: 2 };
+    return { ok: false, exitCode: 1 };
   }
 
   return {

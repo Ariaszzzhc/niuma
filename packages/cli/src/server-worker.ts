@@ -55,7 +55,13 @@ self.onmessage = async (e: MessageEvent) => {
             infra: { provider: makeMockProvider() },
           }),
         })).app
-        : (await createServerApp()).app;
+        : (await createServerApp({
+          bootstrap: await bootstrap({
+            ...(msg.defaultModelRef !== undefined
+              ? { defaultModelRef: msg.defaultModelRef }
+              : {}),
+          }),
+        })).app;
       const appFetch = app.fetch.bind(app) as (
         request: Request,
       ) => Promise<Response>;
@@ -97,16 +103,18 @@ self.onmessage = async (e: MessageEvent) => {
 
       port.postMessage({ kind: "ready" } satisfies TunnelIn);
     } catch (err) {
-      // Bootstrap failed. Surface the message to the frontend (so the
-      // ready promise rejects with a useful error) and re-throw so the
-      // worker.onerror handler on the main thread also fires.
+      // Bootstrap failed. Surface the message to the frontend — the tunnel's
+      // ready promise rejects with it and main.ts terminates the worker. Do
+      // NOT re-throw: the message already reached the frontend, and an
+      // uncaught top-level worker error would make Deno dump a stack trace
+      // to stderr on top of the friendly message. (Mid-run crashes still
+      // propagate via worker.onerror; this path is init-time only.)
       const message = err instanceof Error ? err.message : String(err);
       try {
         port.postMessage({ kind: "init_error", message } satisfies TunnelIn);
       } catch {
         // Port may not be in a deliverable state yet; ignore.
       }
-      throw err;
     }
   }
 };

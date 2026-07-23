@@ -22,7 +22,16 @@
 
 // Frontend → Worker.
 export type TunnelOut =
-  | { kind: "init"; port: MessagePort; mockProvider?: boolean }
+  | {
+    kind: "init";
+    port: MessagePort;
+    mockProvider?: boolean;
+    /** Raw provider/model-id ref resolved from --model/config.toml. The
+     * worker's bootstrap binds its provider + default model to this ref so a
+     * one-shot `--model other/x` actually switches provider, not just the
+     * model id recorded on the session. */
+    defaultModelRef?: string;
+  }
   | TunnelRequest
   | { kind: "cancel"; id: string };
 
@@ -97,7 +106,7 @@ interface Inflight {
  */
 export const setupTunnel = (
   worker: Worker,
-  opts: { mockProvider?: boolean } = {},
+  opts: { mockProvider?: boolean; defaultModelRef?: string } = {},
 ): TunnelFetch => {
   const channel = new MessageChannel();
   const port = channel.port2;
@@ -205,12 +214,16 @@ export const setupTunnel = (
   // Hand port1 to the worker. The transfer list detaches port1 in this
   // thread; only the worker may post through it from now on. The optional
   // mockProvider flag is the smoke harness's injection channel (replaces
-  // the old NIUMA_MOCK_PROVIDER env switch).
+  // the old NIUMA_MOCK_PROVIDER env switch); defaultModelRef carries the
+  // one-shot's resolved model ref so the worker binds the right provider.
   worker.postMessage(
     {
       kind: "init",
       port: channel.port1,
       ...(opts.mockProvider === true ? { mockProvider: true } : {}),
+      ...(opts.defaultModelRef !== undefined
+        ? { defaultModelRef: opts.defaultModelRef }
+        : {}),
     } satisfies TunnelOut,
     [channel.port1],
   );

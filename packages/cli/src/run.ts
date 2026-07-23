@@ -24,7 +24,10 @@ const BASE = "http://niuma.internal";
 export interface RunOptions {
   readonly prompt: string;
   readonly workspace: string;
-  readonly model: string;
+  /** Bare model id recorded on the session. Omitted under the mock provider
+   * so the server falls back to the same literal "default" the server smoke
+   * tests use (the scripted mock accepts any model). */
+  readonly model?: string;
   /** Suppress non-essential stderr output (tool call banners, etc.). */
   readonly quiet?: boolean;
 }
@@ -56,7 +59,7 @@ export const runOneshot = async (
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         workspace: opts.workspace,
-        model: opts.model,
+        ...(opts.model !== undefined ? { model: opts.model } : {}),
       }),
     });
     if (!res.ok) {

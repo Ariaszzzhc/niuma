@@ -40,6 +40,12 @@ export interface BootstrapDeps {
   readonly infra?: Partial<SessionManagerInfra>;
   /** Pre-loaded config; tests/smoke inject this to skip the filesystem. */
   readonly config?: NiumaConfig;
+  /** Model ref (provider/model-id) the server binds to, overriding the
+   * config's top-level `model`. The one-shot CLI passes its --model flag
+   * (or the config default) through the tunnel so the provider adapter is
+   * built for the provider the user actually picked. Ignored when
+   * `deps.infra.provider` is injected (tests/smoke own the provider then). */
+  readonly defaultModelRef?: string;
 }
 
 export interface BootstrapResult {
@@ -112,12 +118,13 @@ export const bootstrap = async (
   // so constructing it here never fetches.
   const engine = new MemoryPermissionEngine({ cwd: workspace });
 
-  // Default model: the merged config's top-level `model` (provider/model-id).
-  // A test/smoke may inject BOTH the provider and a default model (e.g. the
-  // smoke harness pins "mock-model"); injecting a provider alone still takes
-  // model + limits from the config so a mock provider can be driven at
-  // realistic window sizes.
-  const defaultRef = config.model;
+  // Default model: deps.defaultModelRef (the one-shot CLI's --model / config
+  // default) wins, then the merged config's top-level `model`
+  // (provider/model-id). A test/smoke may inject BOTH the provider and a
+  // default model (e.g. the smoke harness pins "mock-model"); injecting a
+  // provider alone still takes model + limits from the config so a mock
+  // provider can be driven at realistic window sizes.
+  const defaultRef = deps.defaultModelRef ?? config.model;
   let defaultModel = deps.infra?.defaultModel ?? "";
   let defaultContextWindow = deps.infra?.defaultContextWindow;
   let defaultMaxTokens = deps.infra?.defaultMaxTokens;
@@ -130,7 +137,7 @@ export const bootstrap = async (
 
   const provider = deps.infra?.provider !== undefined
     ? withDefaultModel(deps.infra.provider, defaultModel)
-    : await makeProviderFromConfig(config);
+    : await makeProviderFromConfig(config, deps.defaultModelRef);
 
   // spawn_subagent wiring: create a child session, record lineage events,
   // and recursively run a turn on the child. Depth is bounded by
@@ -266,20 +273,21 @@ const withDefaultModel = (
 /**
  * Build the provider adapter from config.toml + auth.json.
  *
- * The adapter is bound to the config's default provider (the one named by
- * the top-level `model` reference). Credential lookup order:
+ * The adapter is bound to the provider named by `ref` (defaults to the
+ * config's top-level `model` reference). Credential lookup order:
  *   1. auth.json[<providerId>]      (the canonical credential store)
  *   2. provider api_key with {env:VAR} substitution (explicit escape hatch)
  * Missing credentials fail at boot with a pointer to both locations.
  */
-const makeProviderFromConfig = async (config: NiumaConfig) => {
-  if (!config.model) {
+const makeProviderFromConfig = async (config: NiumaConfig, ref?: string) => {
+  const modelRef = ref ?? config.model;
+  if (!modelRef) {
     throw new ConfigError(
       `config: no default model set. Add e.g.\n  model = "myprovider/my-model"` +
         `\nto ${niumaPaths().configFile}`,
     );
   }
-  const resolved = resolveModelRef(config, config.model);
+  const resolved = resolveModelRef(config, modelRef);
   const auth = await readAuthFile(niumaPaths().authFile);
   const entry = auth[resolved.provider.id];
   const apiKey = entry?.type === "api"
