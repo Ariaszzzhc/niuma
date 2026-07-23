@@ -1,10 +1,10 @@
 import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
 import { join } from "@std/path";
-import { createServerApp } from "./mod.ts";
-import { bootstrap } from "./src/bootstrap.ts";
-import { makeEventLog } from "./src/eventLog.ts";
-import { ensureSchema } from "./src/projection.ts";
-import { makeEventBus } from "./src/eventBus.ts";
+import { createServerApp } from "../mod.ts";
+import { bootstrap } from "../src/bootstrap.ts";
+import { makeEventLog } from "../src/eventLog.ts";
+import { ensureSchema } from "../src/projection.ts";
+import { makeEventBus } from "../src/eventBus.ts";
 import { makeMockProvider } from "@niuma/provider";
 import { parseConfig } from "@niuma/config";
 import { Effect } from "effect";

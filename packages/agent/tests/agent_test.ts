@@ -18,7 +18,7 @@ import {
 import {
   eventsToMessages,
   projectEvent,
-} from "./context.ts";
+} from "../src/context.ts";
 import {
   buildSummary,
   compactMessages,
@@ -26,17 +26,17 @@ import {
   SUMMARY_PREFIX,
   SUMMARIZATION_PROMPT,
   summarizeHistory,
-} from "./compaction.ts";
-import { makeApprovalGateway } from "./approval.ts";
+} from "../src/compaction.ts";
+import { makeApprovalGateway } from "../src/approval.ts";
 import {
   SessionManager,
   type AgentInfra,
-} from "./session.ts";
+} from "../src/session.ts";
 import type {
   EventInput,
   EventLog,
   ToolPipeline,
-} from "./deps.ts";
+} from "../src/deps.ts";
 
 // In-memory event log honouring the EventLog port.
 function makeMemoryLog(): EventLog & {

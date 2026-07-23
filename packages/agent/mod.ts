@@ -11,7 +11,7 @@ export type { AgentInfra, SessionOptions } from "./src/session.ts";
 
 export { makeApprovalGateway } from "./src/approval.ts";
 
-export { buildSystemPrompt } from "./src/prompt.ts";
+export { buildSystemPrompt, environmentContext } from "./src/prompt.ts";
 export {
   ABORTED_TOOL_OUTPUT,
   estimateRequestTokens,

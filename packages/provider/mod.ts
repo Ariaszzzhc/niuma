@@ -10,7 +10,7 @@ export type {
   ToolCall,
   ToolDef,
   Usage,
-} from "./domain.ts";
+} from "./src/domain.ts";
 
 export {
   AuthFailed,
@@ -21,32 +21,32 @@ export {
   RateLimited,
   isFatal,
   isRetryable,
-} from "./errors.ts";
-export type { ProviderError } from "./errors.ts";
+} from "./src/errors.ts";
+export type { ProviderError } from "./src/errors.ts";
 
-export { Provider, provideAdapter } from "./contract.ts";
-export type { ProviderAdapter } from "./contract.ts";
+export { Provider, provideAdapter } from "./src/contract.ts";
+export type { ProviderAdapter } from "./src/contract.ts";
 
-export { providerRetrySchedule, retryOptions, withRetry, STREAM_MAX_RETRIES } from "./retry.ts";
+export { providerRetrySchedule, retryOptions, withRetry, STREAM_MAX_RETRIES } from "./src/retry.ts";
 
 export {
   messagesToOpenAI,
   openAIToMessages,
   toolsToOpenAI,
-} from "./convert.ts";
+} from "./src/convert.ts";
 export type {
   OpenAIMessage,
   OpenAITool,
   OpenAIToolCall,
-} from "./convert.ts";
+} from "./src/convert.ts";
 
-export { parseOpenAISSE } from "./sse.ts";
+export { parseOpenAISSE } from "./src/sse.ts";
 
 export {
   makeOpenAIAdapter,
   normalizeConfig,
   OpenAIProviderLive,
-} from "./openai.ts";
-export type { OpenAIProviderConfig } from "./openai.ts";
+} from "./src/openai.ts";
+export type { OpenAIProviderConfig } from "./src/openai.ts";
 
-export { makeMockProvider } from "./mock.ts";
+export { makeMockProvider } from "./src/mock.ts";

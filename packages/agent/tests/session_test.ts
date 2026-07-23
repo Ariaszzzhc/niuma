@@ -8,14 +8,14 @@ import type {
   StreamEvent as ProviderStreamEvent,
 } from "@niuma/provider";
 import type { PermissionEngine as ToolsPermissionEngine } from "@niuma/tools";
-import { makeApprovalGateway } from "./approval.ts";
-import { makeToolPipeline } from "./tool_pipeline.ts";
+import { makeApprovalGateway } from "../src/approval.ts";
+import { makeToolPipeline } from "../src/tool_pipeline.ts";
 import {
   AgentSession,
   SessionManager,
   type AgentInfra,
-} from "./session.ts";
-import type { EventInput, EventLog, ToolMode } from "./deps.ts";
+} from "../src/session.ts";
+import type { EventInput, EventLog, ToolMode } from "../src/deps.ts";
 
 // Permissive stub engine for tests: every call resolves to Allow so the
 // pipeline never escalates to ctx.ask. The real @niuma/permission chain

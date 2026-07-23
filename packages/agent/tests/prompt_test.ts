@@ -4,7 +4,7 @@ import {
   buildSystemPrompt,
   environmentContext,
   listWorkspaceFiles,
-} from "./prompt.ts";
+} from "../src/prompt.ts";
 
 const scrub = async (tmp: string) => {
   try {

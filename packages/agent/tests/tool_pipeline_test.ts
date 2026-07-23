@@ -1,13 +1,13 @@
 import { assertEquals } from "jsr:@std/assert@^1.0.0";
 import { Effect } from "effect";
 import { MemoryPermissionEngine, type PermissionEngine } from "@niuma/tools";
-import { makeToolPipeline } from "./tool_pipeline.ts";
-import { resultContentToString } from "./context.ts";
+import { makeToolPipeline } from "../src/tool_pipeline.ts";
+import { resultContentToString } from "../src/context.ts";
 import type {
   ApprovalOutcome,
   ToolMode,
   ToolRunContext,
-} from "./deps.ts";
+} from "../src/deps.ts";
 
 const approvingEngine = (): PermissionEngine => {
   const inner = new MemoryPermissionEngine({ sensitiveTools: [] });

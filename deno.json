@@ -35,8 +35,8 @@
     "@niuma/config": "./packages/config/mod.ts"
   },
   "tasks": {
-    "check": "deno check packages/*/mod.ts packages/cli/main.ts",
-    "cli": "deno run --allow-all --unstable-worker-options packages/cli/main.ts",
+    "check": "deno check packages/*/mod.ts packages/cli/src/main.ts",
+    "cli": "deno run --allow-all --unstable-worker-options packages/cli/src/main.ts",
     "test": "deno test --allow-all packages/"
   },
   "compilerOptions": {
