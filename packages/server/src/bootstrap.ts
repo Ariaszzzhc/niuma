@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect";
-import { ensureSchema, makeProjection, type Projection } from "./projection.ts";
+import { ensureSchema, type Projection } from "./projection.ts";
 import { makeEventLog, type EventLog } from "./eventLog.ts";
 import { Kernel, KernelLive, makeKernel } from "./kernel.ts";
 import { makeEventBus, type EventBus } from "./eventBus.ts";
@@ -13,12 +13,15 @@ import { makeOpenAIAdapter, type ProviderAdapter } from "@niuma/provider";
 import {
   ConfigError,
   loadMergedConfig,
+  loadMergedMcpConfig,
   readAuthFile,
   resolveModelRef,
   substituteEnv,
   niumaPaths,
   type NiumaConfig,
+  type McpConfig,
 } from "@niuma/config";
+import { connectMcpServers, type McpServerHandle } from "@niuma/mcp";
 import {
   MemoryPermissionEngine,
   ToolRegistry,
@@ -40,6 +43,9 @@ export interface BootstrapDeps {
   readonly infra?: Partial<SessionManagerInfra>;
   /** Pre-loaded config; tests/smoke inject this to skip the filesystem. */
   readonly config?: NiumaConfig;
+  /** Pre-loaded MCP config; tests/smoke inject this to skip the filesystem
+   * (defaults to {} whenever `config` is injected, mirroring it). */
+  readonly mcpConfig?: McpConfig;
   /** Model ref (provider/model-id) the server binds to, overriding the
    * config's top-level `model`. The one-shot CLI passes its --model flag
    * (or the config default) through the tunnel so the provider adapter is
@@ -55,6 +61,10 @@ export interface BootstrapResult {
   readonly bus: EventBus;
   readonly infra: SessionManagerInfra;
   readonly config: NiumaConfig;
+  /** Connected MCP servers (from the merged mcp.json levels). Callers that
+   * own the process lifecycle may close() them on shutdown; the worker
+   * exiting also reaps stdio subprocesses. */
+  readonly mcpServers: ReadonlyArray<McpServerHandle>;
   readonly kernelLayer: Layer.Layer<Kernel, never, never>;
   readonly sessionLayer: Layer.Layer<SessionManager, never, Kernel>;
 }
@@ -105,6 +115,22 @@ export const bootstrap = async (
   const workspace = envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
   const config = deps.config ??
     await loadMergedConfig(niumaPaths().configFile, { projectDir: workspace });
+
+  // ---- MCP servers (mcp.json: global < project dirs < workspace/.mcp.json). ----
+  // Connected before the pipelines are built so their tools land in the one
+  // registry shared by the parent session and subagents. Best-effort: a
+  // server that won't connect is skipped with a warning, not fatal.
+  const mcpConfig = deps.mcpConfig ??
+    (deps.config !== undefined
+      ? {}
+      : await loadMergedMcpConfig({
+        globalConfigDir: niumaPaths().config,
+        workspace,
+      }));
+  const mcpServers = await connectMcpServers(mcpConfig);
+  for (const handle of mcpServers) {
+    for (const tool of handle.tools) registry.register(tool.name, tool);
+  }
 
   // Build the kernel eagerly so the spawn_subagent closure below can capture
   // it. The Layer we hand downstream wraps the same value (Layer.succeed),
@@ -250,6 +276,7 @@ export const bootstrap = async (
     bus,
     infra,
     config,
+    mcpServers,
     kernelLayer,
     sessionLayer,
   };

@@ -1,0 +1,9 @@
+{
+  "name": "@niuma/mcp",
+  "version": "0.0.0",
+  "exports": "./mod.ts",
+  "imports": {
+    "@niuma/config": "../config/mod.ts",
+    "@niuma/tools": "../tools/mod.ts"
+  }
+}

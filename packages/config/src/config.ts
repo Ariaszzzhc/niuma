@@ -273,8 +273,10 @@ export const mergeConfig = (
 };
 
 /** Directories to search for a project niuma.toml, leaf-first, stopping at
- * $HOME (a niuma.toml in $HOME itself is still honoured; nothing above it). */
-const projectDirs = (start: string): string[] => {
+ * $HOME (a niuma.toml in $HOME itself is still honoured; nothing above it).
+ * Exported as the shared project-config discovery path — also used by the
+ * mcp.json loader (src/mcp.ts) for its level-2 files. */
+export const projectConfigDirs = (start: string): string[] => {
   const stopAt = resolve(home());
   const dirs: string[] = [];
   let dir = resolve(start);
@@ -313,7 +315,7 @@ export const loadMergedConfig = async (
 ): Promise<NiumaConfig> => {
   let config = await loadConfigFile(globalPath);
   const start = opts.projectDir ?? envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
-  const files = projectDirs(start).map((dir) =>
+  const files = projectConfigDirs(start).map((dir) =>
     join(dir, PROJECT_CONFIG_BASENAME)
   );
   for (const file of files.reverse()) {
