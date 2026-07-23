@@ -268,11 +268,17 @@ fn push_color_params(out: &mut Vec<u8>, c: EmitColor, is_fg: bool) {
 }
 
 /// Build a complete self-contained SGR sequence for `(fg, bg, attrs)`:
-/// starts with `ESC[0m` then emits the minimal params for the set bits/colors.
-/// Quantization follows `caps`.
+/// a SINGLE `ESC[ ... m` whose first param is `0` (reset), followed by the
+/// minimal params for the active attributes/colors, all `;`-separated —
+/// e.g. `ESC[0;1;38;2;122;180;255m`. NOTE: an earlier revision emitted
+/// `ESC[0m` followed by `;`-prefixed params, producing the non-standard
+/// `ESC[0m;1;...m`; terminals that parse SGR strictly (tmux, screen, some
+/// VTE builds) then dropped the leading `ESC[` of the *following* sequence
+/// and printed the raw `;1;38;2;...m` text — the "no colors, garbage on
+/// screen" bug. One CSI, params separated, is the only portable form.
 pub fn build_sgr(fg: u32, bg: u32, attrs: u16, caps: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity(32);
-    out.extend_from_slice(b"\x1b[0m");
+    out.extend_from_slice(b"\x1b[0");
     // We always begin from a reset, so emit only the active attributes / colors.
     if attrs & ATTR_BOLD != 0 {
         push_param(&mut out, 1);
@@ -470,8 +476,8 @@ mod tests {
         let caps = CAP_TRUECOLOR;
         let fg = color_rgb(1, 2, 3);
         let s = build_sgr(fg, color_default(), 0, caps);
-        // ESC[0m ; 38;2;1;2;3 m
-        assert_eq!(s, b"\x1b[0m;38;2;1;2;3m".to_vec());
+        // ESC[0 ; 38;2;1;2;3 m — one CSI, `;`-separated params
+        assert_eq!(s, b"\x1b[0;38;2;1;2;3m".to_vec());
     }
 
     #[test]
@@ -482,21 +488,21 @@ mod tests {
             ATTR_BOLD | ATTR_UNDERLINE,
             CAP_TRUECOLOR,
         );
-        assert_eq!(s, b"\x1b[0m;1;4m".to_vec());
+        assert_eq!(s, b"\x1b[0;1;4m".to_vec());
     }
 
     #[test]
     fn sgr_256_quantize() {
         // RGB (255,0,0) under 256 caps → 38;5;196
         let s = build_sgr(color_rgb(255, 0, 0), color_default(), 0, CAP_COLOR_256);
-        assert_eq!(s, b"\x1b[0m;38;5;196m".to_vec());
+        assert_eq!(s, b"\x1b[0;38;5;196m".to_vec());
     }
 
     #[test]
     fn sgr_16_quantize() {
         // rgb(255,0,0) under 0 caps → named16 idx 9 (bright red) = SGR 91.
         let s = build_sgr(color_rgb(255, 0, 0), color_default(), 0, 0);
-        assert_eq!(s, b"\x1b[0m;91m".to_vec()); // bright red fg
+        assert_eq!(s, b"\x1b[0;91m".to_vec()); // bright red fg
     }
 
     #[test]
@@ -507,7 +513,7 @@ mod tests {
             ATTR_REVERSE | ATTR_STRIKETHROUGH,
             CAP_TRUECOLOR,
         );
-        assert_eq!(s, b"\x1b[0m;7;9;32;103m".to_vec());
+        assert_eq!(s, b"\x1b[0;7;9;32;103m".to_vec());
     }
 
     #[test]
@@ -582,7 +588,7 @@ mod tests {
     fn indexed256_downgrades_to_named_when_no_256_cap() {
         // idx 196 = (255,0,0) → named16 bright red (9) = SGR 91 under 0 caps.
         let s = build_sgr(color_indexed256(196), color_default(), 0, 0);
-        assert_eq!(s, b"\x1b[0m;91m".to_vec());
+        assert_eq!(s, b"\x1b[0;91m".to_vec());
     }
 
     #[test]
