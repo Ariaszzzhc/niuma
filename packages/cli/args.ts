@@ -20,7 +20,11 @@ export interface OneShotArgs {
   readonly subcommand: "oneshot";
   readonly prompt: string;
   readonly workspace: string;
-  readonly model: string;
+  /** Explicit --model override; undefined means "use config.toml's model". */
+  readonly model?: string;
+  /** Smoke-harness only: inject the scripted network-free provider into the
+   * server worker (replaces the old NIUMA_MOCK_PROVIDER env switch). */
+  readonly mockProvider: boolean;
 }
 
 export interface ServeArgs {
@@ -37,7 +41,6 @@ export type ParseResult =
 
 const DEFAULT_PORT = 4096;
 const DEFAULT_HOST = "127.0.0.1";
-const DEFAULT_MODEL = "gpt-5-mini";
 
 export const parseCliArgs = (argv: string[]): ParseResult => {
   // Subcommand dispatch on the first non-flag positional. `serve` is the only
@@ -48,7 +51,7 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
 
   const parsed = parseArgs(argv, {
     string: ["prompt", "workspace", "model"],
-    boolean: ["version", "help"],
+    boolean: ["version", "help", "mock-provider"],
     alias: {
       p: "prompt",
       h: "help",
@@ -86,16 +89,18 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
 
   const workspaceArg = parsed.workspace ?? Deno.cwd();
   const workspace = resolve(workspaceArg);
-  // Effective model: --model flag wins, else NIUMA_MODEL env, else the same
-  // default the provider adapter uses (keeps CLI/server consistent without
-  // requiring the user to export NIUMA_MODEL).
-  const model = parsed.model ??
-    Deno.env.get("NIUMA_MODEL") ??
-    DEFAULT_MODEL;
-
+  // Model comes from --model or config.toml's top-level `model` key; there
+  // is no env var. The resolved reference (which may come from the config)
+  // is validated against the configured providers in main.ts.
   return {
     ok: true,
-    args: { subcommand: "oneshot", prompt, workspace, model },
+    args: {
+      subcommand: "oneshot",
+      prompt,
+      workspace,
+      mockProvider: parsed["mock-provider"] === true,
+      ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+    },
   };
 };
 
@@ -150,19 +155,30 @@ USAGE
 ONE-SHOT OPTIONS
   -p, --prompt <text>                 Prompt text (required).
       --workspace <path>              Workspace path (default: current dir).
-      --model <name>                  Model name (default: $NIUMA_MODEL or gpt-5-mini).
+      --model <provider/model-id>     Model to use (default: config.toml's "model").
 
 SERVE OPTIONS
       --port <number>                 TCP port (default: 4096).
       --host <addr>                   Bind address (default: 127.0.0.1).
 
-ENVIRONMENT
-  NIUMA_BASE_URL                       OpenAI-compatible base URL.
-  NIUMA_API_KEY                        Provider API key.
-  NIUMA_MODEL                          Default model name.
+CONFIGURATION
+  ~/.config/niuma/config.toml          Providers, models, [core] options. Example:
+                                        model = "deepseek/deepseek-chat"
+                                        [core]
+                                        log_level = "info"
+                                        [provider.deepseek]
+                                        base_url = "https://api.deepseek.com/v1"
+                                        [provider.deepseek.models.deepseek-chat]
+                                        context_window = 128000
+                                        max_output = 8192
+  ~/.local/share/niuma/auth.json       API credentials keyed by provider id (0600):
+                                        { "deepseek": { "type": "api", "key": "sk-..." } }
+  ~/.local/share/niuma/log/            Per-process JSON-lines logs.
+
+ENVIRONMENT (path overrides only — no provider configuration)
+  NIUMA_DATA_DIR                       Override data dir (also relocates config).
+  NIUMA_CONFIG                         Path to an explicit config.toml.
   NIUMA_WORKSPACE                      Default workspace path.
-  NIUMA_DATA_DIR                       User data dir (default: ~/.config/niuma).
-  NIUMA_LOG                            Log level: trace|debug|info|warning|error|fatal.
 
 During a one-shot run, tool calls that the permission policy cannot auto-resolve
 trigger an interactive prompt on stdin:
@@ -183,7 +199,7 @@ OPTIONS
   -h, --help              Show this help.
 
 The server exposes the REST + SSE API on the bound address. See \`niuma --help\`
-for environment variables.
+for configuration (config.toml + auth.json).
 `;
   console.log(text);
 };

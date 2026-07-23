@@ -15,47 +15,15 @@
 // All logging is redirected to stderr (logtape's default console sink would
 // pollute stdout, which the one-shot flow reserves for the final answer).
 
-import { configure, getStreamSink } from "@logtape/logtape";
-import { createServerApp } from "@niuma/server";
+import { bootstrap, createServerApp, setupLogger } from "@niuma/server";
+import { parseConfig } from "@niuma/config";
+import { makeMockProvider } from "@niuma/provider";
 import {
   handleTunnelRequest,
   type TunnelIn,
   type TunnelOut,
   type TunnelRequest,
 } from "./tunnel.ts";
-
-let loggingConfigured = false;
-
-const setupWorkerLogging = async (): Promise<void> => {
-  if (loggingConfigured) return;
-  loggingConfigured = true;
-  // Default to `warning` so the chatty HTTP access log never reaches stdout.
-  // Operator can opt into more detail via NIUMA_LOG=trace|debug|info|...
-  const level = (Deno.env.get("NIUMA_LOG") ?? "warning") as
-    | "trace"
-    | "debug"
-    | "info"
-    | "warning"
-    | "error"
-    | "fatal";
-  try {
-    await configure({
-      sinks: {
-        // Deno.stderr.writable is a WritableStream — logtape's stream sink
-        // consumes it directly.
-        stderr: getStreamSink(Deno.stderr.writable),
-      },
-      filters: {},
-      loggers: [
-        // Single root category covers all `niuma.*` subcategories.
-        { category: ["niuma"], lowestLevel: level, sinks: ["stderr"] },
-      ],
-    });
-  } catch {
-    // If logtape was already configured (e.g. a previous worker in the same
-    // process), swallow and continue.
-  }
-};
 
 // Active body readers, indexed by request id. Tracked so a `{kind:"cancel"}`
 // from the frontend can abort the pump on the worker side and trigger Hono's
@@ -65,6 +33,11 @@ const activeReaders = new Map<
   ReadableStreamDefaultReader<Uint8Array>
 >();
 
+// Extended init shape for the smoke harness: `mockProvider: true` injects
+// the scripted network-free provider through bootstrap deps, replacing the
+// old NIUMA_MOCK_PROVIDER env switch. Production CLI spawns never set it.
+// (The flag is declared on TunnelOut's init variant in tunnel.ts.)
+
 self.onmessage = async (e: MessageEvent) => {
   const msg = e.data as TunnelOut | undefined;
   if (!msg || typeof msg !== "object") return;
@@ -72,8 +45,17 @@ self.onmessage = async (e: MessageEvent) => {
   if (msg.kind === "init") {
     const port: MessagePort = msg.port;
     try {
-      await setupWorkerLogging();
-      const { app } = await createServerApp();
+      // stderr console + JSON-lines file under <data>/log; level from
+      // [core] log_level in config.toml.
+      await setupLogger({ console: "stderr" });
+      const app = msg.mockProvider === true
+        ? (await createServerApp({
+          bootstrap: await bootstrap({
+            config: parseConfig(""),
+            infra: { provider: makeMockProvider() },
+          }),
+        })).app
+        : (await createServerApp()).app;
       const appFetch = app.fetch.bind(app) as (
         request: Request,
       ) => Promise<Response>;

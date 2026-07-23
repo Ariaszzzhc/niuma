@@ -15,17 +15,12 @@ import { parseCliArgs } from "./args.ts";
 import { runOneshot } from "./run.ts";
 import { runServe } from "./serve.ts";
 import { setupTunnel } from "./tunnel.ts";
-import { load } from "@std/dotenv";
+import { loadConfigFile, resolveModelRef, niumaPaths } from "@niuma/config";
 
-// Load .env from cwd before anything reads Deno.env (provider config, model
-// defaults). Existing environment variables win over .env values. NOTE:
-// load() is async — without await the env vars land after arg parsing has
-// already fallen back to defaults.
-try {
-  await load({ export: true });
-} catch {
-  // No .env present — fine, env may come from the shell.
-}
+// Configuration comes from config.toml (+ auth.json for credentials) — see
+// @niuma/config. There is deliberately no .env loading and no NIUMA_* env
+// configuration surface; the only env overrides left are NIUMA_DATA_DIR /
+// NIUMA_CONFIG (paths) and NIUMA_WORKSPACE (main→worker side-channel).
 
 const WORKER_URL = new URL("./server-worker.ts", import.meta.url);
 
@@ -43,7 +38,37 @@ const main = async (): Promise<number> => {
   }
 
   // One-shot mode.
-  const { prompt, workspace, model } = parsed.args;
+  const { prompt, workspace, mockProvider } = parsed.args;
+
+  // Resolve the model: --model flag wins, else config.toml's top-level
+  // `model` (provider/model-id). Validated here so a typo fails fast with a
+  // config pointer instead of surfacing as a provider 404 mid-turn. The
+  // smoke harness skips this — the mock provider accepts any model id.
+  let model: string;
+  if (mockProvider) {
+    model = parsed.args.model ?? "mock-model";
+  } else {
+    try {
+      const config = await loadConfigFile(niumaPaths().configFile);
+      const ref = parsed.args.model ?? config.model;
+      if (!ref) {
+        console.error(
+          `niuma: no model configured. Set one with --model provider/model-id,` +
+            ` or add e.g.\n  model = "myprovider/my-model"\nto ${
+            niumaPaths().configFile
+          }`,
+        );
+        return 2;
+      }
+      const resolved = resolveModelRef(config, ref);
+      model = resolved.modelId;
+    } catch (err) {
+      console.error(
+        `niuma: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 2;
+    }
+  }
 
   // Propagate the resolved workspace to the worker's bootstrap: the
   // permission engine reads NIUMA_WORKSPACE at startup to set its cwd, so
@@ -51,9 +76,6 @@ const main = async (): Promise<number> => {
   // CLI's launch dir. Setting it here is inherited by the worker because
   // Workers snapshot the parent env at spawn time.
   setEnvIfAbsent("NIUMA_WORKSPACE", workspace);
-  // Keep the provider default in sync with the per-session model override
-  // so the spawn_subagent closure and the session both target the same model.
-  setEnvIfAbsent("NIUMA_MODEL", model);
 
   // Spawn the server worker. permissions:"inherit" gives it the same
   // --allow-all surface the CLI itself runs with (Deno permissions are NOT
@@ -63,7 +85,7 @@ const main = async (): Promise<number> => {
     deno: { permissions: "inherit" },
   });
 
-  const tunnel = setupTunnel(worker);
+  const tunnel = setupTunnel(worker, { mockProvider });
 
   // Await the ready handshake (or surface an init failure). The worker
   // posts {kind:"ready"} once createServerApp resolves, or {kind:"init_error"}

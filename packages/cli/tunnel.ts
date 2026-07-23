@@ -22,7 +22,7 @@
 
 // Frontend → Worker.
 export type TunnelOut =
-  | { kind: "init"; port: MessagePort }
+  | { kind: "init"; port: MessagePort; mockProvider?: boolean }
   | TunnelRequest
   | { kind: "cancel"; id: string };
 
@@ -95,7 +95,10 @@ interface Inflight {
  * rejection of every in-flight request (if mid-run). The caller's
  * worker.onerror is also wired to Deno.exit(1) for safety.
  */
-export const setupTunnel = (worker: Worker): TunnelFetch => {
+export const setupTunnel = (
+  worker: Worker,
+  opts: { mockProvider?: boolean } = {},
+): TunnelFetch => {
   const channel = new MessageChannel();
   const port = channel.port2;
   const inflight = new Map<string, Inflight>();
@@ -200,9 +203,15 @@ export const setupTunnel = (worker: Worker): TunnelFetch => {
   });
 
   // Hand port1 to the worker. The transfer list detaches port1 in this
-  // thread; only the worker may post through it from now on.
+  // thread; only the worker may post through it from now on. The optional
+  // mockProvider flag is the smoke harness's injection channel (replaces
+  // the old NIUMA_MOCK_PROVIDER env switch).
   worker.postMessage(
-    { kind: "init", port: channel.port1 } satisfies TunnelOut,
+    {
+      kind: "init",
+      port: channel.port1,
+      ...(opts.mockProvider === true ? { mockProvider: true } : {}),
+    } satisfies TunnelOut,
     [channel.port1],
   );
 
