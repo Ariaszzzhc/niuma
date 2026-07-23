@@ -3,11 +3,10 @@
 // ---------------------------------------------------------------------------
 // Wires the input components (editor / palette / approval) and the SSE reducer
 // (`reduce-event.ts`) into one `Program<AppModel, Msg>` for `@niuma/tuikit`'s
-// `run`. Owns the full-screen layout (banner / transcript / statusline /
-// editor) and overlays the palette + approval modal on a dimmed base scene.
+// `run`. Owns the full-screen layout (transcript / statusline / editor) and
+// overlays the palette + approval modal on a dimmed base scene.
 //
 // INTERLOCK (A-side, owned by a parallel agent — imported, not stubbed):
-//   - renderBanner({ version, model, workspace, width, theme })  [banner.ts]
 //   - renderTranscript(state: TranscriptState, w, h, theme)       [transcript.ts]
 //   - renderToolCall(call: ToolCallView, w, theme)                [tool-call.ts]
 //   - renderStatusline(view: StatusView, w, theme)                [statusline.ts]
@@ -66,7 +65,6 @@ import { type ApprovalDecision, type TuiClient, parseSseStream } from "./client.
 // -- A-side view layer (parallel agent) --------------------------------------
 // Imported by signature; shapes reconciled against the landed modules.
 import { type Theme } from "./theme.ts";
-import { renderBanner } from "./components/banner.ts";
 import {
   type ChatMessage,
   type TranscriptMsg,
@@ -258,35 +256,22 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
   };
 
   /**
-   * Compute the on-screen row budget for the banner / transcript / editor.
+   * Compute the on-screen row budget for the transcript / statusline / editor.
    * Shared by `view` and the scroll handler so they agree on the transcript
-   * viewport height (the reducer needs it to clamp scroll offsets). Mirrors the
-   * layout `view` paints: banner capped at 3 rows, 1-row statusline, editor =
-   * 2 borders + up to 5 content rows.
+   * viewport height (the reducer needs it to clamp scroll offsets). Layout:
+   * 1-row statusline, editor = 2 borders + up to 5 content rows, transcript
+   * takes the rest. (The startup banner was removed — the transcript owns the
+   * top of the screen from the first frame.)
    */
   const computeLayout = (
     model: AppModel,
-  ): { readonly bannerH: number; readonly transcriptH: number; readonly editorH: number } => {
-    const W = Math.max(1, model.width);
+  ): { readonly transcriptH: number; readonly editorH: number } => {
     const H = Math.max(1, model.height);
-    let banner: StyledLine[] = [];
-    try {
-      banner = renderBanner({
-        version,
-        model: model.state.model ?? "",
-        workspace,
-        width: W,
-        theme,
-      });
-    } catch {
-      banner = [];
-    }
-    const bannerH = Math.min(banner.length, 3);
     const editorContentRows = Math.min(5, Math.max(1, model.editor.lines.length));
     const editorH = editorContentRows + 2;
     const statusH = 1;
-    const transcriptH = Math.max(0, H - bannerH - statusH - editorH);
-    return { bannerH, transcriptH, editorH };
+    const transcriptH = Math.max(0, H - statusH - editorH);
+    return { transcriptH, editorH };
   };
 
   /**
@@ -658,22 +643,6 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     const H = Math.max(1, model.height);
     const lines: StyledLine[] = [];
     const layout = computeLayout(model);
-
-    // banner (cap at 3 rows)
-    let banner: StyledLine[] = [];
-    try {
-      banner = renderBanner({
-        version,
-        model: model.state.model ?? "",
-        workspace,
-        width: W,
-        theme,
-      });
-    } catch {
-      banner = [];
-    }
-    const bannerH = layout.bannerH;
-    for (let i = 0; i < bannerH; i++) lines.push(banner[i]);
 
     // editor height: 2 borders + up to 5 content rows
     const editorH = layout.editorH;

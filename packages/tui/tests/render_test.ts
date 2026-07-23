@@ -10,7 +10,7 @@
 //     duration formatting;
 //   - statusline: exact width fit at several widths, gradient activity
 //     cluster, token compact formatting;
-//   - banner: wordmark row count + centred dim metadata line.
+//   - approval modal: header label truncation at narrow widths.
 // Only tuikit width/gradient (built) is required.
 // ===========================================================================
 
@@ -20,7 +20,6 @@ import { stringWidth } from "@niuma/tuikit";
 import { darkTheme as THEME } from "../src/theme.ts";
 import { renderToolCall, type ToolCallView } from "../src/components/tool-call.ts";
 import { renderStatusline, type StatusView } from "../src/components/statusline.ts";
-import { renderBanner } from "../src/components/banner.ts";
 import { renderApprovalOverlay, type ApprovalTheme } from "../src/components/approval.ts";
 import {
   initialTranscript,
@@ -340,48 +339,6 @@ Deno.test("statusline: token counts compact-format k / M", () => {
   const text = lineText(renderStatusline(view, 60, THEME));
   assertEquals(text.includes("↑1.5k"), true);
   assertEquals(text.includes("↓1.5M"), true);
-});
-
-// ===========================================================================
-// banner
-// ===========================================================================
-
-Deno.test("banner: wordmark is 5 gradient rows + 1 dim metadata line", () => {
-  const lines = renderBanner({
-    version: "0.1.0",
-    model: "sonnet",
-    workspace: "/tmp/proj",
-    width: 60,
-    theme: THEME,
-  });
-  assertEquals(lines.length, 6); // 5 glyph rows + meta
-  // wordmark rows are gradient-painted (many spans) and carry block glyphs
-  const wordmark = lines.slice(0, 5);
-  assert(wordmark.every((l) => l.spans.length > 1), "gradient splits each row");
-  assert(wordmark.some((l) => lineText(l).includes("█")), "uses block glyphs");
-  // meta line carries all three fields, dim
-  const meta = lineText(lines[5]);
-  assertEquals(meta.includes("v0.1.0"), true);
-  assertEquals(meta.includes("sonnet"), true);
-  assertEquals(meta.includes("/tmp/proj"), true);
-  assertEquals(
-    lines[5].spans.some((s) => s.style.dim === true),
-    true,
-    "metadata is dimmed",
-  );
-});
-
-Deno.test("banner: never overflows the width", () => {
-  for (const w of [80, 60, 40]) {
-    const lines = renderBanner({
-      version: "0.0.0",
-      model: "m",
-      workspace: "/w",
-      width: w,
-      theme: THEME,
-    });
-    for (const line of lines) assertGreaterOrEqual(w, lineWidth(line));
-  }
 });
 
 // ===========================================================================

@@ -70,6 +70,13 @@ enum St {
     Paste { body: Vec<u8>, term: u8 },
     /// Assembling one multibyte UTF-8 text codepoint (possibly with mods).
     Utf8 { buf: [u8; 4], need: u8, have: u8, mods: u8 },
+    /// Swallowing an OSC sequence (`ESC ] ... BEL|ESC\`) — terminal REPORTS,
+    /// not user input. The kernel delivers a terminal's answer to an OSC
+    /// query (background colour, clipboard, …) on the same stdin bytes as
+    /// keystrokes. Before this state existed the parser fell back to
+    /// Alt+char, leaking replies like `11;rgb:2828/2828/2828` into the
+    /// editor as if the user had typed them.
+    Osc { esc: bool },
 }
 
 /// Incremental keyboard parser. Re-exported as `abi::KeyParser`.
@@ -107,9 +114,9 @@ impl KeyParser {
         // Prelude: resolve a pending bare ESC from the previous feed.
         if self.esc_pending && !bytes.is_empty() {
             let b0 = bytes[0];
-            if b0 == b'[' || b0 == b'O' {
-                // Continues an escape sequence — clear pending and let the
-                // main loop process b0 in the Esc state.
+            if b0 == b'[' || b0 == b'O' || b0 == b']' {
+                // Continues an escape sequence (CSI / SS3 / OSC) — clear
+                // pending and let the main loop process b0 in the Esc state.
                 self.esc_pending = false;
             } else {
                 // Not an escape continuation → bare ESC, then b0 in Ground.
@@ -159,6 +166,17 @@ impl KeyParser {
             St::Paste { mut body, mut term } => self.step_paste(b, &mut body, &mut term, events),
             St::Utf8 { mut buf, need, have, mods } => {
                 self.step_utf8(b, &mut buf, need, have, mods, events)
+            }
+            St::Osc { esc } => {
+                // Swallow until BEL or the \ of a closing ESC \ (ST).
+                match (esc, b) {
+                    (true, b'\\') => self.state = St::Ground, // ST complete
+                    (true, _) => self.state = St::Osc { esc: false },
+                    (false, 0x07) => self.state = St::Ground, // BEL complete
+                    (false, 0x1b) => self.state = St::Osc { esc: true },
+                    (false, _) => self.state = St::Osc { esc: false },
+                }
+                true
             }
         }
     }
@@ -257,9 +275,15 @@ impl KeyParser {
                 self.state = St::Ss3;
                 true
             }
+            b']' => {
+                // OSC — a terminal report (or title set), never user input:
+                // swallow through BEL / ST.
+                self.state = St::Osc { esc: false };
+                true
+            }
             // Intermediates / DCS / OSC starters we don't model: drop to Ground
             // (consume) to avoid swallowing following bytes as Alt+char.
-            0x20..=0x2f | b'P' | b'X' | b'^' | b'_' | b'\\' | b']' => {
+            0x20..=0x2f | b'P' | b'X' | b'^' | b'_' | b'\\' => {
                 self.state = St::Ground;
                 true
             }
@@ -1034,5 +1058,33 @@ mod tests {
     fn null_handle_returns_neg1() {
         let r = keys_feed_impl(std::ptr::null_mut(), b"x".as_ptr(), 1, std::ptr::null_mut(), 0);
         assert_eq!(r, -1);
+    }
+
+    #[test]
+    fn osc_report_bel_is_swallowed() {
+        // Terminal answering an OSC 11 background-colour query, BEL-terminated.
+        let ev = run(b"\x1b]11;rgb:2828/2828/2828\x07");
+        assert!(ev.is_empty(), "osc report leaked as input: {:?}", ev);
+    }
+
+    #[test]
+    fn osc_report_st_is_swallowed() {
+        // Same reply, ST-terminated (ESC \).
+        let ev = run(b"\x1b]11;rgb:2828/2828/2828\x1b\\");
+        assert!(ev.is_empty(), "osc report (ST) leaked as input: {:?}", ev);
+    }
+
+    #[test]
+    fn osc_report_split_across_feeds_is_swallowed() {
+        // Worst-case chunking: the reply arrives one byte per feed.
+        let ev = run_split(b"\x1b]11;rgb:2828/2828/2828\x07");
+        assert!(ev.is_empty(), "split osc report leaked: {:?}", ev);
+    }
+
+    #[test]
+    fn osc_report_then_typing_survives() {
+        // The reply must not eat the keystrokes that follow it.
+        let ev = run(b"\x1b]11;rgb:2828/2828/2828\x07hi");
+        assert_eq!(ev.len(), 2, "expected the two text events after the report: {:?}", ev);
     }
 }
