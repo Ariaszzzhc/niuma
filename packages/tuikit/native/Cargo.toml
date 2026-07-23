@@ -1,0 +1,25 @@
+[package]
+name = "niuma_tuikit"
+version = "0.1.0"
+edition = "2021"
+description = "Native hot-path core for @niuma/tuikit (width / cell buffer / diff / keys / sgr)."
+publish = false
+
+[lib]
+# A single cdylib is what Deno.dlopen loads (libniuma_tuikit.{dylib,so,dll}).
+# `rlib` is also produced so `cargo test` can link the unit tests against the
+# crate without the cdylib-only limitation.
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# catch_unwind requires unwinding; `abort` would make panics non-recoverable
+# and break the FFI panic-safety contract (every extern fn must catch).
+panic = "unwind"
+
+# ZERO external dependencies by design (no serde / unicode-width / crossterm).
+# The EAW table, grapheme rules, diff and key parser are all hand-written so
+# the artifact builds in seconds with no supply-chain surface.
+[dependencies]
