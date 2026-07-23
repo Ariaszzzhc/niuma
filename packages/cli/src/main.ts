@@ -1,28 +1,23 @@
 // niuma CLI entrypoint.
 //
 // One-shot mode wiring:
-//   1. Build the Worker URL relative to this module.
-//   2. Spawn the worker (module type, inheriting the CLI's permissions).
-//   3. setupTunnel(): create a MessageChannel, transfer port1 to the worker,
-//      keep port2 on the main thread and expose a fetch-shaped function.
-//   4. Await tunnel.ready (worker has booted createServerApp).
-//   5. runOneshot(prompt, fetch=tunnel.fetch).
-//   6. worker.terminate() + Deno.exit(code).
+//   1. spawnServerWorker(): spawn the server worker + fetch tunnel, await the
+//      ready handshake (see worker.ts).
+//   2. runOneshot(prompt, fetch=tunnel.fetch).
+//   3. worker.terminate() + Deno.exit(code).
 //
 // Serve mode runs on the main thread with no worker.
 
 import { parseCliArgs } from "./args.ts";
 import { runOneshot } from "./run.ts";
 import { runServe } from "./serve.ts";
-import { setupTunnel } from "./tunnel.ts";
+import { spawnServerWorker } from "./worker.ts";
 import { loadMergedConfig, resolveModelRef, niumaPaths } from "@niuma/config";
 
 // Configuration comes from config.toml (+ auth.json for credentials) — see
 // @niuma/config. There is deliberately no .env loading and no NIUMA_* env
 // configuration surface; the only env overrides left are NIUMA_DATA_DIR /
 // NIUMA_CONFIG (paths) and NIUMA_WORKSPACE (main→worker side-channel).
-
-const WORKER_URL = new URL("./server-worker.ts", import.meta.url);
 
 const main = async (): Promise<number> => {
   const parsed = parseCliArgs(Deno.args);
@@ -89,51 +84,15 @@ const main = async (): Promise<number> => {
   // Workers snapshot the parent env at spawn time.
   setEnvIfAbsent("NIUMA_WORKSPACE", workspace);
 
-  // Spawn the server worker. permissions:"inherit" gives it the same
-  // --allow-all surface the CLI itself runs with (Deno permissions are NOT
-  // the security model — the agent's permission chain is).
-  const worker = new Worker(WORKER_URL, {
-    type: "module",
-    deno: { permissions: "inherit" },
-  });
-
-  const tunnel = setupTunnel(worker, {
+  // Spawn the server worker + tunnel (shared bootstrap in worker.ts).
+  const spawned = await spawnServerWorker({
     mockProvider,
-    ...(modelRef !== undefined ? { defaultModelRef: modelRef } : {}),
+    ...(modelRef !== undefined ? { modelRef } : {}),
   });
-
-  // Await the ready handshake (or surface an init failure). The worker
-  // posts {kind:"ready"} once createServerApp resolves, or {kind:"init_error"}
-  // (followed by an onerror) on failure.
-  try {
-    await tunnel.ready;
-  } catch (err) {
-    console.error(
-      `niuma: server worker failed to start: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    try {
-      tunnel.worker.terminate();
-    } catch {
-      // ignore
-    }
-    return 1;
+  if (!spawned.ok) {
+    return spawned.exitCode;
   }
-
-  // The worker also wires its own onerror to reject in-flight requests and
-  // the ready promise; we install a top-level listener (addEventListener, so
-  // it composes with the tunnel's internal handler) so a mid-run worker
-  // crash still terminates the process.
-  tunnel.worker.addEventListener("error", (e: ErrorEvent) => {
-    console.error(`niuma: server worker crashed: ${e.message ?? e}`);
-    try {
-      tunnel.worker.terminate();
-    } catch {
-      // ignore
-    }
-    Deno.exit(1);
-  });
+  const { tunnel } = spawned;
 
   let exitCode: number;
   try {
