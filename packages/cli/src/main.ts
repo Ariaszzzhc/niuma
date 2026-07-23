@@ -15,7 +15,7 @@ import { parseCliArgs } from "./args.ts";
 import { runOneshot } from "./run.ts";
 import { runServe } from "./serve.ts";
 import { setupTunnel } from "./tunnel.ts";
-import { loadConfigFile, resolveModelRef, niumaPaths } from "@niuma/config";
+import { loadMergedConfig, resolveModelRef, niumaPaths } from "@niuma/config";
 
 // Configuration comes from config.toml (+ auth.json for credentials) — see
 // @niuma/config. There is deliberately no .env loading and no NIUMA_* env
@@ -49,7 +49,11 @@ const main = async (): Promise<number> => {
     model = parsed.args.model ?? "mock-model";
   } else {
     try {
-      const config = await loadConfigFile(niumaPaths().configFile);
+      // Project-level niuma.toml files (walked up from the workspace) merge
+      // over the global config, so a project can pin its own default model.
+      const config = await loadMergedConfig(niumaPaths().configFile, {
+        projectDir: workspace,
+      });
       const ref = parsed.args.model ?? config.model;
       if (!ref) {
         console.error(

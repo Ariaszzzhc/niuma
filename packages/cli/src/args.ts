@@ -174,6 +174,10 @@ CONFIGURATION
   ~/.local/share/niuma/auth.json       API credentials keyed by provider id (0600):
                                         { "deepseek": { "type": "api", "key": "sk-..." } }
   ~/.local/share/niuma/log/            Per-process JSON-lines logs.
+  ./niuma.toml                         Project-level config, discovered walking up
+                                      from the workspace to $HOME. Merged over the
+                                      global file (closest directory wins) — e.g.
+                                      pin a project model: model = "deepseek/deepseek-chat"
 
 ENVIRONMENT (path overrides only — no provider configuration)
   NIUMA_DATA_DIR                       Override data dir (also relocates config).

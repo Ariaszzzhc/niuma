@@ -1,7 +1,10 @@
 // Logging setup for niuma.
 //
-// Level comes from `[core] log_level` in config.toml (default "info") — no
-// environment variable. Two sinks:
+// Level comes from `[core] log_level` in the GLOBAL config.toml (default
+// "info") — no environment variable. Project-level niuma.toml files are NOT
+// consulted here: logging is per-process (one log file per PID), while the
+// server can host sessions from many workspaces, so a per-project log level
+// has no coherent meaning. Two sinks:
 //   - a console/stream sink chosen by the caller (stderr for the one-shot
 //     worker where stdout is reserved for the final answer, stdout for the
 //     long-running `niuma serve` process)
@@ -69,7 +72,8 @@ export const setupLogger = async (
 
   let level: LogLevel = "info";
   try {
-    level = (await loadConfigFile(niumaPaths().configFile)).core.logLevel;
+    level = (await loadConfigFile(niumaPaths().configFile)).core.logLevel ??
+      "info";
   } catch {
     // Unreadable/invalid config must not prevent startup logging.
   }

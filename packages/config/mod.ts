@@ -8,14 +8,18 @@ export {
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_MAX_OUTPUT,
   loadConfigFile,
+  loadMergedConfig,
   LOG_LEVELS,
+  mergeConfig,
   parseConfig,
   parseModelRef,
+  PROJECT_CONFIG_BASENAME,
   resolveModelRef,
   substituteEnv,
 } from "./src/config.ts";
 export type {
   CoreConfig,
+  LoadMergedOptions,
   LogLevel,
   ModelConfig,
   ProviderConfig,

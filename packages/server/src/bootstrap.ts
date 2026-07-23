@@ -9,10 +9,10 @@ import {
   type SessionManagerInfra,
 } from "./session.ts";
 import { dataPaths, type DataPaths } from "./paths.ts";
-import { makeOpenAIAdapter } from "@niuma/provider";
+import { makeOpenAIAdapter, type ProviderAdapter } from "@niuma/provider";
 import {
   ConfigError,
-  loadConfigFile,
+  loadMergedConfig,
   readAuthFile,
   resolveModelRef,
   substituteEnv,
@@ -90,7 +90,15 @@ export const bootstrap = async (
   // resolved here, once, at boot. Tests/smoke inject `deps.config` and a
   // `deps.infra.provider` so neither the config file nor the network is
   // touched.
-  const config = deps.config ?? await loadConfigFile(niumaPaths().configFile);
+  //
+  // The effective config is the global config.toml with project-level
+  // niuma.toml files (walked up from the workspace) merged on top — so a
+  // project can pick its own default model or tune per-model limits without
+  // restating provider credentials.
+  const registry = new ToolRegistry();
+  const workspace = envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
+  const config = deps.config ??
+    await loadMergedConfig(niumaPaths().configFile, { projectDir: workspace });
 
   // Build the kernel eagerly so the spawn_subagent closure below can capture
   // it. The Layer we hand downstream wraps the same value (Layer.succeed),
@@ -102,25 +110,27 @@ export const bootstrap = async (
   // ---- Agent infra: provider + tool pipeline. ----
   // makeOpenAIAdapter only touches the network on stream()/listModels(),
   // so constructing it here never fetches.
-  const provider = deps.infra?.provider ??
-    (await makeProviderFromConfig(config));
-  const registry = new ToolRegistry();
-  const workspace = envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
   const engine = new MemoryPermissionEngine({ cwd: workspace });
 
-  // Default model: config.toml's top-level `model` (provider/model-id). Its
-  // per-model limits feed the agent loop's compaction threshold and output
-  // cap.
+  // Default model: the merged config's top-level `model` (provider/model-id).
+  // A test/smoke may inject BOTH the provider and a default model (e.g. the
+  // smoke harness pins "mock-model"); injecting a provider alone still takes
+  // model + limits from the config so a mock provider can be driven at
+  // realistic window sizes.
   const defaultRef = config.model;
   let defaultModel = deps.infra?.defaultModel ?? "";
   let defaultContextWindow = deps.infra?.defaultContextWindow;
   let defaultMaxTokens = deps.infra?.defaultMaxTokens;
-  if (defaultRef && !deps.infra?.provider) {
+  if (defaultRef && !deps.infra?.defaultModel) {
     const resolved = resolveModelRef(config, defaultRef);
     defaultModel = resolved.modelId;
     defaultContextWindow = resolved.model.contextWindow;
     defaultMaxTokens = resolved.model.maxOutput;
   }
+
+  const provider = deps.infra?.provider !== undefined
+    ? withDefaultModel(deps.infra.provider, defaultModel)
+    : await makeProviderFromConfig(config);
 
   // spawn_subagent wiring: create a child session, record lineage events,
   // and recursively run a turn on the child. Depth is bounded by
@@ -237,6 +247,21 @@ export const bootstrap = async (
     sessionLayer,
   };
 };
+
+/**
+ * Rebind an injected adapter's fallback model (used when a ChatRequest omits
+ * `model`) to the config-resolved default. Adapters are plain objects of
+ * closures, so the rebind wraps rather than mutates. A no-op when no default
+ * model was resolved (nothing configured).
+ */
+const withDefaultModel = (
+  adapter: ProviderAdapter,
+  defaultModel: string,
+): ProviderAdapter =>
+  defaultModel.length === 0 ? adapter : {
+    listModels: adapter.listModels,
+    stream: (req) => adapter.stream({ ...req, model: req.model ?? defaultModel }),
+  };
 
 /**
  * Build the provider adapter from config.toml + auth.json.

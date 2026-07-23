@@ -19,11 +19,32 @@
 //   context_window = 128000
 //   max_output = 8192
 //
+// A file may also carry a PARTIAL provider table — just `[provider.x.models.y]`
+// limits with no base_url — when another file in the merge stack (global
+// config.toml or a shallower niuma.toml) defines that provider. base_url is
+// only enforced where the provider is actually used (resolveModelRef), which
+// always runs against the merged result.
+//
 // Unknown fields are tolerated (forward-compatible), but declared fields
 // with the wrong type are rejected — a typo'd `context_window = "128k"`
 // failing loudly at startup beats silently falling back to a default.
 
 import { parse as parseToml } from "@std/toml";
+import { dirname, join, resolve } from "@std/path";
+
+const envGet = (name: string): string | undefined => {
+  try {
+    return Deno.env.get(name);
+  } catch {
+    return undefined;
+  }
+};
+
+const home = (): string =>
+  envGet("HOME") ?? envGet("USERPROFILE") ?? Deno.cwd();
+
+/** Project-level config file name, discovered walking up from the workspace. */
+export const PROJECT_CONFIG_BASENAME = "niuma.toml";
 
 export const LOG_LEVELS = [
   "trace",
@@ -46,14 +67,20 @@ export interface ModelConfig {
 export interface ProviderConfig {
   readonly id: string;
   readonly name?: string;
-  readonly baseUrl: string;
+  /** Required in the file that DEFINES the provider; partial project-level
+   * tables (limits only) omit it and inherit via mergeConfig. Enforced at
+   * resolveModelRef time against the merged config. */
+  readonly baseUrl?: string;
   /** Explicit key, or a `{env:VAR}` reference resolved at credential lookup. */
   readonly apiKey?: string;
   readonly models: Readonly<Record<string, ModelConfig>>;
 }
 
 export interface CoreConfig {
-  readonly logLevel: LogLevel;
+  /** Undefined when neither the global nor any project file sets log_level
+   * (consumers fall back to "info"). Optional — rather than defaulted — so a
+   * project-level file can override the global value in mergeConfig. */
+  readonly logLevel?: LogLevel;
 }
 
 export interface NiumaConfig {
@@ -122,10 +149,6 @@ const parseProvider = (
 ): ProviderConfig => {
   const path = `provider.${id}`;
   if (!isRecord(raw)) throw typeErr(path, "a table", raw);
-  const baseUrl = optString(raw, "base_url", path);
-  if (!baseUrl) {
-    throw new ConfigError(`config: ${path}.base_url is required`);
-  }
   const rawModels = raw.models ?? {};
   if (!isRecord(rawModels)) throw typeErr(`${path}.models`, "a table", rawModels);
   const models: Record<string, ModelConfig> = {};
@@ -134,9 +157,10 @@ const parseProvider = (
   }
   const name = optString(raw, "name", path);
   const apiKey = optString(raw, "api_key", path);
+  const baseUrl = optString(raw, "base_url", path)?.replace(/\/+$/, "");
   return {
     id,
-    baseUrl: baseUrl.replace(/\/+$/, ""),
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
     ...(name !== undefined ? { name } : {}),
     ...(apiKey !== undefined ? { apiKey } : {}),
     models,
@@ -159,8 +183,11 @@ export const parseConfig = (text: string, source = "config.toml"): NiumaConfig =
 
   const rawCore = raw.core ?? {};
   if (!isRecord(rawCore)) throw typeErr("core", "a table", rawCore);
-  const logLevelRaw = optString(rawCore, "log_level", "core") ?? "info";
-  if (!(LOG_LEVELS as readonly string[]).includes(logLevelRaw)) {
+  const logLevelRaw = optString(rawCore, "log_level", "core");
+  if (
+    logLevelRaw !== undefined &&
+    !(LOG_LEVELS as readonly string[]).includes(logLevelRaw)
+  ) {
     throw new ConfigError(
       `config: core.log_level must be one of ${LOG_LEVELS.join("|")}, got "${
         logLevelRaw
@@ -179,7 +206,11 @@ export const parseConfig = (text: string, source = "config.toml"): NiumaConfig =
 
   return {
     ...(model !== undefined ? { model } : {}),
-    core: { logLevel: logLevelRaw as LogLevel },
+    core: {
+      ...(logLevelRaw !== undefined
+        ? { logLevel: logLevelRaw as LogLevel }
+        : {}),
+    },
     providers,
   };
 };
@@ -196,6 +227,99 @@ export const loadConfigFile = async (path: string): Promise<NiumaConfig> => {
     );
   }
   return parseConfig(text, path);
+};
+
+/**
+ * Layer `override` on top of `base`. Scalars (model, core.log_level) are
+ * replaced when the override sets them; providers are merged per id, and
+ * per-model limits per model id, so a project file can add one model's
+ * limits without restating the provider's base_url.
+ */
+export const mergeConfig = (
+  base: NiumaConfig,
+  override: NiumaConfig,
+): NiumaConfig => {
+  const providers: Record<string, ProviderConfig> = { ...base.providers };
+  for (const [id, p] of Object.entries(override.providers)) {
+    const existing = providers[id];
+    // baseUrl/name/apiKey inherit from the base when the override's table is
+    // partial (limits-only); models merge per id.
+    providers[id] = existing
+      ? {
+        ...existing,
+        ...Object.fromEntries(
+          Object.entries(p).filter(([k, v]) =>
+            k === "id" || (v !== undefined && k !== "models")
+          ),
+        ),
+        models: { ...existing.models, ...p.models },
+      }
+      : p;
+  }
+  return {
+    ...(override.model !== undefined || base.model !== undefined
+      ? { model: override.model ?? base.model! }
+      : {}),
+    core: {
+      ...(
+        override.core.logLevel !== undefined ||
+          base.core.logLevel !== undefined
+          ? { logLevel: override.core.logLevel ?? base.core.logLevel! }
+          : {}
+      ),
+    },
+    providers,
+  };
+};
+
+/** Directories to search for a project niuma.toml, leaf-first, stopping at
+ * $HOME (a niuma.toml in $HOME itself is still honoured; nothing above it). */
+const projectDirs = (start: string): string[] => {
+  const stopAt = resolve(home());
+  const dirs: string[] = [];
+  let dir = resolve(start);
+  for (;;) {
+    dirs.push(dir);
+    if (dir === stopAt) break;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return dirs;
+};
+
+export interface LoadMergedOptions {
+  /**
+   * Directory the project-level search starts from (usually the session
+   * workspace). Defaults to NIUMA_WORKSPACE, then Deno.cwd() — matching how
+   * the server picks its workspace. Pass an explicit path in tests/CLI.
+   */
+  readonly projectDir?: string;
+}
+
+/**
+ * Load the effective config: the global file with every applicable
+ * project-level niuma.toml merged on top.
+ *
+ * Discovery walks from opts.projectDir up to $HOME (opencode's convention;
+ * its filename is opencode.json), so running inside a monorepo picks up both
+ * the repo root's and the package's niuma.toml. Shallower files are merged
+ * first, so the closest directory wins on conflicts; all of them win over
+ * the global file.
+ */
+export const loadMergedConfig = async (
+  globalPath: string,
+  opts: LoadMergedOptions = {},
+): Promise<NiumaConfig> => {
+  let config = await loadConfigFile(globalPath);
+  const start = opts.projectDir ?? envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
+  const files = projectDirs(start).map((dir) =>
+    join(dir, PROJECT_CONFIG_BASENAME)
+  );
+  for (const file of files.reverse()) {
+    config = mergeConfig(config, await loadConfigFile(file));
+  }
+  return config;
 };
 
 /**
@@ -216,7 +340,7 @@ export const parseModelRef = (
 };
 
 export interface ResolvedModel {
-  readonly provider: ProviderConfig;
+  readonly provider: ProviderConfig & { readonly baseUrl: string };
   readonly modelId: string;
   readonly model: ModelConfig;
 }
@@ -239,8 +363,14 @@ export const resolveModelRef = (
         (known.length > 0 ? ` (configured: ${known.join(", ")})` : ""),
     );
   }
+  if (!provider.baseUrl) {
+    throw new ConfigError(
+      `config: provider "${providerId}" has no base_url. Add one to its ` +
+        `[provider.${providerId}] table in config.toml`,
+    );
+  }
   return {
-    provider,
+    provider: provider as ProviderConfig & { readonly baseUrl: string },
     modelId,
     model: provider.models[modelId] ?? {
       contextWindow: DEFAULT_CONTEXT_WINDOW,
