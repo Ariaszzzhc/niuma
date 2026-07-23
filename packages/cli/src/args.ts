@@ -21,7 +21,7 @@
 
 import { parseArgs } from "@std/cli";
 import { resolve } from "@std/path";
-import { CLI_VERSION } from "./version.ts";
+import { VERSION } from "@niuma/config";
 
 export type Subcommand = "oneshot" | "serve" | "interactive";
 
@@ -102,7 +102,7 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
     return { ok: false, exitCode: 0 };
   }
   if (parsed.version) {
-    console.log(CLI_VERSION);
+    console.log(VERSION);
     return { ok: false, exitCode: 0 };
   }
 
@@ -236,7 +236,7 @@ const parseServeArgs = (argv: string[]): ParseResult => {
 };
 
 export const printHelp = (): void => {
-  const text = `niuma ${CLI_VERSION} — minimal server-first AI coding agent
+  const text = `niuma ${VERSION} — minimal server-first AI coding agent
 
 USAGE
   niuma [options]                      Interactive TUI (default; needs a TTY).
@@ -294,7 +294,7 @@ trigger an interactive prompt on stdin:
 };
 
 export const printServeHelp = (): void => {
-  const text = `niuma ${CLI_VERSION} serve — local HTTP + SSE server
+  const text = `niuma ${VERSION} serve — local HTTP + SSE server
 
 USAGE
   niuma serve [--port <port>] [--host <addr>]

@@ -1,5 +1,3 @@
-export const TOOLS_VERSION = "0.0.0";
-
 // ---- Public surface ----
 export type {
   Accesses,

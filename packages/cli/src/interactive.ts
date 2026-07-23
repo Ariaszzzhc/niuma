@@ -14,10 +14,9 @@
 //   6. terminate the worker, return runTui's exit code.
 
 import { runTui } from "@niuma/tui";
-import { loadMergedConfig, resolveModelRef, niumaPaths } from "@niuma/config";
+import { loadMergedConfig, resolveModelRef, niumaPaths, VERSION } from "@niuma/config";
 import { fromFileUrl } from "@std/path";
 import { spawnServerWorker } from "./worker.ts";
-import { CLI_VERSION } from "./version.ts";
 import type { InteractiveArgs } from "./args.ts";
 
 // ---------------------------------------------------------------------------
@@ -135,7 +134,7 @@ export const runInteractive = async (
       fetchImpl: tunnel.fetch,
       workspace,
       ...(model !== undefined ? { model } : {}),
-      version: CLI_VERSION,
+      version: VERSION,
     });
   } catch (err) {
     // The native-missing case is handled by the guard above; anything that

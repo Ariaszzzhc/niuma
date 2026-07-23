@@ -1,5 +1,6 @@
 {
   "nodeModulesDir": "auto",
+  "version": "0.0.0",
   "workspace": [
     "packages/schema",
     "packages/provider",

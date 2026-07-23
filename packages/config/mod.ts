@@ -1,4 +1,4 @@
-export const CONFIG_VERSION = "0.0.0";
+export { VERSION } from "./src/version.ts";
 
 export { niumaPaths } from "./src/paths.ts";
 export type { NiumaPaths } from "./src/paths.ts";

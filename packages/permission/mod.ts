@@ -1,5 +1,3 @@
-export const PERMISSION_VERSION = "0.0.0";
-
 export { parseRule, parseRuleWithAction } from "./src/parser.ts";
 export type { ParsedRule } from "./src/parser.ts";
 

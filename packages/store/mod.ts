@@ -1,5 +1,3 @@
-export const STORE_VERSION = "0.0.0";
-
 export * from "./vendor/node-sqlite-dialect.ts";
 
 export {

@@ -1,5 +1,3 @@
-export const PROVIDER_VERSION = "0.0.0";
-
 export type {
   ChatRequest,
   FinishReason,

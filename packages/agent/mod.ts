@@ -1,5 +1,3 @@
-export const AGENT_VERSION = "0.0.0";
-
 export { runTurn } from "./src/loop.ts";
 export type { TurnResult } from "./src/loop.ts";
 

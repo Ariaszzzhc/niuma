@@ -1,5 +1,3 @@
-export const SERVER_VERSION = "0.0.0";
-
 export * from "./src/paths.ts";
 export * from "./src/eventLog.ts";
 export * from "./src/projection.ts";
