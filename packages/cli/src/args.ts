@@ -1,20 +1,29 @@
 // Argument parsing for the niuma CLI.
 //
 // Grammar:
-//   niuma -p <prompt> [--workspace <path>] [--model <name>]   one-shot mode
-//   niuma serve [--port <port>] [--host <host>]                TCP server mode
-//   niuma --version | -V                                       print version
-//   niuma --help | -h                                          print help
+//   niuma [options]                       interactive TUI (default; needs a TTY)
+//   niuma tui [options]                   interactive TUI (explicit form)
+//   niuma -p <prompt> [options]           one-shot mode
+//   niuma serve [--port <port>] [--host]  TCP server mode
+//   niuma --version | -V                  print version
+//   niuma --help | -h                     print help
 //
-// The first positional token (if it is `serve`) selects the serve subcommand.
-// Anything else is parsed as one-shot flags. parseArgs from @std/cli handles
-// the long/short flag aliases and `=`/space value forms.
+// The first positional token selects a subcommand: `serve` -> serve, `tui` ->
+// interactive. Anything else is parsed as flags: with `-p/--prompt` it is a
+// one-shot; without `-p` (and a TTY on stdin) it defaults to the interactive
+// TUI. parseArgs from @std/cli handles the long/short flag aliases and `=`/
+// space value forms.
+//
+// Pipe protection: a non-TTY stdin (e.g. `echo foo | niuma`) cannot host a
+// fullscreen TUI, so both bare `niuma` and the explicit `niuma tui` form print
+// help and exit 2 instead of trying to render into a pipe — the caller almost
+// certainly forgot `-p`.
 
 import { parseArgs } from "@std/cli";
 import { resolve } from "@std/path";
 import { CLI_VERSION } from "./version.ts";
 
-export type Subcommand = "oneshot" | "serve";
+export type Subcommand = "oneshot" | "serve" | "interactive";
 
 export interface OneShotArgs {
   readonly subcommand: "oneshot";
@@ -27,29 +36,43 @@ export interface OneShotArgs {
   readonly mockProvider: boolean;
 }
 
+export interface InteractiveArgs {
+  readonly subcommand: "interactive";
+  readonly workspace: string;
+  /** Explicit --model override; undefined means "use config.toml's model". */
+  readonly model?: string;
+  /** Smoke-harness only: same flag as one-shot. */
+  readonly mockProvider: boolean;
+}
+
 export interface ServeArgs {
   readonly subcommand: "serve";
   readonly port: number;
   readonly host: string;
 }
 
-export type ParsedArgs = OneShotArgs | ServeArgs;
+export type ParsedArgs = OneShotArgs | ServeArgs | InteractiveArgs;
 
 export type ParseResult =
   | { readonly ok: true; readonly args: ParsedArgs }
-  // exitCode follows the niuma-wide convention: 0 = success/help, 1 = every
-  // failure. There is deliberately no usage-vs-runtime split (no exit 2) —
-  // the CLI is for humans, and stderr already carries the "what to fix".
+  // exitCode convention: 0 = success/help printed, 1 = every runtime/usage
+  // failure. The single exception is exit 2, returned ONLY for the pipe-
+  // protection case (bare `niuma` on a non-TTY stdin) — it lets wrappers tell
+  // "refused to start" apart from a real error.
   | { readonly ok: false; readonly exitCode: number; readonly message?: string };
 
 const DEFAULT_PORT = 4096;
 const DEFAULT_HOST = "127.0.0.1";
 
 export const parseCliArgs = (argv: string[]): ParseResult => {
-  // Subcommand dispatch on the first non-flag positional. `serve` is the only
-  // subcommand; anything else is treated as a one-shot flag sequence.
+  // Subcommand dispatch on the first non-flag positional. `serve` and `tui`
+  // are the named subcommands; anything else is parsed as a flag sequence
+  // (one-shot with -p, or default-to-interactive without).
   if (argv.length > 0 && argv[0] === "serve") {
     return parseServeArgs(argv.slice(1));
+  }
+  if (argv.length > 0 && argv[0] === "tui") {
+    return parseInteractiveArgs(argv.slice(1));
   }
 
   const parsed = parseArgs(argv, {
@@ -85,9 +108,22 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
 
   const prompt = parsed.prompt;
   if (!prompt || prompt.length === 0) {
-    console.error("niuma: missing required option -p/--prompt <text>");
-    console.error("Try `niuma --help` for usage.");
-    return { ok: false, exitCode: 1 };
+    // No -p/--prompt -> interactive TUI. Refuse to launch the TUI when stdin
+    // is not a TTY: `echo foo | niuma` would otherwise try to render a
+    // fullscreen UI into a pipe. The user almost certainly forgot -p, so
+    // point them at the help (exit 2 distinguishes this from a real fault).
+    if (!Deno.stdin.isTerminal()) {
+      printHelp();
+      return { ok: false, exitCode: 2 };
+    }
+    return {
+      ok: true,
+      args: toInteractiveArgs(
+        parsed.workspace,
+        parsed.model,
+        parsed["mock-provider"],
+      ),
+    };
   }
 
   const workspaceArg = parsed.workspace ?? Deno.cwd();
@@ -104,6 +140,59 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
       mockProvider: parsed["mock-provider"] === true,
       ...(parsed.model !== undefined ? { model: parsed.model } : {}),
     },
+  };
+};
+
+const parseInteractiveArgs = (argv: string[]): ParseResult => {
+  const parsed = parseArgs(argv, {
+    string: ["workspace", "model"],
+    boolean: ["help", "mock-provider"],
+    alias: { h: "help" },
+    unknown: (name) => {
+      if (name.startsWith("-")) {
+        console.error(`niuma tui: unknown option: ${name}`);
+        console.error("Try `niuma --help` for usage.");
+        Deno.exit(1);
+      }
+      return true;
+    },
+  });
+
+  if (parsed.help) {
+    printHelp();
+    return { ok: false, exitCode: 0 };
+  }
+
+  // `niuma tui` needs an interactive TTY on stdin exactly like bare `niuma`: a
+  // fullscreen TUI cannot be driven from a pipe (e.g. `echo hi | niuma tui`),
+  // so refuse early with the same help + exit-2 the bare form gives, rather
+  // than failing deep inside the terminal layer where the cause is hidden.
+  if (!Deno.stdin.isTerminal()) {
+    printHelp();
+    return { ok: false, exitCode: 2 };
+  }
+
+  return {
+    ok: true,
+    args: toInteractiveArgs(
+      parsed.workspace,
+      parsed.model,
+      parsed["mock-provider"],
+    ),
+  };
+};
+
+const toInteractiveArgs = (
+  workspace: string | undefined,
+  model: string | undefined,
+  mockProvider: boolean | undefined,
+): InteractiveArgs => {
+  const workspaceArg = workspace ?? Deno.cwd();
+  return {
+    subcommand: "interactive",
+    workspace: resolve(workspaceArg),
+    mockProvider: mockProvider === true,
+    ...(model !== undefined ? { model } : {}),
   };
 };
 
@@ -150,13 +239,23 @@ export const printHelp = (): void => {
   const text = `niuma ${CLI_VERSION} — minimal server-first AI coding agent
 
 USAGE
+  niuma [options]                      Interactive TUI (default; needs a TTY).
+  niuma tui [options]                  Interactive TUI (same as bare \`niuma\`).
   niuma -p <prompt> [options]          One-shot: run a prompt, print the answer.
   niuma serve [--port <port>]          Start a local HTTP + SSE server.
   niuma --version                      Print version and exit.
   niuma --help                         Show this help.
 
+  With no -p/--prompt and a TTY on stdin, niuma launches the interactive TUI.
+  If stdin is not a TTY (e.g. \`echo foo | niuma\`), it prints this help and
+  exits 2 — pass -p to run one-shot over a pipe.
+
+INTERACTIVE / TUI OPTIONS
+      --workspace <path>              Workspace path (default: current dir).
+      --model <provider/model-id>     Model to use (default: config.toml's "model").
+
 ONE-SHOT OPTIONS
-  -p, --prompt <text>                 Prompt text (required).
+  -p, --prompt <text>                 Prompt text (required for one-shot).
       --workspace <path>              Workspace path (default: current dir).
       --model <provider/model-id>     Model to use (default: config.toml's "model").
 

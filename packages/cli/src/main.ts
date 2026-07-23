@@ -1,10 +1,17 @@
 // niuma CLI entrypoint.
 //
-// One-shot mode wiring:
-//   1. spawnServerWorker(): spawn the server worker + fetch tunnel, await the
-//      ready handshake (see worker.ts).
-//   2. runOneshot(prompt, fetch=tunnel.fetch).
-//   3. worker.terminate() + Deno.exit(code).
+// Three subcommands share this entrypoint:
+//   - interactive (default): bare `niuma` or `niuma tui` -> the TUI. Wired in
+//     interactive.ts via runTui; dispatch just delegates.
+//   - one-shot: `niuma -p <prompt>` -> run a single prompt, print the answer.
+//   - serve: `niuma serve` -> run the HTTP + SSE server on the main thread.
+//
+// One-shot mode wiring (the worker bootstrap lives in worker.ts):
+//   1. Resolve the model (--model wins, else config.toml).
+//   2. setEnvIfAbsent NIUMA_WORKSPACE (inherited by the worker).
+//   3. spawnServerWorker(): Worker + fetch tunnel + ready handshake.
+//   4. runOneshot(prompt, fetch=tunnel.fetch).
+//   5. worker.terminate() + return exit code.
 //
 // Serve mode runs on the main thread with no worker.
 
@@ -12,12 +19,13 @@ import { parseCliArgs } from "./args.ts";
 import { runOneshot } from "./run.ts";
 import { runServe } from "./serve.ts";
 import { spawnServerWorker } from "./worker.ts";
+import { runInteractive } from "./interactive.ts";
 import { loadMergedConfig, resolveModelRef, niumaPaths } from "@niuma/config";
 
 // Configuration comes from config.toml (+ auth.json for credentials) — see
 // @niuma/config. There is deliberately no .env loading and no NIUMA_* env
 // configuration surface; the only env overrides left are NIUMA_DATA_DIR /
-// NIUMA_CONFIG (paths) and NIUMA_WORKSPACE (main→worker side-channel).
+// NIUMA_CONFIG (paths) and NIUMA_WORKSPACE (main->worker side-channel).
 
 const main = async (): Promise<number> => {
   const parsed = parseCliArgs(Deno.args);
@@ -30,6 +38,10 @@ const main = async (): Promise<number> => {
       port: parsed.args.port,
       host: parsed.args.host,
     });
+  }
+
+  if (parsed.args.subcommand === "interactive") {
+    return await runInteractive(parsed.args);
   }
 
   // One-shot mode.
@@ -84,7 +96,6 @@ const main = async (): Promise<number> => {
   // Workers snapshot the parent env at spawn time.
   setEnvIfAbsent("NIUMA_WORKSPACE", workspace);
 
-  // Spawn the server worker + tunnel (shared bootstrap in worker.ts).
   const spawned = await spawnServerWorker({
     mockProvider,
     ...(modelRef !== undefined ? { modelRef } : {}),
