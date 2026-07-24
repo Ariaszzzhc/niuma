@@ -1,4 +1,4 @@
-import { type RecordedEvent, parseEventLine } from "@niuma/schema";
+import { parseEventLine, type RecordedEvent } from "@niuma/schema";
 
 // Scan a JSONL text blob into events. Tolerates a truncated LAST line (the
 // typical crash signature: the file ends mid-write without a terminating

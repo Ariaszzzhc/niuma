@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { Effect, Stream } from "effect";
 import type { LiveEvent, RecordedEvent } from "@niuma/schema";
 import type {
@@ -15,28 +15,18 @@ import {
   Network,
   RateLimited,
 } from "@niuma/provider";
-import {
-  eventsToMessages,
-  projectEvent,
-} from "../src/context.ts";
+import { eventsToMessages, projectEvent } from "../src/context.ts";
 import {
   buildSummary,
   compactMessages,
   isSummaryMessage,
-  SUMMARY_PREFIX,
   SUMMARIZATION_PROMPT,
   summarizeHistory,
+  SUMMARY_PREFIX,
 } from "../src/compaction.ts";
 import { makeApprovalGateway } from "../src/approval.ts";
-import {
-  SessionManager,
-  type AgentInfra,
-} from "../src/session.ts";
-import type {
-  EventInput,
-  EventLog,
-  ToolPipeline,
-} from "../src/deps.ts";
+import { type AgentInfra, SessionManager } from "../src/session.ts";
+import type { EventInput, EventLog, ToolPipeline } from "../src/deps.ts";
 
 // In-memory event log honouring the EventLog port.
 function makeMemoryLog(): EventLog & {
@@ -124,7 +114,10 @@ const isErrorOccurred = (e: RecordedEvent): e is ErrorOccurredEvent =>
 type TurnCompletedEvent = Extract<RecordedEvent, { type: "turn.completed" }>;
 const isTurnCompleted = (e: RecordedEvent): e is TurnCompletedEvent =>
   e.type === "turn.completed";
-type AssistantMessageEvent = Extract<RecordedEvent, { type: "assistant.message" }>;
+type AssistantMessageEvent = Extract<
+  RecordedEvent,
+  { type: "assistant.message" }
+>;
 const isAssistantMessage = (e: RecordedEvent): e is AssistantMessageEvent =>
   e.type === "assistant.message";
 
@@ -144,11 +137,15 @@ const noTools: ToolPipeline = {
 Deno.test("runTurn: plain answer, no tools", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider: scriptedProvider([[
       { _tag: "TextDelta", text: "hello " },
       { _tag: "TextDelta", text: "world" },
-      { _tag: "Finish", reason: "stop", usage: { promptTokens: 5, completionTokens: 2, totalTokens: 7 } },
+      {
+        _tag: "Finish",
+        reason: "stop",
+        usage: { promptTokens: 5, completionTokens: 2, totalTokens: 7 },
+      },
     ]]),
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -172,15 +169,28 @@ Deno.test("runTurn: plain answer, no tools", async () => {
 Deno.test("runTurn: one tool round-trip then answer", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider: scriptedProvider([
       [
-        { _tag: "ToolCall", id: "c1", name: "read", arguments: '{"path":"a.ts"}' },
-        { _tag: "Finish", reason: "tool_calls", usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 } },
+        {
+          _tag: "ToolCall",
+          id: "c1",
+          name: "read",
+          arguments: '{"path":"a.ts"}',
+        },
+        {
+          _tag: "Finish",
+          reason: "tool_calls",
+          usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 },
+        },
       ],
       [
         { _tag: "TextDelta", text: "done" },
-        { _tag: "Finish", reason: "stop", usage: { promptTokens: 6, completionTokens: 1, totalTokens: 7 } },
+        {
+          _tag: "Finish",
+          reason: "stop",
+          usage: { promptTokens: 6, completionTokens: 1, totalTokens: 7 },
+        },
       ],
     ]),
     tools: noTools,
@@ -203,10 +213,15 @@ Deno.test("runTurn: one tool round-trip then answer", async () => {
 Deno.test("length stop with tool calls yields synthetic error result", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider: scriptedProvider([
       [
-        { _tag: "ToolCall", id: "c1", name: "bash", arguments: '{"command":"ls"}' },
+        {
+          _tag: "ToolCall",
+          id: "c1",
+          name: "bash",
+          arguments: '{"command":"ls"}',
+        },
         { _tag: "Finish", reason: "length" },
       ],
       [
@@ -237,12 +252,21 @@ Deno.test("length stop with tool calls yields synthetic error result", async () 
 Deno.test("context helpers: replay, compaction, summary", () => {
   const base = { seq: 0, ts: 0, sessionId: "s" };
   const events: RecordedEvent[] = [
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u1" }] },
+    },
     {
       ...base,
       type: "assistant.message",
       data: {
-        parts: [{ type: "tool_call", id: "t1", name: "write", input: { path: "x.ts" } }],
+        parts: [{
+          type: "tool_call",
+          id: "t1",
+          name: "write",
+          input: { path: "x.ts" },
+        }],
         usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
@@ -251,9 +275,21 @@ Deno.test("context helpers: replay, compaction, summary", () => {
       type: "tool.call.requested",
       data: { callId: "t1", name: "write", input: { path: "x.ts" } },
     },
-    { ...base, type: "tool.result", data: { callId: "t1", content: "ok", isError: false, durationMs: 1 } },
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u2" }] } },
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u3" }] } },
+    {
+      ...base,
+      type: "tool.result",
+      data: { callId: "t1", content: "ok", isError: false, durationMs: 1 },
+    },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u2" }] },
+    },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u3" }] },
+    },
   ];
   const messages = eventsToMessages(events);
   assertEquals(messages.length, 5);
@@ -281,7 +317,10 @@ Deno.test("context helpers: replay, compaction, summary", () => {
 Deno.test("mid-stream Network error retries and discards partial text", async () => {
   const log = makeMemoryLog();
   const provider = flakyProvider([
-    { events: [{ _tag: "TextDelta", text: "par" }], fail: new Network({ cause: new Error("boom") }) },
+    {
+      events: [{ _tag: "TextDelta", text: "par" }],
+      fail: new Network({ cause: new Error("boom") }),
+    },
     {
       events: [
         { _tag: "TextDelta", text: "full answer" },
@@ -290,7 +329,7 @@ Deno.test("mid-stream Network error retries and discards partial text", async ()
     },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -323,7 +362,10 @@ Deno.test("text.reset emitted live before re-sample", async () => {
   const log = makeMemoryLog();
   const live: LiveEvent[] = [];
   const provider = flakyProvider([
-    { events: [{ _tag: "TextDelta", text: "par" }], fail: new Network({ cause: new Error("boom") }) },
+    {
+      events: [{ _tag: "TextDelta", text: "par" }],
+      fail: new Network({ cause: new Error("boom") }),
+    },
     {
       events: [
         { _tag: "TextDelta", text: "full answer" },
@@ -332,7 +374,7 @@ Deno.test("text.reset emitted live before re-sample", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -370,7 +412,7 @@ Deno.test("retry exhaustion ends turn with stopReason error", async () => {
     { events: [], fail: new RateLimited({}) },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -384,7 +426,10 @@ Deno.test("retry exhaustion ends turn with stopReason error", async () => {
     session.prompt([{ type: "text", text: "hi" }]),
   );
   assertEquals(result.stopReason, "error");
-  assertEquals(typeof result.error === "string" && result.error.length > 0, true);
+  assertEquals(
+    typeof result.error === "string" && result.error.length > 0,
+    true,
+  );
   assertEquals(result.error!.includes("RateLimited"), true);
   assertEquals(result.text, "");
 
@@ -405,7 +450,7 @@ Deno.test("fatal provider error is not retried", async () => {
     { events: [], fail: new AuthFailed({ message: "bad key" }) },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -447,7 +492,7 @@ Deno.test("ContextOverflow force-compacts and re-samples", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -498,19 +543,32 @@ Deno.test("runTurn replays the log once per turn (Fix D)", async () => {
   const provider = flakyProvider([
     {
       events: [
-        { _tag: "ToolCall", id: "c1", name: "read", arguments: '{"path":"a.ts"}' },
-        { _tag: "Finish", reason: "tool_calls", usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 } },
+        {
+          _tag: "ToolCall",
+          id: "c1",
+          name: "read",
+          arguments: '{"path":"a.ts"}',
+        },
+        {
+          _tag: "Finish",
+          reason: "tool_calls",
+          usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 },
+        },
       ],
     },
     {
       events: [
         { _tag: "TextDelta", text: "done" },
-        { _tag: "Finish", reason: "stop", usage: { promptTokens: 6, completionTokens: 1, totalTokens: 7 } },
+        {
+          _tag: "Finish",
+          reason: "stop",
+          usage: { promptTokens: 6, completionTokens: 1, totalTokens: 7 },
+        },
       ],
     },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -533,19 +591,32 @@ Deno.test("incremental mirror matches full replay at each sample (Fix D)", async
   const provider = flakyProvider([
     {
       events: [
-        { _tag: "ToolCall", id: "c1", name: "read", arguments: '{"path":"a.ts"}' },
-        { _tag: "Finish", reason: "tool_calls", usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 } },
+        {
+          _tag: "ToolCall",
+          id: "c1",
+          name: "read",
+          arguments: '{"path":"a.ts"}',
+        },
+        {
+          _tag: "Finish",
+          reason: "tool_calls",
+          usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 },
+        },
       ],
     },
     {
       events: [
         { _tag: "TextDelta", text: "done" },
-        { _tag: "Finish", reason: "stop", usage: { promptTokens: 6, completionTokens: 1, totalTokens: 7 } },
+        {
+          _tag: "Finish",
+          reason: "stop",
+          usage: { promptTokens: 6, completionTokens: 1, totalTokens: 7 },
+        },
       ],
     },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -588,7 +659,7 @@ Deno.test("steered input is mirrored into the message list (Fix D)", async () =>
     },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -620,12 +691,21 @@ Deno.test("projectEvent: no-ops metadata, projects message types identically to 
   const base = { seq: 0, ts: 0, sessionId: "s" };
   const events: RecordedEvent[] = [
     { ...base, type: "turn.started", data: {} },
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "hi" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "hi" }] },
+    },
     {
       ...base,
       type: "assistant.message",
       data: {
-        parts: [{ type: "tool_call", id: "t1", name: "read", input: { path: "x" } }],
+        parts: [{
+          type: "tool_call",
+          id: "t1",
+          name: "read",
+          input: { path: "x" },
+        }],
         usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
@@ -634,9 +714,17 @@ Deno.test("projectEvent: no-ops metadata, projects message types identically to 
       type: "tool.call.requested",
       data: { callId: "t1", name: "read", input: { path: "x" } },
     },
-    { ...base, type: "tool.result", data: { callId: "t1", content: "ok", isError: false, durationMs: 1 } },
+    {
+      ...base,
+      type: "tool.result",
+      data: { callId: "t1", content: "ok", isError: false, durationMs: 1 },
+    },
     { ...base, type: "compaction.performed", data: {} },
-    { ...base, type: "error.occurred", data: { message: "boom", retryable: false } },
+    {
+      ...base,
+      type: "error.occurred",
+      data: { message: "boom", retryable: false },
+    },
   ];
   // Incremental projection (projectEvent per event) == full replay.
   const incremental: ProviderMessage[] = [];
@@ -658,12 +746,21 @@ Deno.test("orphan tool_call at end of history gets synthetic aborted output", ()
   // Turn interrupted between the assistant message and the tool batch:
   // assistant carries a tool_call, no tool.result ever lands.
   const events: RecordedEvent[] = [
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u1" }] },
+    },
     {
       ...base,
       type: "assistant.message",
       data: {
-        parts: [{ type: "tool_call", id: "t1", name: "write", input: { path: "x" } }],
+        parts: [{
+          type: "tool_call",
+          id: "t1",
+          name: "write",
+          input: { path: "x" },
+        }],
         usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
@@ -687,12 +784,21 @@ Deno.test("orphan tool_call is closed before the next user message", () => {
   // never produces tool.result, then the user prompts again. The replay must
   // close the dangling call BEFORE the user message or the API 400s.
   const events: RecordedEvent[] = [
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u1" }] },
+    },
     {
       ...base,
       type: "assistant.message",
       data: {
-        parts: [{ type: "tool_call", id: "t1", name: "write", input: { path: "x" } }],
+        parts: [{
+          type: "tool_call",
+          id: "t1",
+          name: "write",
+          input: { path: "x" },
+        }],
         usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
@@ -701,7 +807,11 @@ Deno.test("orphan tool_call is closed before the next user message", () => {
       type: "approval.requested",
       data: { approvalId: "a1", callId: "t1", name: "write", input: {} },
     },
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u2" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u2" }] },
+    },
     {
       ...base,
       type: "assistant.message",
@@ -727,7 +837,11 @@ Deno.test("orphan tool_call is closed before the next user message", () => {
 Deno.test("multi-call batch with partial results closes only the missing calls", () => {
   const base = { seq: 0, ts: 0, sessionId: "s" };
   const events: RecordedEvent[] = [
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u1" }] },
+    },
     {
       ...base,
       type: "assistant.message",
@@ -740,11 +854,23 @@ Deno.test("multi-call batch with partial results closes only the missing calls",
         usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
-    { ...base, type: "tool.result", data: { callId: "t1", content: "ra", isError: false, durationMs: 1 } },
-    { ...base, type: "tool.result", data: { callId: "t2", content: "rb", isError: false, durationMs: 1 } },
+    {
+      ...base,
+      type: "tool.result",
+      data: { callId: "t1", content: "ra", isError: false, durationMs: 1 },
+    },
+    {
+      ...base,
+      type: "tool.result",
+      data: { callId: "t2", content: "rb", isError: false, durationMs: 1 },
+    },
     // t3 denied → reject path returns isError result; simulate its absence
     // (e.g. turn died right after t2) so t3 stays orphaned.
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u2" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u2" }] },
+    },
   ];
   const messages = eventsToMessages(events);
   const tools = messages.filter((m) => m.role === "tool");
@@ -771,8 +897,16 @@ Deno.test("orphan tool.result with no surviving call is dropped", () => {
   // cut from the window. Codex drops orphan outputs; so do we (no pending
   // call to home it to).
   const events: RecordedEvent[] = [
-    { ...base, type: "tool.result", data: { callId: "ghost", content: "x", isError: false, durationMs: 1 } },
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "tool.result",
+      data: { callId: "ghost", content: "x", isError: false, durationMs: 1 },
+    },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u1" }] },
+    },
   ];
   const messages = eventsToMessages(events);
   assertEquals(messages.length, 1);
@@ -782,16 +916,29 @@ Deno.test("orphan tool.result with no surviving call is dropped", () => {
 Deno.test("complete round-trips are untouched by pairing", () => {
   const base = { seq: 0, ts: 0, sessionId: "s" };
   const events: RecordedEvent[] = [
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u1" }] },
+    },
     {
       ...base,
       type: "assistant.message",
       data: {
-        parts: [{ type: "tool_call", id: "t1", name: "read", input: { path: "a" } }],
+        parts: [{
+          type: "tool_call",
+          id: "t1",
+          name: "read",
+          input: { path: "a" },
+        }],
         usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
-    { ...base, type: "tool.result", data: { callId: "t1", content: "ok", isError: false, durationMs: 1 } },
+    {
+      ...base,
+      type: "tool.result",
+      data: { callId: "t1", content: "ok", isError: false, durationMs: 1 },
+    },
     {
       ...base,
       type: "assistant.message",
@@ -802,7 +949,12 @@ Deno.test("complete round-trips are untouched by pairing", () => {
     },
   ];
   const messages = eventsToMessages(events);
-  assertEquals(messages.map((m) => m.role), ["user", "assistant", "tool", "assistant"]);
+  assertEquals(messages.map((m) => m.role), [
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+  ]);
   assertEquals(messages[2].content, "ok");
 });
 
@@ -856,7 +1008,7 @@ Deno.test("compaction over threshold uses LLM summary (Fix B)", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -901,7 +1053,7 @@ Deno.test("summary call failure falls back to template (Fix B)", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -945,7 +1097,7 @@ Deno.test("empty summary falls back to template (Fix B)", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),

@@ -16,15 +16,24 @@ function assertThrows(fn: () => unknown, msg?: string): void {
 }
 
 Deno.test("parseRule: extracts tool and pattern", () => {
-  assertEquals(parseRule("Bash(npm run *)"), { tool: "bash", pattern: "npm run *" });
-  assertEquals(parseRule("Read(/etc/**)"), { tool: "read", pattern: "/etc/**" });
+  assertEquals(parseRule("Bash(npm run *)"), {
+    tool: "bash",
+    pattern: "npm run *",
+  });
+  assertEquals(parseRule("Read(/etc/**)"), {
+    tool: "read",
+    pattern: "/etc/**",
+  });
   assertEquals(parseRule("Edit(src/**)"), { tool: "edit", pattern: "src/**" });
   assertEquals(parseRule("Bash(*)"), { tool: "bash", pattern: "*" });
 });
 
 Deno.test("parseRule: lowercases tool name", () => {
   assertEquals(parseRule("BASH(*)"), { tool: "bash", pattern: "*" });
-  assertEquals(parseRule("Write(/tmp/x)"), { tool: "write", pattern: "/tmp/x" });
+  assertEquals(parseRule("Write(/tmp/x)"), {
+    tool: "write",
+    pattern: "/tmp/x",
+  });
 });
 
 Deno.test("parseRule: supports negation via leading rule-level '!'", () => {
@@ -36,7 +45,10 @@ Deno.test("parseRule: supports negation via leading rule-level '!'", () => {
 });
 
 Deno.test("parseRule: supports negation inside the pattern", () => {
-  assertEquals(parseRule("Bash(!npm run *)"), { tool: "bash", pattern: "!npm run *" });
+  assertEquals(parseRule("Bash(!npm run *)"), {
+    tool: "bash",
+    pattern: "!npm run *",
+  });
 });
 
 Deno.test("parseRule: trims whitespace", () => {

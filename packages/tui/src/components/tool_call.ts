@@ -1,5 +1,5 @@
 // ===========================================================================
-// @niuma/tui — tool-call transcript card (collapsed + expanded views)
+// @niuma/tui — tool_call transcript card (collapsed + expanded views)
 // ---------------------------------------------------------------------------
 // Renders one tool call as it appears in the transcript. Collapsed form is a
 // single row: a status glyph, the tool name, an input summary, and (when
@@ -49,7 +49,18 @@ export interface ToolCallView {
 
 // Braille spinner frames (each width 1). Animated by passing an advancing
 // `spinnerFrame`; the index wraps modulo the cycle length.
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+const SPINNER_FRAMES = [
+  "⠋",
+  "⠙",
+  "⠹",
+  "⠸",
+  "⠼",
+  "⠴",
+  "⠦",
+  "⠧",
+  "⠇",
+  "⠏",
+] as const;
 
 /** Maximum result lines shown when expanded; the rest collapse into a footer. */
 const MAX_RESULT_LINES = 8;
@@ -104,7 +115,10 @@ export const renderToolCall = (
 
   // -- header row ----------------------------------------------------------
   const glyph = statusGlyph(call, spinnerFrame, theme);
-  const nameSpan: StyledSpan = { text: call.name, style: { fg: theme.text, bold: true } };
+  const nameSpan: StyledSpan = {
+    text: call.name,
+    style: { fg: theme.text, bold: true },
+  };
   const headerLeft: StyledSpan[] = [
     glyph,
     { text: " ", style: {} },
@@ -113,8 +127,13 @@ export const renderToolCall = (
 
   // Right-aligned duration (if any) is reserved first so the summary can take
   // whatever remains without overflowing.
-  const durText = call.durationMs !== undefined ? formatDuration(call.durationMs) : "";
-  const durSpan: StyledSpan = { text: durText, style: { fg: theme.textDim, dim: true } };
+  const durText = call.durationMs !== undefined
+    ? formatDuration(call.durationMs)
+    : "";
+  const durSpan: StyledSpan = {
+    text: durText,
+    style: { fg: theme.textDim, dim: true },
+  };
   const durW = stringWidth(durText);
 
   const usedW = headerLeft.reduce((n, s) => n + stringWidth(s.text), 0); // glyph+space+name
@@ -127,7 +146,10 @@ export const renderToolCall = (
   const summaryText = call.inputSummary.length > 0
     ? truncateToWidth(call.inputSummary, summaryBudget, summaryBudget > 0)
     : "";
-  const summarySpan: StyledSpan = { text: summaryText, style: { fg: theme.muted } };
+  const summarySpan: StyledSpan = {
+    text: summaryText,
+    style: { fg: theme.muted },
+  };
 
   // Lay out: [headerLeft] [gap][summary] ... pad ... [gap][duration]
   const headerSpans: StyledSpan[] = [...headerLeft];
@@ -149,7 +171,10 @@ export const renderToolCall = (
 
     shown.forEach((line, idx) => {
       const branch = idx === 0 ? "⎿ " : "  ";
-      const branchSpan: StyledSpan = { text: branch, style: { fg: theme.border } };
+      const branchSpan: StyledSpan = {
+        text: branch,
+        style: { fg: theme.border },
+      };
       const innerW = Math.max(1, safeWidth - stringWidth(branch));
       const clipped = truncateToWidth(line, innerW, false);
       out.push({
@@ -160,7 +185,10 @@ export const renderToolCall = (
       out.push({
         spans: [
           { text: "  ", style: {} },
-          { text: `+${hidden} line${hidden === 1 ? "" : "s"}`, style: { fg: theme.muted, dim: true } },
+          {
+            text: `+${hidden} line${hidden === 1 ? "" : "s"}`,
+            style: { fg: theme.muted, dim: true },
+          },
         ],
       });
     }

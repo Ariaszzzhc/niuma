@@ -19,7 +19,7 @@
 // markdown renderer -> stringWidth), so it is warmed at module load.
 // ===========================================================================
 
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import type { InputEvent, KeyMods, NamedKey } from "@niuma/tuikit";
 import { stringWidth } from "@niuma/tuikit";
 import { buildProgram } from "../src/app.ts";
@@ -54,7 +54,8 @@ const textEvent = (ch: string, mods: Partial<KeyMods> = {}): InputEvent => ({
 });
 
 const keyMsg = (event: InputEvent): Msg => ({ type: "tuikit:key", event });
-const textMsg = (ch: string, mods: Partial<KeyMods> = {}): Msg => keyMsg(textEvent(ch, mods));
+const textMsg = (ch: string, mods: Partial<KeyMods> = {}): Msg =>
+  keyMsg(textEvent(ch, mods));
 const sse = (type: string, data: Record<string, unknown> = {}): Msg => ({
   type: "tui:sse",
   event: { type, data },
@@ -66,10 +67,14 @@ const fakeClient: TuiClient = {
   sessionId: "s1",
   // Never consumed here (we drive update() directly, not the loop), but the
   // field is required; close immediately so nothing hangs if subscribed.
-  eventsStream: new ReadableStream<Uint8Array>({ start(c) { c.close(); } }),
-  prompt: async () => ({ ok: true, status: 202, body: "" }),
-  approve: async () => ok,
-  interrupt: async () => ok,
+  eventsStream: new ReadableStream<Uint8Array>({
+    start(c) {
+      c.close();
+    },
+  }),
+  prompt: () => Promise.resolve({ ok: true, status: 202, body: "" }),
+  approve: () => Promise.resolve(ok),
+  interrupt: () => Promise.resolve(ok),
 };
 
 const newProgram = (): Built =>
@@ -84,7 +89,8 @@ const newProgram = (): Built =>
   });
 
 /** `update` wrapper that yields just the next model (drops the cmd tail). */
-const step = (update: Built["update"]) => (m: Model, msg: Msg): Model => update(m, msg)[0];
+const step = (update: Built["update"]) => (m: Model, msg: Msg): Model =>
+  update(m, msg)[0];
 
 /** Fill the transcript past the viewport with blank-separated paragraphs. */
 const fill = (u: ReturnType<typeof step>, model: Model): Model => {
@@ -119,8 +125,16 @@ Deno.test("app scroll: scrolling up breaks follow and survives an SSE event", ()
 
   // an incoming text.delta must NOT re-pin a scrolled-up view
   model = u(model, sse("text.delta", { delta: "more streaming text" }));
-  assertEquals(model.followTail, false, "SSE event keeps the user's scroll position");
-  assertEquals(model.transcriptScroll, offsetAfterScroll, "offset unchanged by the SSE event");
+  assertEquals(
+    model.followTail,
+    false,
+    "SSE event keeps the user's scroll position",
+  );
+  assertEquals(
+    model.transcriptScroll,
+    offsetAfterScroll,
+    "offset unchanged by the SSE event",
+  );
 });
 
 Deno.test("app scroll: end re-engages follow; home jumps to the top", () => {
@@ -156,7 +170,11 @@ Deno.test("app scroll: scrolling back down to the bottom re-engages follow", () 
     model = u(model, keyMsg(key("pageDown")));
     if (model.followTail) break;
   }
-  assertEquals(model.followTail, true, "scrolling back to the bottom re-engages follow");
+  assertEquals(
+    model.followTail,
+    true,
+    "scrolling back to the bottom re-engages follow",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -182,7 +200,11 @@ Deno.test("app priority: an approval arriving while the palette is open closes i
       input: { command: "rm -rf /" },
     }),
   );
-  assertEquals(model.palette.open, false, "palette closed so it cannot swallow the approval keys");
+  assertEquals(
+    model.palette.open,
+    false,
+    "palette closed so it cannot swallow the approval keys",
+  );
   assertEquals(model.approval !== null, true);
 });
 
@@ -195,12 +217,23 @@ Deno.test("app priority: y reaches the approval even when the palette is also op
   // approval present WHILE the palette is still open.
   model = update(model, textMsg("p", { ctrl: true }))[0];
   assertEquals(model.palette.open, true);
-  model = { ...model, approval: { approvalId: "ap1", toolName: "bash", preview: [] } };
+  model = {
+    ...model,
+    approval: { approvalId: "ap1", toolName: "bash", preview: [] },
+  };
 
   const res = update(model, textMsg("y"));
-  assertEquals(res[0].approval, null, "approval must win input priority over the palette");
+  assertEquals(
+    res[0].approval,
+    null,
+    "approval must win input priority over the palette",
+  );
   assertEquals(res.length > 1, true, "the approve command was dispatched");
-  assertEquals(res[0].palette.query, "", "the 'y' did not leak into the palette query");
+  assertEquals(
+    res[0].palette.query,
+    "",
+    "the 'y' did not leak into the palette query",
+  );
 });
 
 Deno.test("app priority: a non-decision key is swallowed while the approval modal is up", () => {
@@ -217,5 +250,9 @@ Deno.test("app priority: a non-decision key is swallowed while the approval moda
   const res = update(model, textMsg("z"));
   // 'z' is not y/a/n -> swallowed, approval stays, editor untouched
   assertEquals(res[0].approval !== null, true);
-  assertEquals(res[0].editor.lines, ["x"], "non-decision key did not reach the editor");
+  assertEquals(
+    res[0].editor.lines,
+    ["x"],
+    "non-decision key did not reach the editor",
+  );
 });

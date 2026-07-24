@@ -1,5 +1,5 @@
 import type { Accesses } from "./types.ts";
-import { conflicts } from "./pathUtil.ts";
+import { conflicts } from "./path_util.ts";
 
 const ABORT_GRACE_MS = 2000;
 
@@ -55,15 +55,16 @@ export async function schedule<R>(
   // runnable once every blocker has completed.
   const blockers: number[][] = jobs.map((job, i) =>
     jobs.slice(0, i).flatMap((earlier, j) =>
-      overlap(earlier.accesses, job.accesses) ? [j] : [],
+      overlap(earlier.accesses, job.accesses) ? [j] : []
     )
   );
 
   // One resolver per job, resolved when the job's result lands. Waiting on
   // these lets the runtime drain the macrotask queue between waves instead
   // of starving it.
-  const completionResolvers: Array<(() => void) | undefined> =
-    new Array(jobs.length).fill(undefined);
+  const completionResolvers: Array<(() => void) | undefined> = new Array(
+    jobs.length,
+  ).fill(undefined);
   const completions: Array<Promise<void>> = jobs.map((_, i) =>
     new Promise<void>((resolve) => {
       completionResolvers[i] = resolve;
@@ -95,7 +96,7 @@ export async function schedule<R>(
       // .catch converts a rejecting runJob into a synthesised error result so
       // the queue's side-effects (completed/inflight/resolver/tryStart) still
       // fire. Without it a single throw strands every blocker downstream.
-      runJob(jobs[i], i, grace, opts.signal).catch((e): R => ({
+      runJob(jobs[i], grace, opts.signal).catch((e): R => ({
         content: `[error] ${e instanceof Error ? e.message : String(e)}`,
         isError: true,
       } as R)).then((r) => {
@@ -133,7 +134,10 @@ export async function schedule<R>(
   // Pad any missing slots (defensive — e.g. aborted before kick-off).
   for (let i = 0; i < results.length; i++) {
     if (!(i in results)) {
-      results[i] = synthesiseAbortError(jobs[i].id, "aborted before start") as R;
+      results[i] = synthesiseAbortError(
+        jobs[i].id,
+        "aborted before start",
+      ) as R;
     }
   }
 
@@ -142,7 +146,6 @@ export async function schedule<R>(
 
 async function runJob<R>(
   job: ScheduledJob<R>,
-  index: number,
   grace: number,
   parentSignal: AbortSignal,
 ): Promise<R> {
@@ -168,7 +171,9 @@ async function runJob<R>(
         // Give the tool a grace period to honour the signal.
         graceTimer = setTimeout(() => {
           timedOut = true;
-          resolve(synthesiseAbortError(job.id, "tool ignored abort signal") as R);
+          resolve(
+            synthesiseAbortError(job.id, "tool ignored abort signal") as R,
+          );
         }, grace);
       });
     }
@@ -182,7 +187,7 @@ async function runJob<R>(
   return result;
 }
 
-export function synthesiseAbortError<R>(id: string, reason: string): R {
+export function synthesiseAbortError<R>(_id: string, reason: string): R {
   return {
     content: `[aborted] ${reason}`,
     isError: true,

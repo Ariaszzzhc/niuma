@@ -80,21 +80,23 @@ export const makeEventBus = (
         }),
       );
 
-      const publish: EventBus["publish"] = (sse) =>
-        Effect.gen(function* () {
-          yield* Ref.update(lastSeqBySession, (m) => {
-            const prev = m.get(sse.event.sessionId) ?? 0;
-            if (sse.cursor > prev) {
-              return new Map(m).set(sse.event.sessionId, sse.cursor);
-            }
-            return m;
-          });
-          const ps = yield* getOrCreate(sse.event.sessionId);
-          const exit = yield* PubSub.publish(ps, sse).pipe(Effect.exit);
-          if (Exit.isFailure(exit)) {
-            logger.warn("pubsub publish failed: {err}", { err: String(exit.cause) });
+    const publish: EventBus["publish"] = (sse) =>
+      Effect.gen(function* () {
+        yield* Ref.update(lastSeqBySession, (m) => {
+          const prev = m.get(sse.event.sessionId) ?? 0;
+          if (sse.cursor > prev) {
+            return new Map(m).set(sse.event.sessionId, sse.cursor);
           }
+          return m;
         });
+        const ps = yield* getOrCreate(sse.event.sessionId);
+        const exit = yield* PubSub.publish(ps, sse).pipe(Effect.exit);
+        if (Exit.isFailure(exit)) {
+          logger.warn("pubsub publish failed: {err}", {
+            err: String(exit.cause),
+          });
+        }
+      });
 
     const live: EventBus["live"] = (event) =>
       Effect.gen(function* () {
@@ -120,7 +122,9 @@ export const makeEventBus = (
         for (const ps of lm.values()) yield* PubSub.shutdown(ps);
       });
 
-    if (logPath) logger.debug("eventbus initialized ({path})", { path: logPath });
+    if (logPath) {
+      logger.debug("eventbus initialized ({path})", { path: logPath });
+    }
 
     return { subscribe, publish, live, lastSeq, shutdown } satisfies EventBus;
   });
@@ -134,7 +138,11 @@ export interface PendingApproval {
 export interface ApprovalRegistry {
   readonly register: (
     request: ApprovalRequestedData,
-  ) => Effect.Effect<Deferred.Deferred<ApprovalResolvedData, never>, never, never>;
+  ) => Effect.Effect<
+    Deferred.Deferred<ApprovalResolvedData, never>,
+    never,
+    never
+  >;
   readonly resolve: (
     approvalId: string,
     decision: ApprovalResolvedData,
@@ -157,8 +165,13 @@ export const makeApprovalRegistry = (): Effect.Effect<
     const register: ApprovalRegistry["register"] = (request) =>
       Effect.gen(function* () {
         const d = yield* Deferred.make<ApprovalResolvedData, never>();
-        const entry: PendingApproval = { approvalId: request.approvalId, deferred: d, request };
-        yield* Ref.update(registry, (m) => new Map(m).set(request.approvalId, entry));
+        const entry: PendingApproval = {
+          approvalId: request.approvalId,
+          deferred: d,
+          request,
+        };
+        yield* Ref.update(registry, (m) =>
+          new Map(m).set(request.approvalId, entry));
         return d;
       });
 
@@ -166,7 +179,9 @@ export const makeApprovalRegistry = (): Effect.Effect<
       Effect.gen(function* () {
         const m = yield* Ref.get(registry);
         const entry = m.get(approvalId);
-        if (!entry) return false;
+        if (!entry) {
+          return false;
+        }
         yield* Deferred.succeed(entry.deferred, decision);
         yield* Ref.update(registry, (mm) => {
           const next = new Map(mm);
@@ -177,7 +192,9 @@ export const makeApprovalRegistry = (): Effect.Effect<
       });
 
     const pending: ApprovalRegistry["pending"] = () =>
-      Ref.get(registry).pipe(Effect.map((m) => Array.from(m.values())));
+      Ref.get(registry).pipe(Effect.map((m) =>
+        Array.from(m.values())
+      ));
 
     return { register, resolve, pending } satisfies ApprovalRegistry;
   });

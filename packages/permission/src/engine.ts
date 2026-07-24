@@ -16,8 +16,16 @@ export interface PermissionEngineShape {
   readonly setBuiltinRules: (
     rules: ReadonlyArray<PermissionRule>,
   ) => Effect.Effect<void, never, never>;
-  readonly snapshot: () => Effect.Effect<PermissionEngineSnapshot, never, never>;
-  readonly allRules: () => Effect.Effect<ReadonlyArray<PermissionRule>, never, never>;
+  readonly snapshot: () => Effect.Effect<
+    PermissionEngineSnapshot,
+    never,
+    never
+  >;
+  readonly allRules: () => Effect.Effect<
+    ReadonlyArray<PermissionRule>,
+    never,
+    never
+  >;
 }
 
 export interface PermissionEngineSnapshot {
@@ -26,9 +34,11 @@ export interface PermissionEngineSnapshot {
   readonly session: ReadonlyArray<PermissionRule>;
 }
 
-export class PermissionEngine extends Context.Service<PermissionEngine, PermissionEngineShape>()(
-  "@niuma/permission/PermissionEngine",
-) {}
+// deno-lint-ignore no-slow-types
+export class PermissionEngine
+  extends Context.Service<PermissionEngine, PermissionEngineShape>()(
+    "@niuma/permission/PermissionEngine",
+  ) {}
 
 export interface PermissionEngineOptions {
   readonly cwd: string;
@@ -56,8 +66,13 @@ class PermissionEngineImpl implements PermissionEngineShape {
     return [...this.builtinRules, ...this.userRules, ...this.sessionRules];
   }
 
-  decide(toolName: string, target: string): Effect.Effect<Verdict, never, never> {
-    return Effect.sync(() => runPolicy(this.flatten(), toolName, target, this.cwd));
+  decide(
+    toolName: string,
+    target: string,
+  ): Effect.Effect<Verdict, never, never> {
+    return Effect.sync(() =>
+      runPolicy(this.flatten(), toolName, target, this.cwd)
+    );
   }
 
   registerSessionRule(rule: PermissionRule): Effect.Effect<void, never, never> {
@@ -72,7 +87,9 @@ class PermissionEngineImpl implements PermissionEngineShape {
     });
   }
 
-  setBuiltinRules(rules: ReadonlyArray<PermissionRule>): Effect.Effect<void, never, never> {
+  setBuiltinRules(
+    rules: ReadonlyArray<PermissionRule>,
+  ): Effect.Effect<void, never, never> {
     return Effect.sync(() => {
       this.builtinRules = [...rules];
     });

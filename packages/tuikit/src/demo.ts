@@ -20,9 +20,9 @@ import type {
   StyledLine,
   StyledSpan,
   TerminalCaps,
-} from "./binding-contract.ts";
+} from "./binding_contract.ts";
 import { gradient } from "./style.ts";
-import { type LoopMsg, run, tick, type Program } from "./loop.ts";
+import { type LoopMsg, type Program, run, tick } from "./loop.ts";
 import { stringWidth } from "./width.ts";
 import { Terminal, type TerminalSize } from "./terminal.ts";
 
@@ -64,7 +64,13 @@ const view = (model: DemoModel, caps: TerminalCaps): StyledLine[] => {
   for (let i = 0; i < topPad; i++) lines.push(blankLine(cols));
 
   // -- gradient banner, centred -------------------------------------------
-  const bannerSpans: StyledSpan[] = gradient(PINK, CYAN, BANNER, { bold: true }, caps);
+  const bannerSpans: StyledSpan[] = gradient(
+    PINK,
+    CYAN,
+    BANNER,
+    { bold: true },
+    caps,
+  );
   const bannerW = stringWidth(BANNER);
   const lead = Math.max(0, Math.floor((cols - bannerW) / 2));
   lines.push({
@@ -73,7 +79,10 @@ const view = (model: DemoModel, caps: TerminalCaps): StyledLine[] => {
   lines.push(blankLine(cols));
 
   // -- rounded-border box, centred ----------------------------------------
-  const boxW = Math.min(42, Math.max(LABEL_REST.length + 4, cols < 24 ? 20 : cols - 4));
+  const boxW = Math.min(
+    42,
+    Math.max(LABEL_REST.length + 4, cols < 24 ? 20 : cols - 4),
+  );
   const innerW = Math.max(1, boxW - 2);
   const boxX = Math.max(0, Math.floor((cols - boxW) / 2));
 
@@ -146,7 +155,7 @@ const makeProgram = (
 });
 
 const main = async (): Promise<void> => {
-  const term = await Terminal.open();
+  const term = Terminal.open();
   try {
     await run(term, makeProgram(term.caps, term.size));
   } finally {

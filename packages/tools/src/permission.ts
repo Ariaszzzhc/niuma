@@ -5,7 +5,7 @@ import {
   matchPattern,
   READ_ONLY_TOOLS,
   runPolicy,
-  Verdict,
+  type Verdict,
 } from "@niuma/permission";
 import type { Decision, PermissionEngine, Tool } from "./types.ts";
 export type { PermissionEngine };
@@ -82,7 +82,7 @@ export class MemoryPermissionEngine implements PermissionEngine {
     ];
   }
 
-  async evaluate(req: {
+  evaluate(req: {
     callId: string;
     sessionId: string;
     name: string;
@@ -94,11 +94,11 @@ export class MemoryPermissionEngine implements PermissionEngine {
       req.pattern,
       this.cwd,
     );
-    if (verdict.kind === "allow") return { decision: "allow" };
+    if (verdict.kind === "allow") return Promise.resolve({ decision: "allow" });
     if (verdict.kind === "deny") {
-      return { decision: "deny", reason: verdict.reason };
+      return Promise.resolve({ decision: "deny", reason: verdict.reason });
     }
-    return { decision: "ask" };
+    return Promise.resolve({ decision: "ask" });
   }
 
   /**
@@ -108,11 +108,12 @@ export class MemoryPermissionEngine implements PermissionEngine {
    * isolation. This matches @niuma/permission's chain model where session
    * rules are simply the highest-precedence layer.
    */
-  async remember(rule: PermissionRule): Promise<void> {
+  remember(rule: PermissionRule): Promise<void> {
     this.sessionRules.push(rule);
+    return Promise.resolve();
   }
 
-  patternFor(name: string, input: unknown): string {
+  patternFor(_name: string, input: unknown): string {
     if (input == null) return "";
     if (typeof input === "string") return input;
     if (typeof input !== "object") return String(input);
@@ -135,12 +136,7 @@ export function matchWildcard(pattern: string, value: string): boolean {
 }
 
 /** Re-exports so the tools package has one obvious import surface. */
-export {
-  FILE_TOOLS,
-  isSensitivePath,
-  READ_ONLY_TOOLS,
-  runPolicy,
-};
+export { FILE_TOOLS, isSensitivePath, READ_ONLY_TOOLS, runPolicy };
 export type { Verdict };
 
 /**
@@ -164,7 +160,9 @@ export function makeEngine(
       const tool = tools.get(name);
       if (!tool) return engine.patternFor(name, input);
       const raw = tool.normalize ? safeParse(tool, input) : input;
-      return tool.normalize ? tool.normalize(raw as never) : engine.patternFor(name, raw);
+      return tool.normalize
+        ? tool.normalize(raw as never)
+        : engine.patternFor(name, raw);
     },
   };
 }

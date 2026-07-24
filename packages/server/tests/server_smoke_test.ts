@@ -1,10 +1,10 @@
-import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { createServerApp } from "../mod.ts";
 import { bootstrap } from "../src/bootstrap.ts";
-import { makeEventLog } from "../src/eventLog.ts";
+import { makeEventLog } from "../src/event_log.ts";
 import { ensureSchema } from "../src/projection.ts";
-import { makeEventBus } from "../src/eventBus.ts";
+import { makeEventBus } from "../src/event_bus.ts";
 import { makeMockProvider } from "@niuma/provider";
 import { parseConfig } from "@niuma/config";
 import { Effect } from "effect";
@@ -17,7 +17,7 @@ await Deno.mkdir(sessionsDir, { recursive: true });
 
 async function buildApp() {
   const bus = await Effect.runPromise(makeEventBus());
-  const eventLog = makeEventLog({ sessionsDir });
+  const event_log = makeEventLog({ sessionsDir });
   const projection = await ensureSchema(dbPath);
   const boot = await bootstrap({
     paths: {
@@ -25,7 +25,7 @@ async function buildApp() {
       sessions: sessionsDir,
       db: dbPath,
     },
-    eventLog,
+    event_log,
     projection,
     bus,
     // Inject the network-free provider and an in-memory config so the test
@@ -75,7 +75,11 @@ Deno.test({
     assertEquals(listRes.status, 200);
     const list = await listRes.json();
     assert(Array.isArray(list));
-    assert(list.some((s: { sessionId: string }) => s.sessionId === created.sessionId));
+    assert(
+      list.some((s: { sessionId: string }) =>
+        s.sessionId === created.sessionId
+      ),
+    );
   },
 });
 
@@ -179,9 +183,18 @@ Deno.test({
     await reader.cancel();
     assert(value, "expected at least one chunk");
     const text = new TextDecoder().decode(value);
-    assert(text.includes("event: session.created"), `got: ${text.slice(0, 200)}`);
-    assert(text.includes("id: 1"), `expected id:1 frame, got: ${text.slice(0, 200)}`);
-    assert(text.includes("data: "), `expected data: line, got: ${text.slice(0, 200)}`);
+    assert(
+      text.includes("event: session.created"),
+      `got: ${text.slice(0, 200)}`,
+    );
+    assert(
+      text.includes("id: 1"),
+      `expected id:1 frame, got: ${text.slice(0, 200)}`,
+    );
+    assert(
+      text.includes("data: "),
+      `expected data: line, got: ${text.slice(0, 200)}`,
+    );
   },
 });
 

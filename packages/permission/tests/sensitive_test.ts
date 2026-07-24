@@ -2,7 +2,9 @@ import { isSensitivePath, normalizePath, normalizePattern } from "../src/sensiti
 import { resolve } from "@std/path";
 
 function assertEquals<T>(actual: T, expected: T, msg?: string): void {
-  if (actual !== expected) throw new Error(msg ?? `assertEquals: ${actual} !== ${expected}`);
+  if (actual !== expected) {
+    throw new Error(msg ?? `assertEquals: ${actual} !== ${expected}`);
+  }
 }
 
 const HOME = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "";

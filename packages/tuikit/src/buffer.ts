@@ -20,8 +20,8 @@
 import {
   ATTR,
   CAP,
-  COLOR_TAG,
   type Color,
+  COLOR_TAG,
   GRAD_SPAN_REC_OFF,
   GRAD_SPAN_REC_SIZE,
   type InputEvent,
@@ -29,20 +29,20 @@ import {
   KEY_EVENT_REC_OFF,
   KEY_EVENT_REC_SIZE,
   KEY_EVENT_TYPE,
-  type KeyEventType,
   KEY_KIND,
+  type KeyEvent,
+  type KeyEventType,
+  type KeyMods,
   KEYS_OUT_HEADER_SIZE,
   MOD,
-  type Style,
-  type TerminalCaps,
-  type KeyEvent,
-  type KeyMods,
   type NamedKey,
   type PasteEvent,
   SPAN_REC_OFF,
   SPAN_REC_SIZE,
+  type Style,
   type StyledSpan,
-} from "./binding-contract.ts";
+  type TerminalCaps,
+} from "./binding_contract.ts";
 import { ptrOf, ptrToBigInt, TuikitError } from "./ffi.ts";
 
 const encoder = /* @__PURE__ */ new TextEncoder();
@@ -195,7 +195,9 @@ export const unpackColor = (word: number): Color => {
     case COLOR_TAG.indexed256:
       return { indexed256: payload & 0xff };
     case COLOR_TAG.rgb:
-      return { rgb: [(payload >>> 16) & 0xff, (payload >>> 8) & 0xff, payload & 0xff] };
+      return {
+        rgb: [(payload >>> 16) & 0xff, (payload >>> 8) & 0xff, payload & 0xff],
+      };
     default:
       return "default";
   }
@@ -268,7 +270,13 @@ export const encodeSpans = (spans: readonly StyledSpan[]): EncodedSpans => {
     texts.push(textBytes);
     const { fg, bg, attrs } = packStyle(span.style);
     const base = i * SPAN_REC_SIZE;
-    dv.setBigUint64(base + SPAN_REC_OFF.textPtr, ptrToBigInt(textBytes.length === 0 ? null : Deno.UnsafePointer.of(textBytes)), true);
+    dv.setBigUint64(
+      base + SPAN_REC_OFF.textPtr,
+      ptrToBigInt(
+        textBytes.length === 0 ? null : Deno.UnsafePointer.of(textBytes),
+      ),
+      true,
+    );
     dv.setUint32(base + SPAN_REC_OFF.textLen, textBytes.length, true);
     dv.setUint32(base + SPAN_REC_OFF.fg, fg, true);
     dv.setUint32(base + SPAN_REC_OFF.bg, bg, true);
@@ -328,7 +336,10 @@ export const decodeKeyEvents = (
   // Clamp to what the buffer actually holds: the native side never emits a
   // count that exceeds the bytes it wrote, but decoding must not throw on a
   // truncated/corrupt buffer (defence at the FFI boundary).
-  const maxRecs = Math.max(0, Math.floor((limit - KEYS_OUT_HEADER_SIZE) / KEY_EVENT_REC_SIZE));
+  const maxRecs = Math.max(
+    0,
+    Math.floor((limit - KEYS_OUT_HEADER_SIZE) / KEY_EVENT_REC_SIZE),
+  );
   const events: InputEvent[] = [];
   for (let i = 0; i < count && i < maxRecs; i++) {
     const base = KEYS_OUT_HEADER_SIZE + i * KEY_EVENT_REC_SIZE;
@@ -390,7 +401,11 @@ export interface GradRec {
 export const decodeGradient = (buf: Uint8Array, total: number): GradRec[] => {
   const n = Math.floor(total / GRAD_SPAN_REC_SIZE);
   if (n === 0) return [];
-  const dv = new DataView(buf.buffer, buf.byteOffset, Math.min(total, buf.byteLength));
+  const dv = new DataView(
+    buf.buffer,
+    buf.byteOffset,
+    Math.min(total, buf.byteLength),
+  );
   const out: GradRec[] = [];
   for (let i = 0; i < n; i++) {
     const base = i * GRAD_SPAN_REC_SIZE;

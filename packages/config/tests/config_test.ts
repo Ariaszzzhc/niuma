@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import {
   loadConfigFile,
@@ -96,7 +96,11 @@ Deno.test("parseModelRef: provider/model-id, model id may contain slashes", () =
     providerId: "openrouter",
     modelId: "anthropic/claude-sonnet",
   });
-  assertThrows(() => parseModelRef("no-slash"), ConfigError, "provider/model-id");
+  assertThrows(
+    () => parseModelRef("no-slash"),
+    ConfigError,
+    "provider/model-id",
+  );
   assertThrows(() => parseModelRef("/model"), ConfigError);
   assertThrows(() => parseModelRef("provider/"), ConfigError);
 });
@@ -198,7 +202,9 @@ base_url = "https://b"
 });
 
 Deno.test("mergeConfig: empty override is the identity", () => {
-  const base = parseConfig(`model = "a/m"\n[provider.a]\nbase_url = "https://a"`);
+  const base = parseConfig(
+    `model = "a/m"\n[provider.a]\nbase_url = "https://a"`,
+  );
   assertEquals(mergeConfig(base, parseConfig("")), base);
 });
 

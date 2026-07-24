@@ -59,7 +59,11 @@ export type ParseResult =
   // failure. The single exception is exit 2, returned ONLY for the pipe-
   // protection case (bare `niuma` on a non-TTY stdin) — it lets wrappers tell
   // "refused to start" apart from a real error.
-  | { readonly ok: false; readonly exitCode: number; readonly message?: string };
+  | {
+    readonly ok: false;
+    readonly exitCode: number;
+    readonly message?: string;
+  };
 
 const DEFAULT_PORT = 4096;
 const DEFAULT_HOST = "127.0.0.1";

@@ -121,7 +121,16 @@ export const SYMBOLS = {
   /** (from_rgb, to_rgb, text, len, bg, caps, out, cap) -> total bytes
    * needed (cluster_count * 16). Both colors MUST be RGB-tagged words. */
   tuikit_gradient: {
-    parameters: ["u32", "u32", "pointer", "u32", "u32", "u32", "pointer", "u32"],
+    parameters: [
+      "u32",
+      "u32",
+      "pointer",
+      "u32",
+      "u32",
+      "u32",
+      "pointer",
+      "u32",
+    ],
     result: "i64",
   },
 } as const satisfies Deno.ForeignLibraryInterface;

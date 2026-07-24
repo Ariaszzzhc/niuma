@@ -1,5 +1,5 @@
 import { createServerApp } from "./app.ts";
-import { setupLogger, log } from "./logger.ts";
+import { log, setupLogger } from "./logger.ts";
 
 // Direct entrypoint (`deno run packages/server/src/serve.ts`). The supported
 // way to run the server is `niuma serve --port/--host`; this file stays as a

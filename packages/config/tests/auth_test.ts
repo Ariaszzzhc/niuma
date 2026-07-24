@@ -1,6 +1,12 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import { getAuth, readAuthFile, removeAuth, setAuth, writeAuthFile } from "../mod.ts";
+import {
+  getAuth,
+  readAuthFile,
+  removeAuth,
+  setAuth,
+  writeAuthFile,
+} from "../mod.ts";
 
 const withTempFile = async (
   fn: (path: string) => Promise<void>,
@@ -51,7 +57,10 @@ Deno.test("setAuth/getAuth/removeAuth round-trip with 0600 mode", async () => {
 
     // Overwrite one without disturbing the other.
     await setAuth(path, "deepseek", { type: "api", key: "sk-a2" });
-    assertEquals(await getAuth(path, "deepseek"), { type: "api", key: "sk-a2" });
+    assertEquals(await getAuth(path, "deepseek"), {
+      type: "api",
+      key: "sk-a2",
+    });
     assertEquals(await getAuth(path, "openai"), { type: "api", key: "sk-b" });
 
     if (Deno.build.os !== "windows") {

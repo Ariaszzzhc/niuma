@@ -1,8 +1,8 @@
 import { Context, Effect, Layer, Stream } from "effect";
-import {
-  type RecordedEvent,
-  type SessionCreatedData,
-  type SessionInfo,
+import type {
+  RecordedEvent,
+  SessionCreatedData,
+  SessionInfo,
 } from "@niuma/schema";
 import { EventLog } from "./event_log.ts";
 import { Projection } from "./projection.ts";
@@ -22,6 +22,7 @@ export interface EventLogServiceShape {
   listSessionFiles: () => Effect.Effect<readonly string[]>;
 }
 
+// deno-lint-ignore no-slow-types
 export class EventLogService extends Context.Service<
   EventLogService,
   EventLogServiceShape
@@ -36,6 +37,7 @@ export interface ProjectionServiceShape {
   close: () => Effect.Effect<void>;
 }
 
+// deno-lint-ignore no-slow-types
 export class ProjectionService extends Context.Service<
   ProjectionService,
   ProjectionServiceShape
@@ -60,26 +62,27 @@ export const EventLogServiceLive: Layer.Layer<EventLogService> = Layer.succeed(
   },
 );
 
-export const ProjectionServiceLive: Layer.Layer<ProjectionService> = Layer.effect(
-  ProjectionService,
-  Effect.gen(function* () {
-    // acquireRelease so db.destroy() runs when the layer (and its scope) closes.
-    const projection = yield* Effect.acquireRelease(
-      Effect.sync(() => Projection.open()),
-      (p) => Effect.promise(() => p.close()),
-    );
-    yield* Effect.promise(() => projection.migrate());
-    return {
-      migrate: () => Effect.promise(() => projection.migrate()),
-      apply: (event) => Effect.promise(() => projection.apply(event)),
-      rebuildAll: () =>
-        Effect.gen(function* () {
-          yield* Effect.promise(() => projection.rebuildAll());
-          return EventLog.listSessionFiles(projection.dataDir).length;
-        }),
-      listSessions: () => Effect.promise(() => projection.listSessions()),
-      getSession: (id) => Effect.promise(() => projection.getSession(id)),
-      close: () => Effect.promise(() => projection.close()),
-    };
-  }),
-);
+export const ProjectionServiceLive: Layer.Layer<ProjectionService> = Layer
+  .effect(
+    ProjectionService,
+    Effect.gen(function* () {
+      // acquireRelease so db.destroy() runs when the layer (and its scope) closes.
+      const projection = yield* Effect.acquireRelease(
+        Effect.sync(() => Projection.open()),
+        (p) => Effect.promise(() => p.close()),
+      );
+      yield* Effect.promise(() => projection.migrate());
+      return {
+        migrate: () => Effect.promise(() => projection.migrate()),
+        apply: (event) => Effect.promise(() => projection.apply(event)),
+        rebuildAll: () =>
+          Effect.gen(function* () {
+            yield* Effect.promise(() => projection.rebuildAll());
+            return EventLog.listSessionFiles(projection.dataDir).length;
+          }),
+        listSessions: () => Effect.promise(() => projection.listSessions()),
+        getSession: (id) => Effect.promise(() => projection.getSession(id)),
+        close: () => Effect.promise(() => projection.close()),
+      };
+    }),
+  );

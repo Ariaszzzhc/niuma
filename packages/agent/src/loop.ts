@@ -23,8 +23,8 @@ import {
 import {
   buildSummary,
   compactMessages,
-  SUMMARY_PREFIX,
   summarizeHistory,
+  SUMMARY_PREFIX,
 } from "./compaction.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
@@ -74,7 +74,10 @@ const addUsage = (a: Usage, b: Usage): Usage => ({
 
 const mapUsage = (u?: ProviderUsage): Usage =>
   u
-    ? { inputTokens: u.promptTokens ?? 0, outputTokens: u.completionTokens ?? 0 }
+    ? {
+      inputTokens: u.promptTokens ?? 0,
+      outputTokens: u.completionTokens ?? 0,
+    }
     : zeroUsage();
 
 const parseInput = (args: string): unknown => {
@@ -114,7 +117,9 @@ const errorMessage = (e: ProviderError): string => {
       parts.push(e.message);
       break;
     case "RateLimited":
-      if (e.retryAfterMs !== undefined) parts.push(`retryAfterMs=${e.retryAfterMs}`);
+      if (e.retryAfterMs !== undefined) {
+        parts.push(`retryAfterMs=${e.retryAfterMs}`);
+      }
       break;
     case "Network":
       break;
@@ -124,7 +129,7 @@ const errorMessage = (e: ProviderError): string => {
 
 // Runs one provider stream to completion, accumulating text (emitted live as
 // text.delta) and complete tool calls. The provider adapter already coalesces
-// tool-call deltas, so calls arrive whole.
+// tool_call deltas, so calls arrive whole.
 const runStreamOnce = (
   deps: RunTurnDeps,
   sessionId: string,
@@ -166,7 +171,7 @@ const runStreamOnce = (
             break;
           }
         }
-      }),
+      })
     ),
   );
 
@@ -174,7 +179,7 @@ const runStreamOnce = (
 // complementing the transport-layer withRetry in openai.ts which only wraps
 // the initial fetch). Retries Network/RateLimited/Overloaded up to
 // STREAM_MAX_RETRIES times with exponential backoff + jitter. Partial
-// text/tool-call deltas are discarded on every retry (locals reset), and a
+// text/tool_call deltas are discarded on every retry (locals reset), and a
 // live-only text.reset event is emitted before re-sampling so clients clear
 // their streaming buffer. Records only TRANSIENT retry error.occurred events
 // (retryable: true); terminal failures fail upward for runTurn to record.
@@ -242,10 +247,12 @@ const sample = (
       // Retryable: log a transient retry, reset the live buffer if this or a
       // prior attempt streamed any deltas, back off, then loop.
       attempt++;
-      yield* deps.eventLog.append(sessionId, {
+      yield* deps.event_log.append(sessionId, {
         type: "error.occurred",
         data: {
-          message: `${errorMessage(e)} (retry ${attempt}/${STREAM_MAX_RETRIES})`,
+          message: `${
+            errorMessage(e)
+          } (retry ${attempt}/${STREAM_MAX_RETRIES})`,
           retryable: true,
         },
       });
@@ -263,7 +270,8 @@ const sample = (
       // RateLimited.retryAfterMs overrides the computed delay when present.
       const delay = e._tag === "RateLimited" && e.retryAfterMs !== undefined
         ? e.retryAfterMs
-        : Math.min(200 * 2 ** (attempt - 1), 3200) * (0.9 + Math.random() * 0.2);
+        : Math.min(200 * 2 ** (attempt - 1), 3200) *
+          (0.9 + Math.random() * 0.2);
       yield* Effect.sleep(delay);
     }
   });
@@ -290,8 +298,8 @@ export function runTurn(
     // D: replay ONCE per turn, then maintain `messages`/`historyEvents` locally
     // (see header invariant). Within a turn only this loop appends message-
     // relevant events, so the local mirror stays an exact projection.
-    const replayed = yield* deps.eventLog.replay(sessionId);
-    let historyEvents: RecordedEvent[] = [...replayed];
+    const replayed = yield* deps.event_log.replay(sessionId);
+    const historyEvents: RecordedEvent[] = [...replayed];
     let messages: ProviderMessage[] = eventsToMessages(historyEvents);
 
     // Append + mirror: every event the loop records is folded into the local
@@ -303,7 +311,7 @@ export function runTurn(
     // reassignment from compaction is seen by subsequent calls.
     const append = (input: EventInput): Effect.Effect<RecordedEvent> =>
       Effect.gen(function* () {
-        const ev = yield* deps.eventLog.append(sessionId, input);
+        const ev = yield* deps.event_log.append(sessionId, input);
         historyEvents.push(ev);
         projectEvent(messages, ev);
         return ev;
@@ -435,7 +443,9 @@ export function runTurn(
       // effect@4 beta dropped `Effect.catchAll`; `Effect.result` deterministically
       // erases the error channel and lets us branch on the typed ProviderError.
       const outcome: Outcome = yield* Effect.gen(function* () {
-        const first = yield* sample(deps, sessionId, baseReq).pipe(Effect.result);
+        const first = yield* sample(deps, sessionId, baseReq).pipe(
+          Effect.result,
+        );
         if (Result.isSuccess(first)) return toOk(first.success);
         const e = first.failure;
         if (e._tag !== "ContextOverflow") return yield* toFailed(e);
@@ -448,7 +458,9 @@ export function runTurn(
           ...baseReq,
           messages: compacted,
         }).pipe(Effect.result);
-        if (Result.isFailure(resampled)) return yield* toFailed(resampled.failure);
+        if (Result.isFailure(resampled)) {
+          return yield* toFailed(resampled.failure);
+        }
         return toOk(resampled.success);
       });
 

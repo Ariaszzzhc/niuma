@@ -5,8 +5,8 @@
 // sequence of InputEvents and asserts the resulting EditorState / action.
 // ===========================================================================
 
-import { assert, assertStrictEquals } from "jsr:@std/assert";
-import { describe, it } from "jsr:@std/testing/bdd";
+import { assert, assertStrictEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import type { InputEvent, KeyMods, NamedKey } from "@niuma/tuikit";
 // Warm the native lib at module load: renderEditor reaches stringWidth, whose
 // lazy dlopen would otherwise trip the per-test resource sanitizer. Loading
@@ -102,7 +102,13 @@ describe("editor: deletion", () => {
   });
 
   it("backspace at col 0 joins with the previous line", () => {
-    const { state } = feed([text("ab"), key("enter", { shift: true }), text("cd"), key("home"), key("backspace")]);
+    const { state } = feed([
+      text("ab"),
+      key("enter", { shift: true }),
+      text("cd"),
+      key("home"),
+      key("backspace"),
+    ]);
     assertStrictEquals(editorText(state), "abcd");
     assertStrictEquals(state.lines.length, 1);
   });
@@ -124,7 +130,11 @@ describe("editor: enter / submit", () => {
   });
 
   it("shift+enter inserts a newline instead of submitting", () => {
-    const { state, submit } = feed([text("a"), key("enter", { shift: true }), text("b")]);
+    const { state, submit } = feed([
+      text("a"),
+      key("enter", { shift: true }),
+      text("b"),
+    ]);
     assertStrictEquals(submit, null);
     assertStrictEquals(editorText(state), "a\nb");
   });
@@ -137,7 +147,11 @@ describe("editor: enter / submit", () => {
 
 describe("editor: word jumps", () => {
   it("alt+right jumps over a word", () => {
-    const { state } = feed([text("hello world"), key("home"), key("right", { alt: true })]);
+    const { state } = feed([
+      text("hello world"),
+      key("home"),
+      key("right", { alt: true }),
+    ]);
     // after "hello " (the leading word + trailing space consumed up to "world")
     assertStrictEquals(state.cursor.col, 6);
   });
@@ -155,14 +169,26 @@ describe("editor: word jumps", () => {
 
 describe("editor: kill ring (readline-style)", () => {
   it("ctrl+u kills to the start of the line", () => {
-    const { state } = feed([text("abcdef"), key("left"), key("left"), key("left"), text("\x15")]);
+    const { state } = feed([
+      text("abcdef"),
+      key("left"),
+      key("left"),
+      key("left"),
+      text("\x15"),
+    ]);
     // legacy ctrl+u arrives as raw byte 0x15
     assertStrictEquals(editorText(state), "def");
     assertStrictEquals(state.cursor.col, 0);
   });
 
   it("ctrl+k kills to the end of the line", () => {
-    const { state } = feed([text("abcdef"), key("left"), key("left"), key("left"), text("\x0b")]);
+    const { state } = feed([
+      text("abcdef"),
+      key("left"),
+      key("left"),
+      key("left"),
+      text("\x0b"),
+    ]);
     assertStrictEquals(editorText(state), "abc");
   });
 
@@ -182,7 +208,7 @@ describe("editor: kill ring (readline-style)", () => {
 describe("editor: history", () => {
   it("up/down recall previously submitted prompts", () => {
     let state = createEditorState();
-    let submitted: string[] = [];
+    const submitted: string[] = [];
     for (const prompt of ["first", "second"]) {
       const r = feed([text(prompt), key("enter")], state);
       state = r.state;
@@ -218,7 +244,11 @@ describe("editor: history", () => {
   });
 
   it("up/down navigate rows when the buffer is multi-line", () => {
-    const { state } = feed([text("line0"), key("enter", { shift: true }), text("line1")]);
+    const { state } = feed([
+      text("line0"),
+      key("enter", { shift: true }),
+      text("line1"),
+    ]);
     assertStrictEquals(state.lines.length, 2);
     const [up] = editorReducer(state, key("up"));
     assertStrictEquals(up.cursor.row, 0);
@@ -236,7 +266,10 @@ describe("editor: render", () => {
     });
     assert(lines.length >= 3); // top + content + bottom
     assertStrictEquals(lines[0].spans[0].text.startsWith("╭"), true);
-    assertStrictEquals(lines[lines.length - 1].spans[0].text.startsWith("╰"), true);
+    assertStrictEquals(
+      lines[lines.length - 1].spans[0].text.startsWith("╰"),
+      true,
+    );
   });
 
   it("shows a dim placeholder when empty", () => {

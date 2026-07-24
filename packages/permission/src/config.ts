@@ -33,7 +33,9 @@ function coerceRule(input: unknown): PermissionRule | null {
     const rule = (input as { rule: unknown }).rule;
     const action = (input as { action: unknown }).action;
     if (typeof rule !== "string") return null;
-    if (action !== "allow" && action !== "deny" && action !== "ask") return null;
+    if (action !== "allow" && action !== "deny" && action !== "ask") {
+      return null;
+    }
     try {
       const parsed = parseRule(rule);
       return { tool: parsed.tool, pattern: parsed.pattern, action };

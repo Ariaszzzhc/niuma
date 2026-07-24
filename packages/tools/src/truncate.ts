@@ -1,5 +1,5 @@
 import { join } from "@std/path";
-import { ensureDirSync } from "jsr:@std/fs@^1.0.0/ensure-dir";
+import { ensureDirSync } from "@std/fs/ensure-dir";
 import { niumaPaths } from "@niuma/config";
 
 const OUTPUT_LIMIT_BYTES = 30 * 1024;
@@ -36,7 +36,10 @@ export interface TruncateResult {
  * what the tool was invoked with.
  */
 export function safeCallId(callId: string): string {
-  const cleaned = callId.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[_.-]+|[_.-]+$/g, "");
+  const cleaned = callId.replace(/[^A-Za-z0-9._-]+/g, "_").replace(
+    /^[_.-]+|[_.-]+$/g,
+    "",
+  );
   const base = cleaned.length > 0 ? cleaned : "call";
   // Cap length to keep filesystems happy (255 bytes is typical).
   return base.length > 128 ? base.slice(0, 128) : base;
@@ -82,7 +85,10 @@ export async function toolOutput(
   callId: string,
   opts: { isError?: boolean } = {},
 ): Promise<import("./types.ts").ToolOutput> {
-  const { content, spillPath, truncated } = await truncateForModel(text, callId);
+  const { content, spillPath, truncated } = await truncateForModel(
+    text,
+    callId,
+  );
   return {
     content,
     callId,

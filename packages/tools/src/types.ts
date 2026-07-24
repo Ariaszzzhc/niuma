@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { PermissionRule, ToolResultContent } from "@niuma/schema";
+import type { PermissionRule } from "@niuma/schema";
 
 // ---- Resource footprint declared by a tool ----
 

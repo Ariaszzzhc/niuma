@@ -226,7 +226,9 @@ Deno.test("policy: sensitive guard does NOT fire for non-file tools (bash)", () 
 // ---- Verdict → Decision adapter ----
 
 Deno.test("toDecision: maps Verdict variants to schema Decision one-to-one", () => {
-  assertEquals(toDecision(runPolicy([], "bash", "ls", CWD)), { decision: "ask" });
+  assertEquals(toDecision(runPolicy([], "bash", "ls", CWD)), {
+    decision: "ask",
+  });
   assertEquals(
     toDecision(runPolicy([r("bash", "rm *", "deny")], "bash", "rm x", CWD)),
     { decision: "deny", reason: "deny rule: bash(rm *)" },

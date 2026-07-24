@@ -60,9 +60,7 @@ export async function* parseSseStream(
         const rawLine = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
         // Normalise CRLF -> strip a trailing CR.
-        const line = rawLine.endsWith("\r")
-          ? rawLine.slice(0, -1)
-          : rawLine;
+        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
 
         if (line === "") {
           // Frame boundary.

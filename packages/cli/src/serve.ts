@@ -6,7 +6,7 @@
 // fetch tunnel here. The dual-execution tunnel is reserved for the one-shot
 // flow where the frontend (CLI) and server share a process.
 
-import { setupLogger, log, createServerApp } from "@niuma/server";
+import { createServerApp, log, setupLogger } from "@niuma/server";
 
 export interface ServeOptions {
   readonly port: number;

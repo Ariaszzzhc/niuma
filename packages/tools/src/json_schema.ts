@@ -41,7 +41,9 @@ function describeZod(v: z.ZodType): Record<string, unknown> {
     case "ZodBoolean":
       return { type: "boolean", ...desc };
     case "ZodArray": {
-      const inner = def.innerType ? describeZod(def.innerType) : { type: "string" };
+      const inner = def.innerType
+        ? describeZod(def.innerType)
+        : { type: "string" };
       return { type: "array", items: inner, ...desc };
     }
     case "ZodEnum":

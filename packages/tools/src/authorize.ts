@@ -1,6 +1,4 @@
-import type {
-  PermissionRule,
-} from "@niuma/schema";
+import type { PermissionRule } from "@niuma/schema";
 import type {
   AuthorizeOutcome,
   Decision,
@@ -32,7 +30,9 @@ export async function authorize(
   call: PreparedCall,
   tools: ReadonlyMap<string, Tool>,
   auth: AuthorizeContext,
-): Promise<{ verdict: "allow" | "deny"; reason?: string; rule?: PermissionRule }> {
+): Promise<
+  { verdict: "allow" | "deny"; reason?: string; rule?: PermissionRule }
+> {
   const decision: Decision = await auth.engine.evaluate({
     callId: call.callId,
     sessionId: auth.ctx.sessionId,
@@ -41,9 +41,10 @@ export async function authorize(
   });
 
   // Force Ask on workspace escapes, overriding any `allow` verdict.
-  const effective: Decision = call.escapesWorkspace && decision.decision === "allow"
-    ? { decision: "ask" }
-    : decision;
+  const effective: Decision =
+    call.escapesWorkspace && decision.decision === "allow"
+      ? { decision: "ask" }
+      : decision;
 
   if (effective.decision === "allow") {
     return { verdict: "allow" };
@@ -54,7 +55,9 @@ export async function authorize(
 
   // ask → ask the user
   const tool = tools.get(call.name);
-  const summary = tool ? describeToolCall(tool, call) : `${call.name}(${call.pattern})`;
+  const summary = tool
+    ? describeToolCall(tool, call)
+    : `${call.name}(${call.pattern})`;
   const approvalInfo = {
     callId: call.callId,
     name: call.name,

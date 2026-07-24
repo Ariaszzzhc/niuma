@@ -176,7 +176,9 @@ async function executeBatch(
     return Effect.runPromise(ctx.ask(req)).then(
       (outcome: ApprovalOutcome): ApprovalDecision => ({
         decision: outcome.decision,
-        ...(outcome.feedback !== undefined ? { feedback: outcome.feedback } : {}),
+        ...(outcome.feedback !== undefined
+          ? { feedback: outcome.feedback }
+          : {}),
       }),
     );
   };

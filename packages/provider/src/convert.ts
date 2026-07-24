@@ -91,14 +91,13 @@ export const openAIToMessages = (
         };
       case "assistant": {
         const calls = m.tool_calls;
-        const toolCalls: ToolCall[] | undefined =
-          calls && calls.length > 0
-            ? calls.map((tc) => ({
-              id: tc.id,
-              name: tc.function.name,
-              arguments: tc.function.arguments,
-            }))
-            : undefined;
+        const toolCalls: ToolCall[] | undefined = calls && calls.length > 0
+          ? calls.map((tc) => ({
+            id: tc.id,
+            name: tc.function.name,
+            arguments: tc.function.arguments,
+          }))
+          : undefined;
         const base: Message = {
           role: "assistant",
           content: m.content ?? "",

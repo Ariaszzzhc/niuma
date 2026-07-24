@@ -1,27 +1,27 @@
 // ===========================================================================
-// @niuma/tui — reduce-event table tests
+// @niuma/tui — reduce_event table tests
 // ---------------------------------------------------------------------------
 // Feeds canned SSE event sequences through `reduceEvent` / `reduceEventSequence`
 // and asserts on the resulting model. Pure: no terminal, no native lib, no
 // A-side imports — so these run standalone.
 // ===========================================================================
 
-import { assert, assertEquals, assertStrictEquals } from "jsr:@std/assert";
-import { describe, it } from "jsr:@std/testing/bdd";
+import { assert, assertEquals, assertStrictEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import {
-  type SseEvent,
   _resetIds,
   initialModelState,
   reduceEvent,
   reduceEventSequence,
-} from "../src/reduce-event.ts";
+  type SseEvent,
+} from "../src/reduce_event.ts";
 
 const ev = (type: string, data: Record<string, unknown> = {}): SseEvent => ({
   type,
   data,
 });
 
-describe("reduce-event: session + user", () => {
+describe("reduce_event: session + user", () => {
   it("session.created records workspace + model", () => {
     const m = reduceEventSequence([
       ev("session.created", { workspace: "/tmp/x", model: "prov/m" }),
@@ -32,7 +32,12 @@ describe("reduce-event: session + user", () => {
 
   it("user.message joins text parts into a user message", () => {
     const m = reduceEventSequence([
-      ev("user.message", { parts: [{ type: "text", text: "hello " }, { type: "text", text: "world" }] }),
+      ev("user.message", {
+        parts: [{ type: "text", text: "hello " }, {
+          type: "text",
+          text: "world",
+        }],
+      }),
     ]);
     assertStrictEquals(m.messages.length, 1);
     assertStrictEquals(m.messages[0].role, "user");
@@ -40,7 +45,7 @@ describe("reduce-event: session + user", () => {
   });
 });
 
-describe("reduce-event: streaming text accumulation", () => {
+describe("reduce_event: streaming text accumulation", () => {
   it("text.delta appends into a streaming buffer", () => {
     const m = reduceEventSequence([
       ev("text.delta", { delta: "Hel" }),
@@ -54,7 +59,10 @@ describe("reduce-event: streaming text accumulation", () => {
   it("assistant.message finalizes the streaming buffer into a message", () => {
     const m = reduceEventSequence([
       ev("text.delta", { delta: "draft" }),
-      ev("assistant.message", { parts: [], usage: { inputTokens: 0, outputTokens: 0 } }),
+      ev("assistant.message", {
+        parts: [],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      }),
     ]);
     assertStrictEquals(m.streaming, null);
     assertStrictEquals(m.messages.length, 1);
@@ -64,7 +72,9 @@ describe("reduce-event: streaming text accumulation", () => {
 
   it("assistant.message falls back to parts when there was no streaming", () => {
     const m = reduceEventSequence([
-      ev("assistant.message", { parts: [{ type: "text", text: "from parts" }] }),
+      ev("assistant.message", {
+        parts: [{ type: "text", text: "from parts" }],
+      }),
     ]);
     assertStrictEquals(m.messages[0].text, "from parts");
   });
@@ -78,10 +88,14 @@ describe("reduce-event: streaming text accumulation", () => {
   });
 });
 
-describe("reduce-event: tool call lifecycle", () => {
+describe("reduce_event: tool call lifecycle", () => {
   it("requested -> progress -> result", () => {
     const m = reduceEventSequence([
-      ev("tool.call.requested", { callId: "c1", name: "bash", input: { cmd: "ls" } }),
+      ev("tool.call.requested", {
+        callId: "c1",
+        name: "bash",
+        input: { cmd: "ls" },
+      }),
       ev("tool.progress", { callId: "c1", message: "running…" }),
       ev("tool.result", {
         callId: "c1",
@@ -103,7 +117,12 @@ describe("reduce-event: tool call lifecycle", () => {
   it("tool.result accepts a plain string content", () => {
     const m = reduceEventSequence([
       ev("tool.call.requested", { callId: "c1", name: "t" }),
-      ev("tool.result", { callId: "c1", content: "a\nb", isError: true, durationMs: 1 }),
+      ev("tool.result", {
+        callId: "c1",
+        content: "a\nb",
+        isError: true,
+        durationMs: 1,
+      }),
     ]);
     assertEquals([...m.toolCalls[0].resultLines], ["a", "b"]);
     assertStrictEquals(m.toolCalls[0].isError, true);
@@ -122,7 +141,12 @@ describe("reduce-event: tool call lifecycle", () => {
     const m = reduceEventSequence([
       ev("tool.call.requested", { callId: "c1", name: "t" }),
       ev("tool.progress", { callId: "nope", message: "x" }),
-      ev("tool.result", { callId: "nope", content: "y", isError: false, durationMs: 0 }),
+      ev("tool.result", {
+        callId: "nope",
+        content: "y",
+        isError: false,
+        durationMs: 0,
+      }),
     ]);
     assertStrictEquals(m.toolCalls.length, 1);
     assertStrictEquals(m.toolCalls[0].status, "running");
@@ -134,7 +158,12 @@ describe("reduce-event: tool call lifecycle", () => {
     // finished call back to "running".
     const m = reduceEventSequence([
       ev("tool.call.requested", { callId: "c1", name: "t" }),
-      ev("tool.result", { callId: "c1", content: "done", isError: false, durationMs: 3 }),
+      ev("tool.result", {
+        callId: "c1",
+        content: "done",
+        isError: false,
+        durationMs: 3,
+      }),
       ev("tool.call.requested", { callId: "c1", name: "t" }),
     ]);
     assertStrictEquals(m.toolCalls.length, 1);
@@ -143,7 +172,7 @@ describe("reduce-event: tool call lifecycle", () => {
   });
 });
 
-describe("reduce-event: approval flow", () => {
+describe("reduce_event: approval flow", () => {
   it("approval.requested stashes the pending approval", () => {
     const m = reduceEventSequence([
       ev("approval.requested", {
@@ -162,23 +191,32 @@ describe("reduce-event: approval flow", () => {
 
   it("approval.resolved clears the pending approval", () => {
     const m = reduceEventSequence([
-      ev("approval.requested", { approvalId: "ap1", callId: "c1", name: "bash", input: {} }),
+      ev("approval.requested", {
+        approvalId: "ap1",
+        callId: "c1",
+        name: "bash",
+        input: {},
+      }),
       ev("approval.resolved", { approvalId: "ap1", decision: "once" }),
     ]);
     assertStrictEquals(m.pendingApproval, null);
   });
 });
 
-describe("reduce-event: notices + turn state", () => {
+describe("reduce_event: notices + turn state", () => {
   it("compaction.performed adds a notice and bumps the counter", () => {
-    const m = reduceEventSequence([ev("compaction.performed", { mode: "llm" })]);
+    const m = reduceEventSequence([
+      ev("compaction.performed", { mode: "llm" }),
+    ]);
     assertStrictEquals(m.compactionCount, 1);
     assertStrictEquals(m.notices.length, 1);
     assertStrictEquals(m.notices[0].kind, "compaction");
   });
 
   it("error.occurred records the message and a notice", () => {
-    const m = reduceEventSequence([ev("error.occurred", { message: "boom", retryable: false })]);
+    const m = reduceEventSequence([
+      ev("error.occurred", { message: "boom", retryable: false }),
+    ]);
     assertStrictEquals(m.lastError, "boom");
     assertStrictEquals(m.notices[0].kind, "error");
   });
@@ -192,7 +230,10 @@ describe("reduce-event: notices + turn state", () => {
     const m = reduceEventSequence([
       ev("turn.started", {}),
       ev("text.delta", { delta: "tail without finalize" }),
-      ev("turn.completed", { stopReason: "stop", usage: { inputTokens: 1, outputTokens: 2 } }),
+      ev("turn.completed", {
+        stopReason: "stop",
+        usage: { inputTokens: 1, outputTokens: 2 },
+      }),
     ]);
     assertStrictEquals(m.turnActive, false);
     assertStrictEquals(m.streaming, null);
@@ -214,7 +255,7 @@ describe("reduce-event: notices + turn state", () => {
   });
 });
 
-describe("reduce-event: end-to-end canned sequence", () => {
+describe("reduce_event: end-to-end canned sequence", () => {
   it("models a full turn: prompt -> stream -> tool -> approval -> abort", () => {
     _resetIds();
     const m = reduceEventSequence([
@@ -223,12 +264,29 @@ describe("reduce-event: end-to-end canned sequence", () => {
       ev("turn.started", {}),
       ev("text.delta", { delta: "sure, " }),
       ev("text.delta", { delta: "running" }),
-      ev("tool.call.requested", { callId: "c1", name: "bash", input: { cmd: "echo hi" } }),
-      ev("approval.requested", { approvalId: "a1", callId: "c1", name: "bash", input: { cmd: "echo hi" } }),
+      ev("tool.call.requested", {
+        callId: "c1",
+        name: "bash",
+        input: { cmd: "echo hi" },
+      }),
+      ev("approval.requested", {
+        approvalId: "a1",
+        callId: "c1",
+        name: "bash",
+        input: { cmd: "echo hi" },
+      }),
       // assistant.message finalizes the streamed text BEFORE the tool result
-      ev("assistant.message", { parts: [], usage: { inputTokens: 0, outputTokens: 0 } }),
+      ev("assistant.message", {
+        parts: [],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      }),
       ev("approval.resolved", { approvalId: "a1", decision: "once" }),
-      ev("tool.result", { callId: "c1", content: "hi", isError: false, durationMs: 5 }),
+      ev("tool.result", {
+        callId: "c1",
+        content: "hi",
+        isError: false,
+        durationMs: 5,
+      }),
       ev("turn.aborted", { reason: "user interrupt" }),
     ]);
 
@@ -249,7 +307,7 @@ describe("reduce-event: end-to-end canned sequence", () => {
   });
 });
 
-describe("reduce-event: purity + unknown events", () => {
+describe("reduce_event: purity + unknown events", () => {
   it("does not mutate the input model", () => {
     const start = initialModelState();
     const snap = JSON.stringify(start);

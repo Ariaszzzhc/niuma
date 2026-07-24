@@ -5,7 +5,10 @@ import type {
   RecordedEvent,
   ToolResultContent,
 } from "@niuma/schema";
-import type { ProviderAdapter, ToolDef as ProviderToolDef } from "@niuma/provider";
+import type {
+  ProviderAdapter,
+  ToolDef as ProviderToolDef,
+} from "@niuma/provider";
 
 // ---------------------------------------------------------------------------
 // Ports. The agent package owns these contracts; @niuma/store and @niuma/tools
@@ -108,7 +111,7 @@ export interface ApprovalGateway {
 }
 
 export interface RunTurnDeps {
-  readonly eventLog: EventLog;
+  readonly event_log: EventLog;
   readonly provider: ProviderAdapter;
   readonly tools: ToolPipeline;
   readonly approvals: ApprovalGateway;

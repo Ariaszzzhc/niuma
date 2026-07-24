@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { Effect, Stream } from "effect";
 import type { RecordedEvent } from "@niuma/schema";
 import type {
@@ -9,11 +9,11 @@ import type {
 } from "@niuma/provider";
 import type { PermissionEngine as ToolsPermissionEngine } from "@niuma/tools";
 import { makeApprovalGateway } from "../src/approval.ts";
-import { makeToolPipeline } from "../src/tool_pipeline.ts";
+import { makeToolPipeline } from "../src/tool-pipeline.ts";
 import {
+  type AgentInfra,
   AgentSession,
   SessionManager,
-  type AgentInfra,
 } from "../src/session.ts";
 import type { EventInput, EventLog, ToolMode } from "../src/deps.ts";
 
@@ -21,8 +21,8 @@ import type { EventInput, EventLog, ToolMode } from "../src/deps.ts";
 // pipeline never escalates to ctx.ask. The real @niuma/permission chain
 // (with its manual-mode default Ask) is exercised in the server package.
 const allowAllEngine = (): ToolsPermissionEngine => ({
-  evaluate: async () => ({ decision: "allow" }),
-  remember: async () => {},
+  evaluate: () => Promise.resolve({ decision: "allow" }),
+  remember: () => Promise.resolve(),
   patternFor: () => "",
 });
 
@@ -34,7 +34,12 @@ function makeMemoryLog(): EventLog & { dump: (id: string) => RecordedEvent[] } {
     append: (sessionId, input: EventInput) =>
       Effect.sync(() => {
         const arr = logs.get(sessionId) ?? [];
-        const ev = { seq: seq++, ts: Date.now(), sessionId, ...input } as RecordedEvent;
+        const ev = {
+          seq: seq++,
+          ts: Date.now(),
+          sessionId,
+          ...input,
+        } as RecordedEvent;
         arr.push(ev);
         logs.set(sessionId, arr);
         return ev;
@@ -66,7 +71,10 @@ function scriptedProvider(
 function makeInfra(
   log: EventLog,
   scripts: ProviderStreamEvent[][],
-  sessions: Map<string, { spawnSubagent: (prompt: string, mode: ToolMode) => Effect.Effect<string> }>,
+  sessions: Map<
+    string,
+    { spawnSubagent: (prompt: string, mode: ToolMode) => Effect.Effect<string> }
+  >,
 ): AgentInfra {
   const tools = makeToolPipeline({
     engine: allowAllEngine(),
@@ -80,7 +88,9 @@ function makeInfra(
       }
       const mode = req.mode === "read-only" ? "read-only" : "full";
       try {
-        const text = await Effect.runPromise(parent.spawnSubagent(req.prompt, mode));
+        const text = await Effect.runPromise(
+          parent.spawnSubagent(req.prompt, mode),
+        );
         return { sessionId: req.parentSessionId, text };
       } catch (e) {
         return {
@@ -91,7 +101,7 @@ function makeInfra(
     },
   });
   return {
-    eventLog: log,
+    event_log: log,
     provider: scriptedProvider(scripts),
     tools,
     approvals: makeApprovalGateway(log),
@@ -101,7 +111,10 @@ function makeInfra(
 
 Deno.test("AgentSession: spawnSubagent returns child's final text", async () => {
   const log = makeMemoryLog();
-  const sessions = new Map<string, { spawnSubagent: (prompt: string, mode: ToolMode) => Effect.Effect<string> }>();
+  const sessions = new Map<
+    string,
+    { spawnSubagent: (prompt: string, mode: ToolMode) => Effect.Effect<string> }
+  >();
   // Parent: spawn a read-only subagent. Child: reply "child reply".
   const infra = makeInfra(
     log,
@@ -113,17 +126,29 @@ Deno.test("AgentSession: spawnSubagent returns child's final text", async () => 
           name: "spawn_subagent",
           arguments: '{"prompt":"summarise","mode":"read-only"}',
         },
-        { _tag: "Finish", reason: "tool_calls", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+        {
+          _tag: "Finish",
+          reason: "tool_calls",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        },
       ],
       // The child runs after parent's first sample, so it consumes the next script.
       [
         { _tag: "TextDelta", text: "child reply" },
-        { _tag: "Finish", reason: "stop", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+        {
+          _tag: "Finish",
+          reason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        },
       ],
       // Parent's final sample after its subagent returns.
       [
         { _tag: "TextDelta", text: "parent done" },
-        { _tag: "Finish", reason: "stop", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+        {
+          _tag: "Finish",
+          reason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        },
       ],
     ],
     sessions,
@@ -141,10 +166,14 @@ Deno.test("AgentSession: spawnSubagent returns child's final text", async () => 
   const types = log.dump(parent.id).map((e) => e.type);
   assertEquals(types.includes("subagent.spawned"), true);
   // The child session also got a session.created event
-  const spawned = log.dump(parent.id).find((e) => e.type === "subagent.spawned");
+  const spawned = log.dump(parent.id).find((e) =>
+    e.type === "subagent.spawned"
+  );
   assertEquals(spawned?.type, "subagent.spawned");
   if (spawned?.type === "subagent.spawned") {
-    const childEvents = log.dump(spawned.data.childSessionId).map((e) => e.type);
+    const childEvents = log.dump(spawned.data.childSessionId).map((e) =>
+      e.type
+    );
     assertEquals(childEvents.includes("session.created"), true);
     assertEquals(childEvents.includes("assistant.message"), true);
   }
@@ -152,7 +181,10 @@ Deno.test("AgentSession: spawnSubagent returns child's final text", async () => 
 
 Deno.test("AgentSession: spawnSubagent refuses past depth 1", async () => {
   const log = makeMemoryLog();
-  const sessions = new Map<string, { spawnSubagent: (prompt: string, mode: ToolMode) => Effect.Effect<string> }>();
+  const sessions = new Map<
+    string,
+    { spawnSubagent: (prompt: string, mode: ToolMode) => Effect.Effect<string> }
+  >();
   // Parent at depth 0 tries to spawn; child at depth 1 attempts to spawn
   // again — the agent refuses before sampling the grandchild's tool call,
   // feeding back a synthetic error result so the child produces final text.
@@ -166,7 +198,11 @@ Deno.test("AgentSession: spawnSubagent refuses past depth 1", async () => {
           name: "spawn_subagent",
           arguments: '{"prompt":"nested"}',
         },
-        { _tag: "Finish", reason: "tool_calls", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+        {
+          _tag: "Finish",
+          reason: "tool_calls",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        },
       ],
       // Child's first sample: it tries to spawn again. The pipeline refuses
       // (depth limit) and feeds back an error result; the child samples again.
@@ -177,17 +213,29 @@ Deno.test("AgentSession: spawnSubagent refuses past depth 1", async () => {
           name: "spawn_subagent",
           arguments: '{"prompt":"too deep"}',
         },
-        { _tag: "Finish", reason: "tool_calls", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+        {
+          _tag: "Finish",
+          reason: "tool_calls",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        },
       ],
       // Child's second sample: produces final text after refusal.
       [
         { _tag: "TextDelta", text: "child gave up" },
-        { _tag: "Finish", reason: "stop", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+        {
+          _tag: "Finish",
+          reason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        },
       ],
       // Parent's final sample after its subagent returns.
       [
         { _tag: "TextDelta", text: "parent done" },
-        { _tag: "Finish", reason: "stop", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+        {
+          _tag: "Finish",
+          reason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        },
       ],
     ],
     sessions,
@@ -202,15 +250,17 @@ Deno.test("AgentSession: spawnSubagent refuses past depth 1", async () => {
   );
   assertEquals(result.text, "parent done");
   // Only one subagent.spawned event (the parent's); the grandchild was refused.
-  const spawnedCount = log.dump(parent.id).filter((e) =>
-    e.type === "subagent.spawned"
-  ).length;
+  const spawnedCount =
+    log.dump(parent.id).filter((e) => e.type === "subagent.spawned").length;
   assertEquals(spawnedCount, 1);
 });
 
 Deno.test("AgentSession: read-only mode drops mutating tool defs", () => {
   const log = makeMemoryLog();
-  const sessions = new Map<string, { spawnSubagent: (prompt: string, mode: ToolMode) => Effect.Effect<string> }>();
+  const sessions = new Map<
+    string,
+    { spawnSubagent: (prompt: string, mode: ToolMode) => Effect.Effect<string> }
+  >();
   const infra = makeInfra(log, [], sessions);
   const mgr = new SessionManager(infra);
   const child = mgr.create({

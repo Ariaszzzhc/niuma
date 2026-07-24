@@ -1,8 +1,4 @@
-import type {
-  Part,
-  RecordedEvent,
-  ToolResultContent,
-} from "@niuma/schema";
+import type { Part, RecordedEvent, ToolResultContent } from "@niuma/schema";
 import type {
   Message as ProviderMessage,
   ToolCall as ProviderToolCall,
@@ -36,9 +32,7 @@ const toolCallsOfParts = (
     }));
 
 export const resultContentToString = (content: ToolResultContent): string =>
-  typeof content === "string"
-    ? content
-    : content.map((b) => b.text).join("\n");
+  typeof content === "string" ? content : content.map((b) => b.text).join("\n");
 
 // Text used for the synthetic tool message that closes a tool_call whose
 // result never landed (turn interrupted, approval left pending, process crash

@@ -1,9 +1,10 @@
 import { z } from "zod";
 import type { Tool, ToolOutput } from "../types.ts";
 import { toolOutput } from "../truncate.ts";
-import { zodToJsonSchema } from "../jsonSchema.ts";
-import { resolvePath, PathError } from "../path.ts";
+import { zodToJsonSchema } from "../json_schema.ts";
+import { PathError, resolvePath } from "../path.ts";
 
+// deno-lint-ignore no-slow-types
 const EditOp = z.object({
   oldText: z.string().describe("Exact substring to replace."),
   newText: z.string().describe("Replacement text."),
@@ -11,12 +12,14 @@ const EditOp = z.object({
     .describe("Replace every occurrence; default false (uniqueness required)."),
 });
 
-export const EditInput = z.object({
+// deno-lint-ignore no-slow-types
+const EditInput_ = z.object({
   path: z.string().min(1).describe("Absolute or workspace-relative path."),
   edits: z.array(EditOp).min(1).describe("Edits to apply in order."),
 });
 
-export type EditInput = z.infer<typeof EditInput>;
+export type EditInput = z.infer<typeof EditInput_>;
+export const EditInput: z.ZodType<EditInput> = EditInput_;
 
 export const editTool: Tool<EditInput> = {
   name: "edit",
@@ -45,7 +48,9 @@ export const editTool: Tool<EditInput> = {
     try {
       original = await Deno.readTextFile(resolved.abs);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, { isError: true });
+      return await toolOutput(`error: ${(e as Error).message}`, callId, {
+        isError: true,
+      });
     }
 
     const eol = detectEol(original);
@@ -65,14 +70,20 @@ export const editTool: Tool<EditInput> = {
       }
       if (!e.replaceAll && occurrences > 1) {
         return await toolOutput(
-          `error: edit #${i + 1} matched ${occurrences} times — pass replaceAll:true or provide more context`,
+          `error: edit #${
+            i + 1
+          } matched ${occurrences} times — pass replaceAll:true or provide more context`,
           callId,
           { isError: true },
         );
       }
       if (e.replaceAll) {
         working = working.split(e.oldText).join(e.newText);
-        log.push(`edit #${i + 1}: ${occurrences} replacement${occurrences === 1 ? "" : "s"}`);
+        log.push(
+          `edit #${i + 1}: ${occurrences} replacement${
+            occurrences === 1 ? "" : "s"
+          }`,
+        );
       } else {
         // Replace exactly the first (and only) occurrence.
         const idx = working.indexOf(e.oldText);
@@ -86,7 +97,9 @@ export const editTool: Tool<EditInput> = {
     try {
       await Deno.writeTextFile(resolved.abs, restored);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, { isError: true });
+      return await toolOutput(`error: ${(e as Error).message}`, callId, {
+        isError: true,
+      });
     }
     return await toolOutput(log.join("\n") + `\nwrote ${resolved.rel}`, callId);
   },

@@ -66,7 +66,11 @@ export function parseRuleWithAction(
     .exec(trimmed);
   if (!m) {
     const parsed = parseRule(trimmed);
-    return { tool: parsed.tool, pattern: parsed.pattern, action: defaultAction };
+    return {
+      tool: parsed.tool,
+      pattern: parsed.pattern,
+      action: defaultAction,
+    };
   }
   const action = m[1].toLowerCase() as "allow" | "deny" | "ask";
   const parsed = parseRule(m[2]);

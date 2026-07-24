@@ -1,7 +1,7 @@
 // Server-side Worker module.
 //
 // Spawned from the main thread via:
-//   new Worker(new URL("./server-worker.ts", import.meta.url), {
+//   new Worker(new URL("./server_worker.ts", import.meta.url), {
 //     type: "module",
 //     deno: { permissions: "inherit" },
 //   });

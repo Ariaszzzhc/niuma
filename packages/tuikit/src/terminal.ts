@@ -18,10 +18,7 @@
 // order. Stateful interop justifies the class.
 // ===========================================================================
 
-import {
-  type InputEvent,
-  type TerminalCaps,
-} from "./binding-contract.ts";
+import type { InputEvent, TerminalCaps } from "./binding_contract.ts";
 import { KeyParser } from "./keys.ts";
 
 // ---------------------------------------------------------------------------
@@ -46,8 +43,8 @@ const KITTY_PUSH = enc("\x1b[>1u");
 const KITTY_POP = enc("\x1b[<u");
 
 /** CSI 2026 synchronized-output markers (the loop wraps each write with these). */
-export const SYNC_BEGIN = enc("\x1b[?2026h");
-export const SYNC_END = enc("\x1b[?2026l");
+export const SYNC_BEGIN: Uint8Array = enc("\x1b[?2026h");
+export const SYNC_END: Uint8Array = enc("\x1b[?2026l");
 
 void CSI;
 
@@ -81,10 +78,13 @@ export const detectCaps = (): TerminalCaps => {
   const blob = `${term} ${termProgram}`.toLowerCase();
 
   const isDumb = term === "dumb";
-  const truecolor = !noColor && !isDumb && (colorterm === "truecolor" || colorterm === "24bit");
-  const color256 = !noColor && !isDumb && (truecolor || term.includes("256color"));
+  const truecolor = !noColor && !isDumb &&
+    (colorterm === "truecolor" || colorterm === "24bit");
+  const color256 = !noColor && !isDumb &&
+    (truecolor || term.includes("256color"));
 
-  const kittyKeyboard = /\bkitty\b/.test(blob) || /wezterm/.test(blob) || /ghostty/.test(blob);
+  const kittyKeyboard = /\bkitty\b/.test(blob) || /wezterm/.test(blob) ||
+    /ghostty/.test(blob);
 
   const bracketedPaste = !isDumb;
 
@@ -194,7 +194,7 @@ export class Terminal {
    * push kitty keyboard flags when supported, and start the stdin pump.
    * Registers a SIGWINCH listener.
    */
-  static async open(): Promise<Terminal> {
+  static open(): Terminal {
     const term = new Terminal();
     term.#enter();
     term.#startPump();
@@ -211,7 +211,7 @@ export class Terminal {
   }
 
   /** Resolves on terminal resize with the new size. Returns an unsubscribe. */
-  readonly onResize = (cb: (size: TerminalSize) => void): (() => void) => {
+  readonly onResize = (cb: (size: TerminalSize) => void): () => void => {
     this.#resizeListeners.push(cb);
     return () => {
       const i = this.#resizeListeners.indexOf(cb);

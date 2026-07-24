@@ -1,7 +1,7 @@
 import { isAbsolute, normalize, relative, resolve } from "@std/path";
 
 // Skip these by default in walk-based tools (grep/glob/read).
-export const ALWAYS_IGNORE_DIRS = new Set([
+export const ALWAYS_IGNORE_DIRS: ReadonlySet<string> = new Set([
   "node_modules",
   ".git",
   ".next",

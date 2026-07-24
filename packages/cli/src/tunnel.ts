@@ -48,7 +48,12 @@ export interface TunnelRequest {
 export type TunnelIn =
   | { kind: "ready" }
   | { kind: "init_error"; message: string }
-  | { kind: "response"; id: string; status: number; headers: Array<[string, string]> }
+  | {
+    kind: "response";
+    id: string;
+    status: number;
+    headers: Array<[string, string]>;
+  }
   | { kind: "chunk"; id: string; value: string }
   | { kind: "end"; id: string }
   | { kind: "error"; id: string; message: string };
@@ -151,7 +156,9 @@ export const setupTunnel = (
           cancel() {
             // Consumer gave up — tell the worker to stop pumping. Worker
             // ignores unknown ids, so this is safe even after end.
-            port.postMessage({ kind: "cancel", id: msg.id } satisfies TunnelOut);
+            port.postMessage(
+              { kind: "cancel", id: msg.id } satisfies TunnelOut,
+            );
           },
         });
         const res = new Response(body, {
@@ -249,14 +256,16 @@ export const setupTunnel = (
 
     return await new Promise<Response>((resolve, reject) => {
       inflight.set(id, { resolve, reject, controller: undefined });
-      port.postMessage({
-        kind: "request",
-        id,
-        method: req.method,
-        url: req.url,
-        headers,
-        body,
-      } satisfies TunnelOut);
+      port.postMessage(
+        {
+          kind: "request",
+          id,
+          method: req.method,
+          url: req.url,
+          headers,
+          body,
+        } satisfies TunnelOut,
+      );
     });
   };
 

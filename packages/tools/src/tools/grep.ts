@@ -1,23 +1,29 @@
 import { z } from "zod";
 import type { Tool, ToolOutput } from "../types.ts";
 import { toolOutput } from "../truncate.ts";
-import { zodToJsonSchema } from "../jsonSchema.ts";
-import { resolvePath, PathError } from "../path.ts";
-import { shouldSkipDir } from "../pathUtil.ts";
+import { zodToJsonSchema } from "../json_schema.ts";
+import { PathError, resolvePath } from "../path.ts";
+import { shouldSkipDir } from "../path_util.ts";
 import { execCapture } from "../exec.ts";
 
-export const GrepInput = z.object({
-  pattern: z.string().min(1).describe("Regex pattern (rg flavor when shelling out)."),
+// deno-lint-ignore no-slow-types
+const GrepInput_ = z.object({
+  pattern: z.string().min(1).describe(
+    "Regex pattern (rg flavor when shelling out).",
+  ),
   path: z.string().optional()
     .describe("File or directory to search; defaults to workspace root."),
   glob: z.string().optional().describe("Filter to files matching this glob."),
   maxResults: z.number().int().positive().optional()
     .describe("Cap on results; default 200."),
   caseInsensitive: z.boolean().optional(),
-  lineNumbers: z.boolean().optional().describe("Show 1-indexed line numbers; default true."),
+  lineNumbers: z.boolean().optional().describe(
+    "Show 1-indexed line numbers; default true.",
+  ),
 });
 
-export type GrepInput = z.infer<typeof GrepInput>;
+export type GrepInput = z.infer<typeof GrepInput_>;
+export const GrepInput: z.ZodType<GrepInput> = GrepInput_;
 
 const MAX_RESULTS_DEFAULT = 200;
 
@@ -80,7 +86,9 @@ export const grepTool: Tool<GrepInput> = {
         const lines = text.split(/\r?\n/);
         for (let i = 0; i < lines.length; i++) {
           if (regex.test(lines[i])) {
-            out.push(ln ? `${file}:${i + 1}:${lines[i]}` : `${file}:${lines[i]}`);
+            out.push(
+              ln ? `${file}:${i + 1}:${lines[i]}` : `${file}:${lines[i]}`,
+            );
             if (out.length >= limit) break;
           }
         }
@@ -90,7 +98,10 @@ export const grepTool: Tool<GrepInput> = {
       return true;
     });
 
-    return await toolOutput(out.length ? out.join("\n") : "[no matches]", callId);
+    return await toolOutput(
+      out.length ? out.join("\n") : "[no matches]",
+      callId,
+    );
   },
 };
 
@@ -98,7 +109,9 @@ async function findRgPath(): Promise<string | null> {
   // Honour explicit override; otherwise check `which rg`.
   const explicit = Deno.env.get("NIUMA_RG");
   if (explicit) return explicit;
-  const r = await execCapture("command -v rg", { timeoutMs: 2000 }).catch(() => null);
+  const r = await execCapture("command -v rg", { timeoutMs: 2000 }).catch(() =>
+    null
+  );
   if (r && r.code === 0 && r.stdout.trim()) return r.stdout.trim();
   return null;
 }

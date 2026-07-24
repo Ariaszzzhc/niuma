@@ -22,7 +22,7 @@ interface Parked {
 // `reject` outcome — otherwise the callback would hang until externally
 // resolved and the parked entry would leak. Effect.callback's resume is
 // idempotent so a late resolve() after abort is a no-op.
-export function makeApprovalGateway(eventLog: EventLog): ApprovalGateway {
+export function makeApprovalGateway(event_log: EventLog): ApprovalGateway {
   const parked = new Map<string, Parked>();
 
   const ask = (
@@ -33,9 +33,14 @@ export function makeApprovalGateway(eventLog: EventLog): ApprovalGateway {
     Effect.gen(function* () {
       const approvalId = crypto.randomUUID();
       const info: ApprovalInfo = { approvalId, ...req };
-      yield* eventLog.append(sessionId, {
+      yield* event_log.append(sessionId, {
         type: "approval.requested",
-        data: { approvalId, callId: req.callId, name: req.name, input: req.input },
+        data: {
+          approvalId,
+          callId: req.callId,
+          name: req.name,
+          input: req.input,
+        },
       });
       const outcome = yield* Effect.callback<ApprovalOutcome>((resume) => {
         parked.set(approvalId, {
@@ -61,7 +66,7 @@ export function makeApprovalGateway(eventLog: EventLog): ApprovalGateway {
           if (signal) signal.removeEventListener("abort", onAbort);
         });
       });
-      yield* eventLog.append(sessionId, {
+      yield* event_log.append(sessionId, {
         type: "approval.resolved",
         data: {
           approvalId,

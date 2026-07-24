@@ -98,9 +98,7 @@ export const runInteractive = async (
       if (!ref) {
         console.error(
           `niuma: no model configured. Set one with --model provider/model-id,` +
-            ` or add e.g.\n  model = "myprovider/my-model"\nto ${
-            niumaPaths().configFile
-          }`,
+            ` or add e.g.\n  model = "myprovider/my-model"\nto ${niumaPaths().configFile}`,
         );
         return 1;
       }
@@ -141,9 +139,7 @@ export const runInteractive = async (
     // escapes runTui here is a different fault. Surface it verbatim rather
     // than masking it as a build instruction.
     console.error(
-      `niuma: tui failed: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      `niuma: tui failed: ${err instanceof Error ? err.message : String(err)}`,
     );
     return 1;
   } finally {

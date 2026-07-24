@@ -1,4 +1,9 @@
-import { lastMatch, matchPattern, matchRule, toolMatches } from "../src/matcher.ts";
+import {
+  lastMatch,
+  matchPattern,
+  matchRule,
+  toolMatches,
+} from "../src/matcher.ts";
 
 function assertEquals<T>(actual: T, expected: T, msg?: string): void {
   const a = JSON.stringify(actual);

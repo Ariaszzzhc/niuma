@@ -23,7 +23,7 @@
 // mirroring tuikit's loop_test.ts.
 // ===========================================================================
 
-import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { openLib } from "../../tuikit/src/ffi.ts";
 import { run, type StyledLine, type TerminalSize } from "@niuma/tuikit";
@@ -43,11 +43,22 @@ try {
 const noMods = { shift: false, alt: false, ctrl: false, super: false } as const;
 
 const textEvent = (ch: string) =>
-  ({ kind: "text", text: ch, mods: { ...noMods }, eventType: "press" }) as const;
+  ({
+    kind: "text",
+    text: ch,
+    mods: { ...noMods },
+    eventType: "press",
+  }) as const;
 const enterEvent = () =>
-  ({ kind: "key", key: "enter", mods: { ...noMods }, eventType: "press" }) as const;
+  ({
+    kind: "key",
+    key: "enter",
+    mods: { ...noMods },
+    eventType: "press",
+  }) as const;
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, ms));
 
 /** True when the view's transcript rows show `needle`. */
 const viewShows = (view: readonly StyledLine[], needle: string): boolean =>
@@ -55,7 +66,9 @@ const viewShows = (view: readonly StyledLine[], needle: string): boolean =>
 
 Deno.test("e2e: prompt -> read -> bash approval -> final text", async (t) => {
   if (!LIB_OK) {
-    console.warn("SKIP e2e — native cdylib unavailable (deno task build:native)");
+    console.warn(
+      "SKIP e2e — native cdylib unavailable (deno task build:native)",
+    );
     return;
   }
 
@@ -178,7 +191,10 @@ Deno.test("e2e: prompt -> read -> bash approval -> final text", async (t) => {
       push([...typed].map((ch) => textEvent(ch)));
       push([enterEvent()]);
       await waitFor(
-        () => probe().state.messages.some((m) => m.role === "user" && m.text.includes("run the smoke")),
+        () =>
+          probe().state.messages.some((m) =>
+            m.role === "user" && m.text.includes("run the smoke")
+          ),
         "user.message recorded",
       );
     });
@@ -186,7 +202,9 @@ Deno.test("e2e: prompt -> read -> bash approval -> final text", async (t) => {
     await t.step("read tool completes without approval", async () => {
       await waitFor(
         () =>
-          probe().state.toolCalls.some((c) => c.name === "read" || c.name === "read_file") ||
+          probe().state.toolCalls.some((c) =>
+            c.name === "read" || c.name === "read_file"
+          ) ||
           probe().state.toolCalls.length >= 1,
         "first tool call requested",
       );
@@ -196,7 +214,10 @@ Deno.test("e2e: prompt -> read -> bash approval -> final text", async (t) => {
       await waitFor(() => probe().approval !== null, "approval modal raised");
       // view should show the modal chrome
       const v = program.view(probe() as never);
-      assert(viewShows(v as readonly StyledLine[], "approval required"), "modal painted");
+      assert(
+        viewShows(v as readonly StyledLine[], "approval required"),
+        "modal painted",
+      );
       // press y -> approve once
       push([textEvent("y")]);
       await waitFor(() => probe().approval === null, "approval modal cleared");
@@ -204,7 +225,10 @@ Deno.test("e2e: prompt -> read -> bash approval -> final text", async (t) => {
 
     await t.step("final assistant text arrives", async () => {
       await waitFor(
-        () => probe().state.messages.some((m) => m.role === "assistant" && m.text.includes("smoke done")),
+        () =>
+          probe().state.messages.some((m) =>
+            m.role === "assistant" && m.text.includes("smoke done")
+          ),
         "assistant final text in model",
       );
       // Both tool calls finished; the transcript view contains the final text.
@@ -212,7 +236,9 @@ Deno.test("e2e: prompt -> read -> bash approval -> final text", async (t) => {
       assert(calls.length >= 2, `expected >=2 tool calls, got ${calls.length}`);
       assert(
         calls.every((c) => c.status !== "running"),
-        `tool calls still running: ${JSON.stringify(calls.map((c) => c.status))}`,
+        `tool calls still running: ${
+          JSON.stringify(calls.map((c) => c.status))
+        }`,
       );
       const v = program.view(probe() as never) as readonly StyledLine[];
       assert(viewShows(v, "smoke done"), "final text painted in transcript");
@@ -220,7 +246,12 @@ Deno.test("e2e: prompt -> read -> bash approval -> final text", async (t) => {
 
     await t.step("quit closes the loop", async () => {
       // /quit via the palette: ctrl+p, then "/quit" is the only 'q' command
-      push([{ kind: "text", text: "p", mods: { ...noMods, ctrl: true }, eventType: "press" }]);
+      push([{
+        kind: "text",
+        text: "p",
+        mods: { ...noMods, ctrl: true },
+        eventType: "press",
+      }]);
       push([textEvent("q"), textEvent("u"), textEvent("i"), textEvent("t")]);
       push([enterEvent()]);
       await waitFor(() => probe().quitting === true, "quitting flag set");
@@ -229,8 +260,18 @@ Deno.test("e2e: prompt -> read -> bash approval -> final text", async (t) => {
     // Belt-and-braces: if a step failed before /quit, force-quit so the loop
     // does not hang the test.
     try {
-      push([{ kind: "text", text: "c", mods: { ...noMods, ctrl: true }, eventType: "press" }]);
-      push([{ kind: "text", text: "c", mods: { ...noMods, ctrl: true }, eventType: "press" }]);
+      push([{
+        kind: "text",
+        text: "c",
+        mods: { ...noMods, ctrl: true },
+        eventType: "press",
+      }]);
+      push([{
+        kind: "text",
+        text: "c",
+        mods: { ...noMods, ctrl: true },
+        eventType: "press",
+      }]);
     } catch { /* ignore */ }
     await runPromise;
     try {

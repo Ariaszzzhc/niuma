@@ -110,9 +110,7 @@ export async function* parseOpenAISSE(
       while ((nl = buffer.indexOf("\n")) !== -1) {
         const rawLine = buffer.slice(0, nl);
         buffer = buffer.slice(nl + 1);
-        const line = rawLine.endsWith("\r")
-          ? rawLine.slice(0, -1)
-          : rawLine;
+        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
         if (line.length === 0) continue;
         if (line.startsWith(":")) continue;
         if (!line.startsWith("data:")) continue;

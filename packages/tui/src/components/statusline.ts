@@ -38,8 +38,19 @@ export interface StatusView {
   readonly spinnerFrame: number;
 }
 
-// Braille spinner frames shared with the tool-call component.
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+// Braille spinner frames shared with the tool_call component.
+const SPINNER_FRAMES = [
+  "⠋",
+  "⠙",
+  "⠹",
+  "⠸",
+  "⠼",
+  "⠴",
+  "⠦",
+  "⠧",
+  "⠇",
+  "⠏",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -84,12 +95,16 @@ export const renderStatusline = (
   if (view.activity !== null && view.activity.length > 0) {
     const spinner = SPINNER_FRAMES[view.spinnerFrame % SPINNER_FRAMES.length];
     const text = `${spinner} ${view.activity}`;
-    rightSpans = gradient(toRgb(theme.primary), toRgb(theme.accent), text, { bold: true }, caps);
+    rightSpans = gradient(toRgb(theme.primary), toRgb(theme.accent), text, {
+      bold: true,
+    }, caps);
     rightW = stringWidth(text);
   }
 
   // -- left cluster: model + token tallies (dim) ---------------------------
-  const metrics = `↑${formatTokens(view.tokensIn)} ↓${formatTokens(view.tokensOut)}`;
+  const metrics = `↑${formatTokens(view.tokensIn)} ↓${
+    formatTokens(view.tokensOut)
+  }`;
   // "model  metrics" — metrics kept whole; model truncated to fit.
   const gap = "  ";
   const gapW = stringWidth(gap);
@@ -104,10 +119,16 @@ export const renderStatusline = (
 
   const leftSpans: StyledSpan[] = [];
   if (modelText.length > 0) {
-    leftSpans.push({ text: modelText, style: { fg: theme.textDim, dim: true } });
+    leftSpans.push({
+      text: modelText,
+      style: { fg: theme.textDim, dim: true },
+    });
   }
   if (metricsW > 0) {
-    leftSpans.push({ text: gap, style: {} }, { text: metrics, style: { fg: theme.muted, dim: true } });
+    leftSpans.push({ text: gap, style: {} }, {
+      text: metrics,
+      style: { fg: theme.muted, dim: true },
+    });
   }
   const leftW = leftSpans.reduce((n, s) => n + stringWidth(s.text), 0);
 

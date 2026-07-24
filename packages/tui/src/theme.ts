@@ -172,7 +172,8 @@ const channelLum = (c: number): number => {
  * (the same direction as the no-signal fallback), keeping text legible.
  */
 export const classifyBg = (r: number, g: number, b: number): BgKind => {
-  const L = 0.2126 * channelLum(r) + 0.7152 * channelLum(g) + 0.0722 * channelLum(b);
+  const L = 0.2126 * channelLum(r) + 0.7152 * channelLum(g) +
+    0.0722 * channelLum(b);
   return L > 0.4 ? "light" : "dark";
 };
 

@@ -1,20 +1,20 @@
 import {
+  type ColumnMetadata,
+  type CompiledQuery,
   type DatabaseConnection,
+  type DatabaseIntrospector,
   type Dialect,
   type DialectAdapter,
   type Driver,
   type Kysely,
   type QueryCompiler,
   type QueryResult,
-  type TransactionSettings,
-  type CompiledQuery,
-  type DatabaseIntrospector,
   type SchemaMetadata,
-  type TableMetadata,
-  type ColumnMetadata,
   SqliteAdapter,
   SqliteIntrospector,
   SqliteQueryCompiler,
+  type TableMetadata,
+  type TransactionSettings,
 } from "kysely";
 // node:sqlite is shipped with Deno (and Node 22+). Importing the symbol
 // triggers the node-compat shim that exposes DatabaseSync as a constructor.
@@ -73,7 +73,9 @@ class NodeSqliteConnection implements DatabaseConnection {
     compiledQuery: CompiledQuery,
   ): AsyncIterableIterator<QueryResult<R>> {
     const stmt = this.#database.prepare(compiledQuery.sql);
-    const iter = stmt.iterate(...compiledQuery.parameters) as IterableIterator<R>;
+    const iter = stmt.iterate(...compiledQuery.parameters) as IterableIterator<
+      R
+    >;
     const self = this;
     const asyncIter: AsyncIterableIterator<QueryResult<R>> = {
       [Symbol.asyncIterator]() {
@@ -191,6 +193,9 @@ export function createNodeSqliteDialect(
   location: string,
   options?: { readOnly?: boolean },
 ): NodeSqliteDialect {
-  const db = new NodeDatabaseSync(location, options) as unknown as DatabaseSyncLike;
+  const db = new NodeDatabaseSync(
+    location,
+    options,
+  ) as unknown as DatabaseSyncLike;
   return new NodeSqliteDialect({ database: db });
 }

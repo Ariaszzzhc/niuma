@@ -65,7 +65,9 @@ export async function execCapture(
       args = ["-c", cmd];
     }
   } else {
-    if (cmd.length === 0) throw new Error("tools/exec: cmd argv must be non-empty");
+    if (cmd.length === 0) {
+      throw new Error("tools/exec: cmd argv must be non-empty");
+    }
     [exe, ...args] = cmd;
   }
 

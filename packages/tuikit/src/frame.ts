@@ -11,8 +11,14 @@
 // disposal remains the contract.
 // ===========================================================================
 
-import { type StyledSpan, type TerminalCaps } from "./binding-contract.ts";
-import { encodeSpans, packCaps, acquireBuffer, releaseBuffer, withRetry } from "./buffer.ts";
+import type { StyledSpan, TerminalCaps } from "./binding_contract.ts";
+import {
+  acquireBuffer,
+  encodeSpans,
+  packCaps,
+  releaseBuffer,
+  withRetry,
+} from "./buffer.ts";
 import { checkHandle, checkI64, symbols, TuikitError } from "./ffi.ts";
 
 /** Free-handle callback shared by every Frame's FinalizationRegistry. */
@@ -43,7 +49,10 @@ export class Frame {
 
   /** Create a `w x h` frame cleared to default-styled blanks. */
   static create(w: number, h: number): Frame {
-    const handle = checkHandle("tuikit_frame_create", symbols().tuikit_frame_create(w, h));
+    const handle = checkHandle(
+      "tuikit_frame_create",
+      symbols().tuikit_frame_create(w, h),
+    );
     return new Frame(handle, w, h);
   }
 
@@ -98,7 +107,10 @@ export class Frame {
     );
     void backing;
     if (checkI64("tuikit_frame_write_line", r) !== 0) {
-      throw new TuikitError("tuikit_frame_write_line", "write_line returned non-zero");
+      throw new TuikitError(
+        "tuikit_frame_write_line",
+        "write_line returned non-zero",
+      );
     }
   }
 
@@ -116,7 +128,13 @@ export class Frame {
     try {
       const lib = symbols();
       const call = (outPtr: Deno.PointerValue, cap: number) =>
-        lib.tuikit_frame_diff(this.#handle, next.#handle, capsWord, outPtr, cap);
+        lib.tuikit_frame_diff(
+          this.#handle,
+          next.#handle,
+          capsWord,
+          outPtr,
+          cap,
+        );
       const total = withRetry(buf, call);
       return buf.view.subarray(0, total).slice();
     } finally {

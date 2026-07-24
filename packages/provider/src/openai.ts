@@ -7,8 +7,8 @@ import {
   InvalidResponse,
   Network,
   Overloaded,
-  RateLimited,
   type ProviderError,
+  RateLimited,
 } from "./errors.ts";
 import { withRetry } from "./retry.ts";
 import { messagesToOpenAI, toolsToOpenAI } from "./convert.ts";
@@ -42,7 +42,10 @@ const headersFor = (apiKey: string): HeadersInit => ({
 
 const buildBody = (config: OpenAIProviderConfig, req: ChatRequest): string => {
   const domain = req.system
-    ? [{ role: "system" as const, content: req.system }, ...messagesToOpenAI(req.messages)]
+    ? [
+      { role: "system" as const, content: req.system },
+      ...messagesToOpenAI(req.messages),
+    ]
     : messagesToOpenAI(req.messages);
   const payload: Record<string, unknown> = {
     model: req.model ?? config.defaultModel,
@@ -105,7 +108,8 @@ const fetchCompletion = (
         body: buildBody(config, req),
         signal,
       }),
-    catch: (cause) => new Network({ cause: isAbortError(cause) ? undefined : cause }),
+    catch: (cause) =>
+      new Network({ cause: isAbortError(cause) ? undefined : cause }),
   }).pipe(Effect.flatMap(classifyResponse));
 
 const fetchModels = (
@@ -124,10 +128,10 @@ const fetchModels = (
         ? Effect.promise(() =>
           res.json() as Promise<{ data?: Array<{ id: string }> }>
         )
-        : Effect.fail(new InvalidResponse({ message: `HTTP ${res.status}` })),
+        : Effect.fail(new InvalidResponse({ message: `HTTP ${res.status}` }))
     ),
     Effect.map((body) =>
-      (body.data ?? []).map((m) => ({ id: m.id, name: m.id })),
+      (body.data ?? []).map((m) => ({ id: m.id, name: m.id }))
     ),
     withRetry,
     Effect.catchIf(
@@ -146,57 +150,59 @@ export const makeOpenAIAdapter = (
   return {
     listModels: () => fetchModels(cfg),
 
-  stream: (req: ChatRequest) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const controller = new AbortController();
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            try {
-              controller.abort();
-            } catch {
-              // ignore
+    stream: (req: ChatRequest) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const controller = new AbortController();
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              try {
+                controller.abort();
+              } catch {
+                // ignore
+              }
+            })
+          );
+          if (req.abort) {
+            if (req.abort.aborted) controller.abort();
+            else {
+              req.abort.addEventListener(
+                "abort",
+                () => controller.abort(),
+                { once: true },
+              );
             }
-          }),
-        );
-        if (req.abort) {
-          if (req.abort.aborted) controller.abort();
-          else {
-            req.abort.addEventListener(
-              "abort",
-              () => controller.abort(),
-              { once: true },
+          }
+
+          const fetched = yield* withRetry(
+            fetchCompletion(cfg, req, controller.signal),
+            () => controller.signal.aborted,
+          ).pipe(
+            Effect.catchIf(
+              (_e): _e is ProviderError => true,
+              (e) =>
+                controller.signal.aborted
+                  ? Effect.succeed<Response | null>(null)
+                  : Effect.fail(e),
+            ),
+          );
+          if (fetched === null) return Stream.empty;
+          if (!fetched.body) {
+            return Stream.fail(
+              new InvalidResponse({
+                message: "Streaming response had no body",
+              }),
             );
           }
-        }
-
-        const fetched = yield* withRetry(
-          fetchCompletion(cfg, req, controller.signal),
-          () => controller.signal.aborted,
-        ).pipe(
-          Effect.catchIf(
-            (_e): _e is ProviderError => true,
-            (e) =>
-              controller.signal.aborted
-                ? Effect.succeed<Response | null>(null)
-                : Effect.fail(e),
-          ),
-        );
-        if (fetched === null) return Stream.empty;
-        if (!fetched.body) {
-          return Stream.fail(
-            new InvalidResponse({ message: "Streaming response had no body" }),
+          return Stream.fromAsyncIterable(
+            parseOpenAISSE(fetched.body, controller.signal),
+            (e): ProviderError =>
+              e instanceof Error && "_tag" in e
+                ? (e as ProviderError)
+                : new Network({ cause: e }),
           );
-        }
-        return Stream.fromAsyncIterable(
-          parseOpenAISSE(fetched.body, controller.signal),
-          (e): ProviderError =>
-            e instanceof Error && "_tag" in e
-              ? (e as ProviderError)
-              : new Network({ cause: e }),
-        );
-      }),
-    ),
+        }),
+      ),
   };
 };
 

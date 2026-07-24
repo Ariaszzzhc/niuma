@@ -12,7 +12,7 @@ import { READ_ONLY_ALLOWED } from "./types.ts";
 import { authorize } from "./authorize.ts";
 import { schedule, type ScheduledJob } from "./scheduler.ts";
 import { resolvePath } from "./path.ts";
-import { isWithinRoot } from "./pathUtil.ts";
+import { isWithinRoot } from "./path_util.ts";
 
 export interface PipelineOptions {
   /** Tools indexed by name. */
@@ -66,7 +66,11 @@ export async function runPipeline(
     const call = calls[i];
     const tool = opts.tools.get(call.name);
     if (!tool) {
-      errors[i] = { content: `unknown tool: ${call.name}`, isError: true, callId: call.callId };
+      errors[i] = {
+        content: `unknown tool: ${call.name}`,
+        isError: true,
+        callId: call.callId,
+      };
       continue;
     }
     // Read-only mode: short-circuit anything that isn't on the allowlist.
@@ -82,12 +86,11 @@ export async function runPipeline(
     const parsed = tool.inputSchema.safeParse(call.input);
     if (!parsed.success) {
       errors[i] = {
-        content:
-          `invalid input for ${call.name}: ${
-            parsed.error.issues
-              .map((iss) => `${iss.path.join(".")}: ${iss.message}`)
-              .join("; ")
-          }`,
+        content: `invalid input for ${call.name}: ${
+          parsed.error.issues
+            .map((iss) => `${iss.path.join(".")}: ${iss.message}`)
+            .join("; ")
+        }`,
         isError: true,
         callId: call.callId,
       };

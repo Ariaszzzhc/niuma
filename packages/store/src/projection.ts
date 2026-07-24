@@ -1,18 +1,14 @@
-import {
-  type RecordedEvent,
-  type SessionInfo,
-  type SessionStatus,
-  type StopReason,
+import type {
+  RecordedEvent,
+  SessionInfo,
+  SessionStatus,
+  StopReason,
 } from "@niuma/schema";
-import { Kysely, sql, type Selectable } from "kysely";
-import {
-  DEFAULT_DATA_DIR,
-  dbPath,
-  ensureDataDirSync,
-} from "./paths.ts";
+import { Kysely, type Selectable, sql } from "kysely";
+import { dbPath, DEFAULT_DATA_DIR, ensureDataDirSync } from "./paths.ts";
 import { EventLog } from "./event_log.ts";
 import { createNodeSqliteDialect } from "../vendor/node-sqlite-dialect.ts";
-import type { SessionsTable, NiumaDB } from "./db.ts";
+import type { NiumaDB, SessionsTable } from "./db.ts";
 
 function toStatus(event: RecordedEvent): SessionStatus {
   switch (event.type) {
@@ -78,7 +74,11 @@ export class Projection {
       .addColumn("status", "text", (col) => col.notNull())
       .addColumn("title", "text")
       .addColumn("last_stop_reason", "text")
-      .addColumn("message_count", "integer", (col) => col.notNull().defaultTo(0))
+      .addColumn(
+        "message_count",
+        "integer",
+        (col) => col.notNull().defaultTo(0),
+      )
       .execute();
     await this.db.schema
       .createTable("session_seq")

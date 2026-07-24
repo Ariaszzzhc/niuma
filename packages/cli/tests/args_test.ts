@@ -10,7 +10,7 @@
 // stdin in-process, so the guard keeps the test deterministic either way).
 // ===========================================================================
 
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { parseCliArgs } from "../src/args.ts";
 
 Deno.test("args: `niuma tui` refuses a non-TTY stdin with help + exit 2", () => {
@@ -35,5 +35,8 @@ Deno.test("args: `niuma tui` with a TTY launches interactive (structural)", () =
   if (!Deno.stdin.isTerminal()) return;
   const r = parseCliArgs(["tui"]);
   assertEquals(r.ok, true);
-  assertEquals((r as { args: { subcommand: string } }).args.subcommand, "interactive");
+  assertEquals(
+    (r as { args: { subcommand: string } }).args.subcommand,
+    "interactive",
+  );
 });

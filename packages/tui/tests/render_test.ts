@@ -5,7 +5,7 @@
 //   - transcript: scroll-window math, followTail pin, scroll-up breaks
 //     follow, scroll-to-bottom re-enables, page up/down, NewContent,
 //     blank padding when content < viewport, user-message prompt;
-//   - tool-call: collapsed status glyphs (spinner/done/error), name+summary,
+//   - tool_call: collapsed status glyphs (spinner/done/error), name+summary,
 //     expanded tree indent ("⎿ " first / "  " rest), 8-line cap + footer,
 //     duration formatting;
 //   - statusline: exact width fit at several widths, gradient activity
@@ -14,20 +14,34 @@
 // Only tuikit width/gradient (built) is required.
 // ===========================================================================
 
-import { assert, assertEquals, assertFalse, assertGreaterOrEqual } from "jsr:@std/assert@^1.0.0";
-import type { StyledLine, StyledSpan } from "@niuma/tuikit";
+import {
+  assert,
+  assertEquals,
+  assertFalse,
+  assertGreaterOrEqual,
+} from "@std/assert";
+import type { StyledLine } from "@niuma/tuikit";
 import { stringWidth } from "@niuma/tuikit";
 import { darkTheme as THEME } from "../src/theme.ts";
-import { renderToolCall, type ToolCallView } from "../src/components/tool-call.ts";
-import { renderStatusline, type StatusView } from "../src/components/statusline.ts";
-import { renderApprovalOverlay, type ApprovalTheme } from "../src/components/approval.ts";
 import {
+  renderToolCall,
+  type ToolCallView,
+} from "../src/components/tool_call.ts";
+import {
+  renderStatusline,
+  type StatusView,
+} from "../src/components/statusline.ts";
+import {
+  type ApprovalTheme,
+  renderApprovalOverlay,
+} from "../src/components/approval.ts";
+import {
+  type ChatMessage,
   initialTranscript,
   renderTranscript,
   renderTranscriptContent,
   transcriptContentHeight,
   transcriptReducer,
-  type ChatMessage,
   type TranscriptState,
 } from "../src/components/transcript.ts";
 
@@ -39,13 +53,18 @@ stringWidth("niuma");
 // helpers
 // ---------------------------------------------------------------------------
 
-const lineText = (line: StyledLine): string => line.spans.map((s) => s.text).join("");
+const lineText = (line: StyledLine): string =>
+  line.spans.map((s) => s.text).join("");
 const lineWidth = (line: StyledLine): number =>
   line.spans.reduce((n, s) => n + stringWidth(s.text), 0);
-const allText = (lines: readonly StyledLine[]): string => lines.map(lineText).join("\n");
-const colorEq = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+const allText = (lines: readonly StyledLine[]): string =>
+  lines.map(lineText).join("\n");
+const colorEq = (a: unknown, b: unknown): boolean =>
+  JSON.stringify(a) === JSON.stringify(b);
 const hasFg = (lines: readonly StyledLine[], c: unknown): boolean =>
-  lines.flatMap((l) => l.spans).some((s) => s.style.fg !== undefined && colorEq(s.style.fg, c));
+  lines.flatMap((l) => l.spans).some((s) =>
+    s.style.fg !== undefined && colorEq(s.style.fg, c)
+  );
 
 /** Build a transcript of N short assistant paragraphs (a, b, c, ...). */
 const alphaTranscript = (n: number): readonly ChatMessage[] => {
@@ -190,7 +209,7 @@ Deno.test("transcript: initialTranscript follows an empty tail", () => {
 });
 
 // ===========================================================================
-// tool-call
+// tool_call
 // ===========================================================================
 
 const baseCall = (over: Partial<ToolCallView>): ToolCallView => ({
@@ -202,7 +221,7 @@ const baseCall = (over: Partial<ToolCallView>): ToolCallView => ({
   ...over,
 });
 
-Deno.test("tool-call: running shows a braille spinner at the given frame", () => {
+Deno.test("tool_call: running shows a braille spinner at the given frame", () => {
   const lines = renderToolCall(baseCall({ status: "running" }), 40, THEME, 2);
   assertEquals(lines.length, 1);
   const text = lineText(lines[0]);
@@ -211,19 +230,19 @@ Deno.test("tool-call: running shows a braille spinner at the given frame", () =>
   assertEquals(text.includes("src/main.ts"), true);
 });
 
-Deno.test("tool-call: done shows ● in the success colour", () => {
+Deno.test("tool_call: done shows ● in the success colour", () => {
   const lines = renderToolCall(baseCall({ status: "done" }), 40, THEME);
   assertEquals(lineText(lines[0]).startsWith("●"), true);
   assertEquals(hasFg(lines, THEME.success), true);
 });
 
-Deno.test("tool-call: error shows ✗ in the error colour", () => {
+Deno.test("tool_call: error shows ✗ in the error colour", () => {
   const lines = renderToolCall(baseCall({ status: "error" }), 40, THEME);
   assertEquals(lineText(lines[0]).startsWith("✗"), true);
   assertEquals(hasFg(lines, THEME.error), true);
 });
 
-Deno.test("tool-call: collapsed hides result lines", () => {
+Deno.test("tool_call: collapsed hides result lines", () => {
   const lines = renderToolCall(
     baseCall({ status: "done", resultLines: ["one", "two"], expanded: false }),
     40,
@@ -233,9 +252,13 @@ Deno.test("tool-call: collapsed hides result lines", () => {
   assertEquals(allText(lines).includes("one"), false);
 });
 
-Deno.test("tool-call: expanded tree-indents results (⎿ first, rest)", () => {
+Deno.test("tool_call: expanded tree-indents results (⎿ first, rest)", () => {
   const lines = renderToolCall(
-    baseCall({ status: "done", resultLines: ["one", "two", "three"], expanded: true }),
+    baseCall({
+      status: "done",
+      resultLines: ["one", "two", "three"],
+      expanded: true,
+    }),
     40,
     THEME,
   );
@@ -248,7 +271,7 @@ Deno.test("tool-call: expanded tree-indents results (⎿ first, rest)", () => {
   assertEquals(lineText(lines[3]).startsWith("  "), true);
 });
 
-Deno.test("tool-call: expanded caps at 8 lines with a +N footer", () => {
+Deno.test("tool_call: expanded caps at 8 lines with a +N footer", () => {
   const results = Array.from({ length: 12 }, (_, i) => `line${i}`);
   const lines = renderToolCall(
     baseCall({ status: "done", resultLines: results, expanded: true }),
@@ -260,17 +283,28 @@ Deno.test("tool-call: expanded caps at 8 lines with a +N footer", () => {
   assertEquals(lineText(lines[lines.length - 1]).includes("+4 lines"), true);
 });
 
-Deno.test("tool-call: duration formatting (ms / s)", () => {
-  const ms = renderToolCall(baseCall({ status: "done", durationMs: 120 }), 40, THEME);
+Deno.test("tool_call: duration formatting (ms / s)", () => {
+  const ms = renderToolCall(
+    baseCall({ status: "done", durationMs: 120 }),
+    40,
+    THEME,
+  );
   assertEquals(allText(ms).includes("120ms"), true);
-  const s = renderToolCall(baseCall({ status: "done", durationMs: 1500 }), 40, THEME);
+  const s = renderToolCall(
+    baseCall({ status: "done", durationMs: 1500 }),
+    40,
+    THEME,
+  );
   assertEquals(allText(s).includes("1.5s"), true);
 });
 
-Deno.test("tool-call: never overflows the given width", () => {
+Deno.test("tool_call: never overflows the given width", () => {
   for (const w of [40, 24, 16]) {
     const lines = renderToolCall(
-      baseCall({ status: "done", inputSummary: "a/really/long/path/to/some/file.ts" }),
+      baseCall({
+        status: "done",
+        inputSummary: "a/really/long/path/to/some/file.ts",
+      }),
       w,
       THEME,
     );
@@ -324,7 +358,10 @@ Deno.test("statusline: activity cluster is gradient-painted (many spans)", () =>
   };
   const line = renderStatusline(view, 40, THEME);
   // gradient returns one span per cluster -> several spans for "⠼ working"
-  assert(line.spans.length > 2, "expected gradient to split the activity into spans");
+  assert(
+    line.spans.length > 2,
+    "expected gradient to split the activity into spans",
+  );
   assertEquals(lineText(line).includes("working"), true);
 });
 
@@ -364,13 +401,21 @@ Deno.test("approval: header row never exceeds the box width (narrow screen, long
   );
   const headerW = lineWidth(overlay.lines[0]);
   const borderW = lineWidth(overlay.lines[overlay.lines.length - 1]);
-  assertEquals(headerW, borderW, "header row width must equal the modal border width");
+  assertEquals(
+    headerW,
+    borderW,
+    "header row width must equal the modal border width",
+  );
 });
 
 Deno.test("approval: header fits the border at several narrow widths", () => {
   for (const w of [20, 24, 30, 36, 42, 50, 80]) {
     const overlay = renderApprovalOverlay(
-      { approvalId: "a", toolName: "Write_Tools_Read_Files_ExecBash", preview: [] },
+      {
+        approvalId: "a",
+        toolName: "Write_Tools_Read_Files_ExecBash",
+        preview: [],
+      },
       w,
       12,
       approvalTheme,

@@ -7,12 +7,12 @@
 // wrappers only marshal words and decode the gradient record stream.
 // ===========================================================================
 
-import {
-  type Color,
-  type StyledSpan,
-  type Style,
-  type TerminalCaps,
-} from "./binding-contract.ts";
+import type {
+  Color,
+  Style,
+  StyledSpan,
+  TerminalCaps,
+} from "./binding_contract.ts";
 import {
   acquireBuffer,
   decodeGradient,
@@ -54,11 +54,17 @@ export const styleToSgr = (
 
 /** rgb -> xterm 256 palette index (16..255). */
 export const rgbTo256 = (r: number, g: number, b: number): number =>
-  checkI64("tuikit_rgb_to_256", symbols().tuikit_rgb_to_256(r & 0xff, g & 0xff, b & 0xff));
+  checkI64(
+    "tuikit_rgb_to_256",
+    symbols().tuikit_rgb_to_256(r & 0xff, g & 0xff, b & 0xff),
+  );
 
 /** rgb -> nearest named-16 palette index (0..15). */
 export const rgbTo16 = (r: number, g: number, b: number): number =>
-  checkI64("tuikit_rgb_to_16", symbols().tuikit_rgb_to_16(r & 0xff, g & 0xff, b & 0xff));
+  checkI64(
+    "tuikit_rgb_to_16",
+    symbols().tuikit_rgb_to_16(r & 0xff, g & 0xff, b & 0xff),
+  );
 
 /**
  * Quantize a Color to what `caps` supports. RGB colors drop to indexed256
@@ -105,7 +111,16 @@ export const gradient = (
   try {
     const lib = symbols();
     const call = (outPtr: Deno.PointerValue, cap: number) =>
-      lib.tuikit_gradient(fromWord, toWord, inPtr, len, bgWord, capsWord, outPtr, cap);
+      lib.tuikit_gradient(
+        fromWord,
+        toWord,
+        inPtr,
+        len,
+        bgWord,
+        capsWord,
+        outPtr,
+        cap,
+      );
     const total = withRetry(buf, call);
     const recs = decodeGradient(buf.view.subarray(0, total), total);
     const spans: StyledSpan[] = [];

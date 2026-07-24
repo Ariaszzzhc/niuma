@@ -5,7 +5,7 @@
 //   - user messages:      an accent "❯" prompt + the text (hanging-indent);
 //   - assistant messages: renderMarkdown (the live message renders in
 //                         streaming mode when opts.streaming is set);
-//   - tool messages:      the tool-call card.
+//   - tool messages:      the tool_call card.
 //
 // `renderTranscript` paints the FULL column, then applies a scroll window of
 // `height` rows starting at the effective offset. Window semantics:
@@ -24,7 +24,7 @@ import type { StyledLine, StyledSpan } from "@niuma/tuikit";
 import { stringWidth, truncateToWidth } from "@niuma/tuikit";
 import type { Theme } from "../theme.ts";
 import { renderMarkdown } from "../markdown.ts";
-import { renderToolCall, type ToolCallView } from "./tool-call.ts";
+import { renderToolCall, type ToolCallView } from "./tool_call.ts";
 
 // ---------------------------------------------------------------------------
 // Model
@@ -77,11 +77,18 @@ const blankLine = (width: number): StyledLine => ({
 });
 
 /** Render a user message: "❯ " prompt (accent) + hanging-indent wrapped text. */
-const renderUserMessage = (text: string, width: number, theme: Theme): StyledLine[] => {
+const renderUserMessage = (
+  text: string,
+  width: number,
+  theme: Theme,
+): StyledLine[] => {
   const prefix = "❯ ";
   const prefixW = stringWidth(prefix);
   const contentW = Math.max(1, width - prefixW);
-  const prompt: StyledSpan = { text: prefix, style: { fg: theme.accent, bold: true } };
+  const prompt: StyledSpan = {
+    text: prefix,
+    style: { fg: theme.accent, bold: true },
+  };
   const indent: StyledSpan = { text: " ".repeat(prefixW), style: {} };
 
   // Hard-wrap the user text by display width at word boundaries.
@@ -154,7 +161,7 @@ const wrapPlain = (text: string, width: number): string[] => {
 // ---------------------------------------------------------------------------
 
 export interface TranscriptRenderOpts {
-  /** Spinner frame forwarded to tool-call cards (animates running tools). */
+  /** Spinner frame forwarded to tool_call cards (animates running tools). */
   readonly spinnerFrame?: number;
   /** When true, the LAST assistant message renders in streaming mode. */
   readonly streaming?: boolean;
@@ -265,7 +272,11 @@ export const transcriptReducer = (
 
   switch (msg.type) {
     case "ScrollUp":
-      return { ...state, followTail: false, scrollOffset: Math.max(0, cur - 1) };
+      return {
+        ...state,
+        followTail: false,
+        scrollOffset: Math.max(0, cur - 1),
+      };
     case "PageUp":
       return {
         ...state,

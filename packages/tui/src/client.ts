@@ -118,8 +118,7 @@ export const createTuiClient = async (
   }
 
   // 2. Open the SSE stream BEFORE prompting --------------------------------
-  const eventsUrl =
-    `${BASE}/events?session=${enc(sessionId)}&cursor=0`;
+  const eventsUrl = `${BASE}/events?session=${enc(sessionId)}&cursor=0`;
   let sseRes: Response;
   try {
     sseRes = await fetchImpl(eventsUrl);
@@ -136,7 +135,9 @@ export const createTuiClient = async (
 
   // 3. Mutators ------------------------------------------------------------
   const prompt = (text: string): Promise<ClientResult> =>
-    request(fetchImpl, "POST", `${BASE}/sessions/${enc(sessionId)}/prompt`, { text });
+    request(fetchImpl, "POST", `${BASE}/sessions/${enc(sessionId)}/prompt`, {
+      text,
+    });
 
   const approve = (
     approvalId: string,
@@ -151,7 +152,12 @@ export const createTuiClient = async (
     );
 
   const interrupt = (): Promise<ClientResult> =>
-    request(fetchImpl, "POST", `${BASE}/sessions/${enc(sessionId)}/interrupt`, {});
+    request(
+      fetchImpl,
+      "POST",
+      `${BASE}/sessions/${enc(sessionId)}/interrupt`,
+      {},
+    );
 
   return { sessionId, eventsStream, prompt, approve, interrupt };
 };

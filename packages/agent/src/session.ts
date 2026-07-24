@@ -11,7 +11,7 @@ import { runTurn, type TurnResult } from "./loop.ts";
 
 // Infrastructure shared by every session in a process.
 export interface AgentInfra {
-  readonly eventLog: EventLog;
+  readonly event_log: EventLog;
   readonly provider: ProviderAdapter;
   readonly tools: ToolPipeline;
   readonly approvals: ApprovalGateway;
@@ -81,7 +81,7 @@ export class AgentSession {
 
   #deps() {
     return {
-      eventLog: this.infra.eventLog,
+      event_log: this.infra.event_log,
       provider: this.infra.provider,
       tools: this.infra.tools,
       approvals: this.infra.approvals,
@@ -112,7 +112,7 @@ export class AgentSession {
     const { infra, id } = this;
     const deps = this.#deps();
     return Effect.gen(function* () {
-      yield* infra.eventLog.append(id, {
+      yield* infra.event_log.append(id, {
         type: "user.message",
         data: { parts: [...parts] },
       });
@@ -129,7 +129,7 @@ export class AgentSession {
   plan(): Effect.Effect<unknown> {
     const { infra, id } = this;
     return Effect.gen(function* () {
-      const events = yield* infra.eventLog.replay(id);
+      const events = yield* infra.event_log.replay(id);
       return lastPlan(events);
     });
   }
@@ -140,31 +140,31 @@ export class AgentSession {
     prompt: string,
     mode: ToolMode = "read-only",
   ): Effect.Effect<string> {
-    const parent = this;
+    const { depth, infra, id, manager, workspace, model } = this;
     return Effect.gen(function* () {
-      if (parent.depth >= SUBAGENT_DEPTH_LIMIT) {
+      if (depth >= SUBAGENT_DEPTH_LIMIT) {
         return "Subagent depth limit reached; cannot spawn further subagents.";
       }
-      const child = parent.manager.create({
-        workspace: parent.workspace,
-        model: parent.model,
+      const child = manager.create({
+        workspace,
+        model,
         mode,
-        depth: parent.depth + 1,
+        depth: depth + 1,
       });
-      yield* parent.infra.eventLog.append(child.id, {
+      yield* infra.event_log.append(child.id, {
         type: "session.created",
-        data: { workspace: parent.workspace, model: parent.model },
+        data: { workspace, model },
       });
-      yield* parent.infra.eventLog.append(parent.id, {
+      yield* infra.event_log.append(id, {
         type: "subagent.spawned",
         data: {
-          parentSessionId: parent.id,
+          parentSessionId: id,
           childSessionId: child.id,
           prompt,
         },
       });
       const result = yield* child.prompt([{ type: "text", text: prompt }]);
-      parent.manager.remove(child.id);
+      manager.remove(child.id);
       return result.text;
     });
   }
@@ -200,11 +200,11 @@ export class SessionManager {
     workspace: string;
     model?: string;
   }): Effect.Effect<AgentSession> {
-    const infra = this.infra;
-    const self = this;
+    const { infra } = this;
+    const create = this.create.bind(this);
     return Effect.gen(function* () {
-      const session = self.create(opts);
-      yield* infra.eventLog.append(session.id, {
+      const session = create(opts);
+      yield* infra.event_log.append(session.id, {
         type: "session.created",
         data: { workspace: session.workspace, model: session.model },
       });
@@ -221,25 +221,26 @@ export class SessionManager {
   }
 
   replay(id: string): Effect.Effect<ReadonlyArray<RecordedEvent>> {
-    return this.infra.eventLog.replay(id);
+    return this.infra.event_log.replay(id);
   }
 
   // Rehydrate a session from its event log (reads workspace/model from the
   // session.created event) and register it as live.
   resume(id: string): Effect.Effect<AgentSession> {
-    const self = this;
-    const infra = this.infra;
+    const { infra } = this;
+    const get = this.get.bind(this);
+    const create = this.create.bind(this);
     return Effect.gen(function* () {
-      const existing = self.get(id);
+      const existing = get(id);
       if (existing) return existing;
-      const events = yield* infra.eventLog.replay(id);
+      const events = yield* infra.event_log.replay(id);
       const created = events.find((e) => e.type === "session.created");
       if (!created || created.type !== "session.created") {
         return yield* Effect.die(
           new Error(`session ${id} has no session.created event`),
         );
       }
-      return self.create({
+      return create({
         id,
         workspace: created.data.workspace,
         model: created.data.model,

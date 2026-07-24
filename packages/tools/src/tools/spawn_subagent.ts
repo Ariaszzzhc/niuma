@@ -1,27 +1,31 @@
 import { z } from "zod";
 import type { Tool, ToolOutput } from "../types.ts";
 import { toolOutput } from "../truncate.ts";
-import { zodToJsonSchema } from "../jsonSchema.ts";
+import { zodToJsonSchema } from "../json_schema.ts";
 
-export const SpawnSubagentInput = z.object({
+// deno-lint-ignore no-slow-types
+const SpawnSubagentInput_ = z.object({
   prompt: z.string().min(1).describe("Task to hand off to the subagent."),
   mode: z.enum(["default", "read-only"]).optional()
     .describe("Restrict the child to read-only tools; default unrestricted."),
 });
 
-export type SpawnSubagentInput = z.infer<typeof SpawnSubagentInput>;
+export type SpawnSubagentInput = z.infer<typeof SpawnSubagentInput_>;
+export const SpawnSubagentInput: z.ZodType<SpawnSubagentInput> =
+  SpawnSubagentInput_;
 
 export const spawnSubagentTool: Tool<SpawnSubagentInput> = {
   name: "spawn_subagent",
   def: {
     name: "spawn_subagent",
     description:
-      "Spawn a child session to handle a sub-task. Returns the child's final assistant text. Pass `mode: \"read-only\"` to restrict the child to non-mutating tools.",
+      'Spawn a child session to handle a sub-task. Returns the child\'s final assistant text. Pass `mode: "read-only"` to restrict the child to non-mutating tools.',
     parameters: zodToJsonSchema(SpawnSubagentInput),
   },
   accesses: { process: false }, // child runs in the same process — not a separate exec.
   inputSchema: SpawnSubagentInput,
-  normalize: (i) => `subagent(${i.mode ?? "default"}): ${truncate(i.prompt, 60)}`,
+  normalize: (i) =>
+    `subagent(${i.mode ?? "default"}): ${truncate(i.prompt, 60)}`,
   async execute(input, ctx): Promise<ToolOutput> {
     const callId = `spawn_subagent:${ctx.sessionId}`;
     if (!ctx.spawnSubagent) {

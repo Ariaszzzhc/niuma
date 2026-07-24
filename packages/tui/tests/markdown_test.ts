@@ -12,7 +12,12 @@
 // No dylib is needed beyond tuikit width/truncate (which is built).
 // ===========================================================================
 
-import { assert, assertEquals, assertFalse, assertGreaterOrEqual } from "jsr:@std/assert@^1.0.0";
+import {
+  assert,
+  assertEquals,
+  assertFalse,
+  assertGreaterOrEqual,
+} from "@std/assert";
 import type { StyledLine, StyledSpan } from "@niuma/tuikit";
 import { stringWidth } from "@niuma/tuikit";
 import { renderMarkdown, tokenizeInlineSpans } from "../src/markdown.ts";
@@ -43,21 +48,33 @@ const allSpans = (lines: readonly StyledLine[]): StyledSpan[] =>
   lines.flatMap((l) => l.spans);
 
 /** True when a span carries a specific style flag (bold/italic/underline/...). */
-const hasFlag = (span: StyledSpan, flag: "bold" | "italic" | "underline" | "dim"): boolean =>
-  span.style[flag] === true;
+const hasFlag = (
+  span: StyledSpan,
+  flag: "bold" | "italic" | "underline" | "dim",
+): boolean => span.style[flag] === true;
 
 /** Colour-equality on the (rgb/256/named/default) word form. */
-const colorEq = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+const colorEq = (a: unknown, b: unknown): boolean =>
+  JSON.stringify(a) === JSON.stringify(b);
 
 /** True when any span's fg matches the given theme colour. */
-const hasFg = (lines: readonly StyledLine[], themeColor: Theme["text"]): boolean =>
-  allSpans(lines).some((s) => s.style.fg !== undefined && colorEq(s.style.fg, themeColor));
+const hasFg = (
+  lines: readonly StyledLine[],
+  themeColor: Theme["text"],
+): boolean =>
+  allSpans(lines).some((s) =>
+    s.style.fg !== undefined && colorEq(s.style.fg, themeColor)
+  );
 
 /** Every rendered line is at most `width` display cells (no overflow). */
 const assertNoOverflow = (lines: readonly StyledLine[], width = W): void => {
   for (const line of lines) {
     const w = line.spans.reduce((n, s) => n + stringWidth(s.text), 0);
-    assertGreaterOrEqual(width, w, `line wider than ${width}: "${lineText(line)}"`);
+    assertGreaterOrEqual(
+      width,
+      w,
+      `line wider than ${width}: "${lineText(line)}"`,
+    );
   }
 };
 
@@ -69,7 +86,10 @@ Deno.test("markdown: ATX heading is bold + accent", () => {
   const lines = render("# Title");
   assertEquals(lines.length, 1);
   const spans = lines[0].spans;
-  assertEquals(spans.some((s) => s.text === "Title" && hasFlag(s, "bold")), true);
+  assertEquals(
+    spans.some((s) => s.text === "Title" && hasFlag(s, "bold")),
+    true,
+  );
   assertEquals(hasFg(lines, THEME.accent), true);
 });
 
@@ -97,31 +117,51 @@ Deno.test("markdown: italic span via *", () => {
 Deno.test("markdown: bold+italic via ***", () => {
   const spans = tokenizeInlineSpans("***both***", THEME, { fg: THEME.text });
   const both = spans.find((s) => s.text === "both");
-  assertEquals(both !== undefined && hasFlag(both, "bold") && hasFlag(both, "italic"), true);
+  assertEquals(
+    both !== undefined && hasFlag(both, "bold") && hasFlag(both, "italic"),
+    true,
+  );
 });
 
 Deno.test("markdown: inline code gets codeBg", () => {
-  const spans = tokenizeInlineSpans("before `code` after", THEME, { fg: THEME.text });
+  const spans = tokenizeInlineSpans("before `code` after", THEME, {
+    fg: THEME.text,
+  });
   const code = spans.find((s) => s.text === "code");
   assertEquals(code !== undefined, true);
-  assertEquals(code!.style.bg !== undefined && colorEq(code!.style.bg, THEME.codeBg), true);
+  assertEquals(
+    code!.style.bg !== undefined && colorEq(code!.style.bg, THEME.codeBg),
+    true,
+  );
 });
 
 Deno.test("markdown: link renders underlined text + dimmed url", () => {
-  const spans = tokenizeInlineSpans("see [docs](http://x.io) now", THEME, { fg: THEME.text });
-  assertEquals(spans.some((s) => s.text === "docs" && hasFlag(s, "underline")), true);
-  assertEquals(spans.some((s) => s.text === " (http://x.io)" && hasFlag(s, "dim")), true);
+  const spans = tokenizeInlineSpans("see [docs](http://x.io) now", THEME, {
+    fg: THEME.text,
+  });
+  assertEquals(
+    spans.some((s) => s.text === "docs" && hasFlag(s, "underline")),
+    true,
+  );
+  assertEquals(
+    spans.some((s) => s.text === " (http://x.io)" && hasFlag(s, "dim")),
+    true,
+  );
 });
 
 Deno.test("markdown: backslash escapes punctuation literally", () => {
-  const spans = tokenizeInlineSpans("a \\*not ital\\* b", THEME, { fg: THEME.text });
+  const spans = tokenizeInlineSpans("a \\*not ital\\* b", THEME, {
+    fg: THEME.text,
+  });
   // no italic span; the stars survived as literal text
   assertEquals(spans.some((s) => hasFlag(s, "italic")), false);
   assertEquals(spans.some((s) => s.text.includes("*")), true);
 });
 
 Deno.test("markdown: unclosed bold renders literally (no bold span)", () => {
-  const spans = tokenizeInlineSpans("**unterminated", THEME, { fg: THEME.text });
+  const spans = tokenizeInlineSpans("**unterminated", THEME, {
+    fg: THEME.text,
+  });
   assertEquals(spans.some((s) => hasFlag(s, "bold")), false);
 });
 
@@ -254,7 +294,11 @@ Deno.test("markdown: streaming — rendered line count never shrinks across chun
     acc += chunk;
     const lines = render(acc, true);
     if (prev >= 0) {
-      assertGreaterOrEqual(lines.length, prev, `stream shrank: ${prev} -> ${lines.length}`);
+      assertGreaterOrEqual(
+        lines.length,
+        prev,
+        `stream shrank: ${prev} -> ${lines.length}`,
+      );
     }
     prev = lines.length;
     finalText = allText(lines);

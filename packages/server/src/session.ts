@@ -1,16 +1,9 @@
-import {
-  Cause,
-  Context,
-  Effect,
-  Fiber,
-  Layer,
-  Ref,
-} from "effect";
-import {
-  type Part,
-  type SessionInfo,
-  type SessionStatus,
-  type StopReason,
+import { Cause, Context, Effect, Fiber, Layer, Ref } from "effect";
+import type {
+  Part,
+  SessionInfo,
+  SessionStatus,
+  StopReason,
 } from "@niuma/schema";
 import { runTurn } from "@niuma/agent";
 import { Kernel } from "./kernel.ts";
@@ -53,6 +46,7 @@ export interface SessionManager {
   readonly awaitAll: () => Effect.Effect<void, never, never>;
 }
 
+// deno-lint-ignore no-slow-types
 export const SessionManager = Context.Service<SessionManager, SessionManager>()(
   "@niuma/server/SessionManager",
 );
@@ -176,12 +170,12 @@ export const makeSessionManager = (
           data: { parts: [...parts] },
         });
 
-        const eventLog = kernelEventLog(kernel);
+        const event_log = kernelEventLog(kernel);
         const approvals = kernelApprovalGateway(kernel);
         const emitLive = kernelEmitLive(kernel);
 
         yield* runTurn(sessionId, {
-          eventLog,
+          event_log,
           provider: infra.provider,
           tools: infra.tools,
           approvals,
@@ -217,7 +211,7 @@ export const makeSessionManager = (
                   retryable,
                 },
               });
-            }),
+            })
           ),
           Effect.ensuring(
             Effect.gen(function* () {
@@ -231,7 +225,7 @@ export const makeSessionManager = (
           // background fiber silently.
           Effect.sync(() => {
             console.error(`runAgentTurn(${sessionId}) crashed:`, cause);
-          }),
+          })
         ),
       );
 

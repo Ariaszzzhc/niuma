@@ -4,11 +4,11 @@ import {
   type ApprovalResolvedData,
   type LiveEvent,
   type RecordedEvent,
-  type SseEvent,
   SCHEMA_VERSION,
+  type SseEvent,
 } from "@niuma/schema";
-import { ApprovalRegistry, makeApprovalRegistry } from "./eventBus.ts";
-import type { EventLog } from "./eventLog.ts";
+import { type ApprovalRegistry, makeApprovalRegistry } from "./event_bus.ts";
+import type { EventLog } from "./event_log.ts";
 import type { Projection } from "./projection.ts";
 
 const defaultNow = (): number => Date.now();
@@ -39,7 +39,7 @@ export interface Kernel {
   readonly live: (event: LiveEvent) => Effect.Effect<void, never, never>;
   readonly lastSeq: (sessionId: string) => Effect.Effect<number, never, never>;
   readonly projection: () => Effect.Effect<Projection, never, never>;
-  readonly eventLog: () => Effect.Effect<EventLog, never, never>;
+  readonly event_log: () => Effect.Effect<EventLog, never, never>;
   readonly resolveApproval: (
     approvalId: string,
     decision: ApprovalResolvedData,
@@ -53,6 +53,7 @@ export interface Kernel {
   readonly shutdown: () => Effect.Effect<void, never, never>;
 }
 
+// deno-lint-ignore no-slow-types
 export const Kernel = Context.Service<Kernel, Kernel>()(
   "@niuma/server/Kernel",
 );
@@ -65,7 +66,7 @@ const newApprovalId = (): string => {
 };
 
 export interface KernelDeps {
-  readonly eventLog: EventLog;
+  readonly event_log: EventLog;
   readonly projection: Projection;
   readonly approvals?: ApprovalRegistry;
   readonly now?: () => number;
@@ -89,7 +90,7 @@ export const makeKernel = (
       (yield* makeApprovalRegistry());
     const seqBySession = yield* Ref.make(new Map<string, number>());
     // Track which sessions we've already hydrated from the JSONL so we only
-    // touch eventLog.lastSeq once per session per process.
+    // touch event_log.lastSeq once per session per process.
     const hydrated = yield* Ref.make(new Set<string>());
 
     // Hydrate the in-memory seq counter for `sessionId` from the JSONL tail.
@@ -105,11 +106,9 @@ export const makeKernel = (
           return (yield* Ref.get(seqBySession)).get(sessionId) ?? 0;
         }
         const last = yield* Effect.promise(() =>
-          deps.eventLog.lastSeq(sessionId)
+          deps.event_log.lastSeq(sessionId)
         );
-        yield* Ref.update(seqBySession, (m) =>
-          new Map(m).set(sessionId, last)
-        );
+        yield* Ref.update(seqBySession, (m) => new Map(m).set(sessionId, last));
         yield* Ref.update(hydrated, (s) => new Set(s).add(sessionId));
         return last;
       });
@@ -135,7 +134,7 @@ export const makeKernel = (
         const ts = input.ts ?? now();
         const seq = yield* nextSeq(input.sessionId);
         const event = { ...input, seq, ts } as RecordedEvent;
-        yield* Effect.promise(() => deps.eventLog.append(event));
+        yield* Effect.promise(() => deps.event_log.append(event));
         yield* Effect.promise(() => deps.projection.apply(event)).pipe(
           Effect.catchCause((cause) =>
             Effect.sync(() => {
@@ -150,19 +149,16 @@ export const makeKernel = (
 
     const replay: Kernel["replay"] = (sessionId, fromSeq = 0) =>
       Stream.fromAsyncIterable(
-        deps.eventLog.replay(sessionId, fromSeq),
+        deps.event_log.replay(sessionId, fromSeq),
         (e): never => {
           throw e;
         },
       );
 
     const subscribe: Kernel["subscribe"] = (sessionId, fromCursor = 0) =>
-      bus
-        ? bus.subscribe(sessionId, fromCursor)
-        : Stream.empty;
+      bus ? bus.subscribe(sessionId, fromCursor) : Stream.empty;
 
-    const live: Kernel["live"] = (event) =>
-      bus ? bus.live(event) : Effect.void;
+    const live: Kernel["live"] = (event) => bus ? bus.live(event) : Effect.void;
 
     const lastSeq: Kernel["lastSeq"] = (sessionId) =>
       Effect.gen(function* () {
@@ -173,7 +169,7 @@ export const makeKernel = (
 
     const projection: Kernel["projection"] = () =>
       Effect.succeed(deps.projection);
-    const eventLog: Kernel["eventLog"] = () => Effect.succeed(deps.eventLog);
+    const event_log: Kernel["event_log"] = () => Effect.succeed(deps.event_log);
 
     const resolveApproval: Kernel["resolveApproval"] = (approvalId, decision) =>
       registry.resolve(approvalId, decision);
@@ -217,7 +213,7 @@ export const makeKernel = (
       live,
       lastSeq,
       projection,
-      eventLog,
+      event_log,
       resolveApproval,
       askForApproval,
       shutdown,
@@ -226,7 +222,6 @@ export const makeKernel = (
 
 export const KernelLive = (
   deps: KernelDeps,
-): Layer.Layer<Kernel, never, never> =>
-  Layer.effect(Kernel, makeKernel(deps));
+): Layer.Layer<Kernel, never, never> => Layer.effect(Kernel, makeKernel(deps));
 
 export { SCHEMA_VERSION };

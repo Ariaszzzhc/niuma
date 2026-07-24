@@ -35,9 +35,14 @@ import type {
   InputEvent,
   Program as ContractProgram,
   StyledLine,
-} from "./binding-contract.ts";
+} from "./binding_contract.ts";
 import { Frame } from "./frame.ts";
-import { SYNC_BEGIN, SYNC_END, Terminal, type TerminalSize } from "./terminal.ts";
+import {
+  SYNC_BEGIN,
+  SYNC_END,
+  type Terminal,
+  type TerminalSize,
+} from "./terminal.ts";
 
 // ---------------------------------------------------------------------------
 // Built-in messages the loop emits. A program's `Msg` should be a union that
@@ -100,7 +105,9 @@ export interface Program<Model, Msg> extends ContractProgram<Model, Msg> {
 }
 
 /** Lift a plain async function into the `Cmd` shape (`null`/`undefined` -> no msg). */
-export const cmd = <Msg>(fn: () => Promise<Msg | null | undefined>): Cmd<Msg> => ({
+export const cmd = <Msg>(
+  fn: () => Promise<Msg | null | undefined>,
+): Cmd<Msg> => ({
   run: async () => (await fn()) ?? undefined,
 });
 
@@ -109,7 +116,10 @@ export const cmd = <Msg>(fn: () => Promise<Msg | null | undefined>): Cmd<Msg> =>
  * on each fire. Use it for spinners / clocks / polling. Cleanup clears the
  * interval when the loop quits.
  */
-export const tick = <Msg>(intervalMs: number, msgFn: (n: number) => Msg): Sub<Msg> => ({
+export const tick = <Msg>(
+  intervalMs: number,
+  msgFn: (n: number) => Msg,
+): Sub<Msg> => ({
   subscribe: (emit) => {
     let n = 0;
     const id = setInterval(() => emit(msgFn(++n)), intervalMs);
@@ -297,7 +307,9 @@ export const run = async <Model, Msg>(
   const inputPump = (async (): Promise<void> => {
     try {
       for await (const ev of terminal.events) {
-        queue.push({ type: "tuikit:key", event: ev as InputEvent } as unknown as Msg);
+        queue.push(
+          { type: "tuikit:key", event: ev as InputEvent } as unknown as Msg,
+        );
         if (quit) break;
       }
     } catch {

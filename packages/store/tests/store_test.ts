@@ -1,15 +1,7 @@
-import {
-  assertEquals,
-  assertExists,
-  assertRejects,
-} from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertExists, assertRejects } from "@std/assert";
 import { join } from "@std/path";
-import { type RecordedEvent } from "@niuma/schema";
-import {
-  ensureDataDirSync,
-  EventLog,
-  Projection,
-} from "@niuma/store";
+import type { RecordedEvent } from "@niuma/schema";
+import { ensureDataDirSync, EventLog, Projection } from "@niuma/store";
 
 async function tmpDir(): Promise<string> {
   return await Deno.makeTempDir({ prefix: "niuma-store-" });
@@ -96,7 +88,10 @@ Deno.test("replay tolerates truncated last line", async () => {
     const filePath = join(dir, "sessions", `${sid}.jsonl`);
     // Write good line terminated with "\n", then a partial line with NO
     // trailing newline — this is the crash signature we tolerate.
-    await Deno.writeTextFile(filePath, `${good}\n${good.slice(0, good.length - 5)}`);
+    await Deno.writeTextFile(
+      filePath,
+      `${good}\n${good.slice(0, good.length - 5)}`,
+    );
 
     const events = await collect(EventLog.replay(sid, dir));
     assertEquals(events.length, 1);
@@ -214,7 +209,10 @@ Deno.test("Projection tracks session lifecycle", async () => {
         ts: 4,
         sessionId: sid,
         type: "turn.completed",
-        data: { stopReason: "stop", usage: { inputTokens: 5, outputTokens: 7 } },
+        data: {
+          stopReason: "stop",
+          usage: { inputTokens: 5, outputTokens: 7 },
+        },
       },
     ];
 

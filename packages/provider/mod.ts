@@ -14,18 +14,23 @@ export {
   AuthFailed,
   ContextOverflow,
   InvalidResponse,
+  isFatal,
+  isRetryable,
   Network,
   Overloaded,
   RateLimited,
-  isFatal,
-  isRetryable,
 } from "./src/errors.ts";
 export type { ProviderError } from "./src/errors.ts";
 
-export { Provider, provideAdapter } from "./src/contract.ts";
+export { provideAdapter, Provider } from "./src/contract.ts";
 export type { ProviderAdapter } from "./src/contract.ts";
 
-export { providerRetrySchedule, retryOptions, withRetry, STREAM_MAX_RETRIES } from "./src/retry.ts";
+export {
+  providerRetrySchedule,
+  retryOptions,
+  STREAM_MAX_RETRIES,
+  withRetry,
+} from "./src/retry.ts";
 
 export {
   messagesToOpenAI,

@@ -1,8 +1,8 @@
 import { join } from "@std/path";
 import {
-  RecordedEvent,
-  SCHEMA_VERSION,
   parseEventLine,
+  type RecordedEvent,
+  SCHEMA_VERSION,
   stringifyEventLine,
 } from "@niuma/schema";
 import { log } from "./logger.ts";
@@ -33,8 +33,7 @@ const ensureDir = async (dir: string): Promise<void> => {
 const pathFor = (dir: string, sessionId: string): string =>
   join(dir, `${sessionId}.jsonl`);
 
-const isSafeId = (id: string): boolean =>
-  /^[a-zA-Z0-9_-]{1,128}$/.test(id);
+const isSafeId = (id: string): boolean => /^[a-zA-Z0-9_-]{1,128}$/.test(id);
 
 export const makeEventLog = (opts: EventLogOptions): EventLog => {
   const { sessionsDir } = opts;
@@ -89,7 +88,9 @@ export const makeEventLog = (opts: EventLogOptions): EventLog => {
             const evt = parseEventLine(raw_line);
             if (evt.seq >= fromSeq) yield evt;
           } catch (e) {
-            logger.warn("malformed jsonl line skipped: {err}", { err: String(e) });
+            logger.warn("malformed jsonl line skipped: {err}", {
+              err: String(e),
+            });
           }
         }
       }

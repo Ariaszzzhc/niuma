@@ -12,8 +12,8 @@
 // absent, mirroring ffi_test.ts.
 // ===========================================================================
 
-import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
-import type { StyledLine, TerminalCaps } from "../src/binding-contract.ts";
+import { assert, assertEquals } from "@std/assert";
+import type { StyledLine, TerminalCaps } from "../src/binding_contract.ts";
 import { openLib } from "../src/ffi.ts";
 import { type LoopMsg, type Program, run } from "../src/loop.ts";
 import type { Terminal, TerminalSize } from "../src/terminal.ts";
@@ -35,7 +35,9 @@ const CAPS: TerminalCaps = {
 
 Deno.test("loop: headless smoke — first paint, coalescing, final flush", async () => {
   if (!LIB_OK) {
-    console.warn("SKIP loop smoke — native cdylib unavailable (cargo build --release)");
+    console.warn(
+      "SKIP loop smoke — native cdylib unavailable (cargo build --release)",
+    );
     return;
   }
   const writes: Uint8Array[] = [];
@@ -85,7 +87,8 @@ Deno.test("loop: headless smoke — first paint, coalescing, final flush", async
       return [model];
     },
     shouldQuit: (_model, msg) =>
-      msg.type === "tuikit:key" && msg.event.kind === "text" && msg.event.text === "q",
+      msg.type === "tuikit:key" && msg.event.kind === "text" &&
+      msg.event.text === "q",
     view: (model): readonly StyledLine[] => [
       { spans: [{ text: `keys=${model.keys.join("")}`, style: {} }] },
     ],

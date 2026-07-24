@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { niumaPaths } from "../mod.ts";
 
@@ -24,7 +24,12 @@ const withEnv = async <T>(
 
 Deno.test("niumaPaths: defaults under HOME", async () => {
   await withEnv(
-    { NIUMA_DATA_DIR: undefined, NIUMA_CONFIG: undefined },
+    {
+      NIUMA_DATA_DIR: undefined,
+      NIUMA_CONFIG: undefined,
+      XDG_DATA_HOME: undefined,
+      XDG_CONFIG_HOME: undefined,
+    },
     () => {
       const home = Deno.env.get("HOME")!;
       const p = niumaPaths();

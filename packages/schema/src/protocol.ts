@@ -1,50 +1,66 @@
 import { Schema } from "effect";
-import { Part, StopReason } from "./domain.ts";
+import { StopReason } from "./domain.ts";
 import { ApprovalDecisionType } from "./permission.ts";
 import { LiveEvent, RecordedEvent } from "./event.ts";
 
 // ---- Session lifecycle ----
 
-export const CreateSessionReq = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const CreateSessionReq_ = Schema.Struct({
   workspace: Schema.optional(Schema.String),
   model: Schema.optional(Schema.String),
 });
-export type CreateSessionReq = Schema.Schema.Type<typeof CreateSessionReq>;
+export type CreateSessionReq = Schema.Schema.Type<typeof CreateSessionReq_>;
+export const CreateSessionReq: Schema.Codec<CreateSessionReq> =
+  CreateSessionReq_;
 
-export const CreateSessionRes = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const CreateSessionRes_ = Schema.Struct({
   sessionId: Schema.String,
   workspace: Schema.String,
   model: Schema.String,
 });
-export type CreateSessionRes = Schema.Schema.Type<typeof CreateSessionRes>;
+export type CreateSessionRes = Schema.Schema.Type<typeof CreateSessionRes_>;
+export const CreateSessionRes: Schema.Codec<CreateSessionRes> =
+  CreateSessionRes_;
 
-export const PromptReq = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const PromptReq_ = Schema.Struct({
   text: Schema.String,
 });
-export type PromptReq = Schema.Schema.Type<typeof PromptReq>;
+export type PromptReq = Schema.Schema.Type<typeof PromptReq_>;
+export const PromptReq: Schema.Codec<PromptReq> = PromptReq_;
 
-export const PromptRes = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const PromptRes_ = Schema.Struct({
   accepted: Schema.Boolean,
 });
-export type PromptRes = Schema.Schema.Type<typeof PromptRes>;
+export type PromptRes = Schema.Schema.Type<typeof PromptRes_>;
+export const PromptRes: Schema.Codec<PromptRes> = PromptRes_;
 
-export const ApprovalReplyReq = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const ApprovalReplyReq_ = Schema.Struct({
   decision: ApprovalDecisionType,
   feedback: Schema.optional(Schema.String),
 });
-export type ApprovalReplyReq = Schema.Schema.Type<typeof ApprovalReplyReq>;
+export type ApprovalReplyReq = Schema.Schema.Type<typeof ApprovalReplyReq_>;
+export const ApprovalReplyReq: Schema.Codec<ApprovalReplyReq> =
+  ApprovalReplyReq_;
 
 // ---- Projection read model (SQLite-backed; rebuildable from the event log) ----
 
-export const SessionStatus = Schema.Literals([
+// deno-lint-ignore no-slow-types
+const SessionStatus_ = Schema.Literals([
   "idle",
   "running",
   "waiting_approval",
   "aborted",
 ]);
-export type SessionStatus = Schema.Schema.Type<typeof SessionStatus>;
+export type SessionStatus = Schema.Schema.Type<typeof SessionStatus_>;
+export const SessionStatus: Schema.Codec<SessionStatus> = SessionStatus_;
 
-export const SessionInfo = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const SessionInfo_ = Schema.Struct({
   sessionId: Schema.String,
   workspace: Schema.String,
   model: Schema.String,
@@ -57,21 +73,26 @@ export const SessionInfo = Schema.Struct({
   // Populated by the projection from the first user.message event.
   title: Schema.optional(Schema.String),
 });
-export type SessionInfo = Schema.Schema.Type<typeof SessionInfo>;
+export type SessionInfo = Schema.Schema.Type<typeof SessionInfo_>;
+export const SessionInfo: Schema.Codec<SessionInfo> = SessionInfo_;
 
 // ---- Event reads & SSE ----
 
-export const EventPage = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const EventPage_ = Schema.Struct({
   events: Schema.Array(RecordedEvent),
   nextCursor: Schema.optional(Schema.Number),
 });
-export type EventPage = Schema.Schema.Type<typeof EventPage>;
+export type EventPage = Schema.Schema.Type<typeof EventPage_>;
+export const EventPage: Schema.Codec<EventPage> = EventPage_;
 
 // One SSE frame. `cursor` is the log seq the consumer should resume from
 // (the event's own seq for recorded events, or the last applied seq for
 // live-only events which have no seq of their own).
-export const SseEvent = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const SseEvent_ = Schema.Struct({
   cursor: Schema.Number,
   event: Schema.Union([RecordedEvent, LiveEvent]),
 });
-export type SseEvent = Schema.Schema.Type<typeof SseEvent>;
+export type SseEvent = Schema.Schema.Type<typeof SseEvent_>;
+export const SseEvent: Schema.Codec<SseEvent> = SseEvent_;

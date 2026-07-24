@@ -1,7 +1,7 @@
 // Server-worker bootstrap, shared by the one-shot and interactive frontends.
 //
 // Both frontends drive the exact same in-process server: a Deno Worker running
-// `server-worker.ts` (Hono app + Effect runtime + agent loop), reached through
+// `server_worker.ts` (Hono app + Effect runtime + agent loop), reached through
 // the MessageChannel fetch tunnel defined in `tunnel.ts`. The wiring is fiddly
 // and identical for both callers, so it lives here:
 //
@@ -18,7 +18,7 @@
 
 import { setupTunnel, type TunnelFetch } from "./tunnel.ts";
 
-const WORKER_URL = new URL("./server-worker.ts", import.meta.url);
+const WORKER_URL = new URL("./server_worker.ts", import.meta.url);
 
 export interface SpawnServerWorkerOpts {
   /** Smoke-harness only: inject the scripted network-free provider. */

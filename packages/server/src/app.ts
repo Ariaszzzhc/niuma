@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context as HonoContext } from "hono";
 import { Layer, ManagedRuntime } from "effect";
-import { VERSION } from "@niuma/config";
+import { SERVER_VERSION } from "./version.ts";
 import { Kernel } from "./kernel.ts";
 import { SessionManager } from "./session.ts";
 import { bootstrap, type BootstrapResult } from "./bootstrap.ts";
@@ -39,8 +39,9 @@ export const createServerApp = async (
   const boot = deps.bootstrap ?? await bootstrap();
   // Compose the layers so Kernel is built first, then SessionManager (which
   // requires Kernel). provideMerge keeps both services in the output scope.
-  const layer: Layer.Layer<Kernel | SessionManager, never, never> = deps.layer ??
-    Layer.provideMerge(boot.sessionLayer, boot.kernelLayer);
+  const layer: Layer.Layer<Kernel | SessionManager, never, never> =
+    deps.layer ??
+      Layer.provideMerge(boot.sessionLayer, boot.kernelLayer);
 
   const runtime = ManagedRuntime.make(layer);
   const kernel = await runtime.runPromise(Kernel);
@@ -83,8 +84,7 @@ export const createServerApp = async (
 
   // ---- routes ----
 
-  app.get("/health", (c) =>
-    c.json({ ok: true, version: VERSION }));
+  app.get("/health", (c) => c.json({ ok: true, version: SERVER_VERSION }));
 
   app.post("/sessions", async (c) => {
     const raw = await safeJson(c);
@@ -144,7 +144,8 @@ export const createServerApp = async (
         },
       },
       404,
-    ));
+    )
+  );
 
   return { app, kernel, sessionManager, runtime, bootstrap: boot };
 };

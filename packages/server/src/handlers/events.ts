@@ -1,8 +1,8 @@
 import type { Context as HonoContext } from "hono";
-import { streamSSE, type SSEStreamingApi } from "hono/streaming";
-import { Effect, ManagedRuntime, Stream } from "effect";
+import { type SSEStreamingApi, streamSSE } from "hono/streaming";
+import { Effect, type ManagedRuntime, Stream } from "effect";
 import { Kernel } from "../kernel.ts";
-import { SessionManager } from "../session.ts";
+import type { SessionManager } from "../session.ts";
 
 const HEARTBEAT_MS = 15_000;
 
@@ -13,16 +13,18 @@ type Rt = ManagedRuntime.ManagedRuntime<R, unknown>;
 // kernel; once it exhausts, we hand off to kernel.subscribe(sessionId,
 // lastSeq) — a PubSub-backed stream that stays open until the request is
 // aborted. The 15s heartbeat interleaves with live frames via setInterval.
-export const handleEvents = async (
+export const handleEvents = (
   c: HonoContext,
   runtime: Rt,
-): Promise<Response> => {
+): Response | Promise<Response> => {
   const sid = c.req.query("session") ?? "";
   const cursorParam = c.req.query("cursor");
 
   if (!sid) {
     return c.json(
-      { error: { code: "bad_request", message: "session query param required" } },
+      {
+        error: { code: "bad_request", message: "session query param required" },
+      },
       400,
     );
   }

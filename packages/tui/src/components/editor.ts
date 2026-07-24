@@ -36,10 +36,10 @@
 import {
   type Color,
   type InputEvent,
-  type StyledLine,
-  type StyledSpan,
   matchesKey,
   stringWidth,
+  type StyledLine,
+  type StyledSpan,
   truncateToWidth,
 } from "@niuma/tuikit";
 
@@ -95,7 +95,8 @@ export const editorIsEmpty = (state: EditorState): boolean =>
   state.lines.length === 1 && state.lines[0] === "";
 
 /** Flatten the editor buffer to a single string (newline-joined). */
-export const editorText = (state: EditorState): string => state.lines.join("\n");
+export const editorText = (state: EditorState): string =>
+  state.lines.join("\n");
 
 // ---------------------------------------------------------------------------
 // Internal helpers (pure)
@@ -207,7 +208,12 @@ const moveLeft = (state: EditorState): EditorState => {
   const { lines, cursor } = state;
   const { row, col } = cursor;
   if (col > 0) return { ...state, cursor: { row, col: col - 1 } };
-  if (row > 0) return { ...state, cursor: { row: row - 1, col: graphemeCount(lines[row - 1]) } };
+  if (row > 0) {
+    return {
+      ...state,
+      cursor: { row: row - 1, col: graphemeCount(lines[row - 1]) },
+    };
+  }
   return state;
 };
 
@@ -217,7 +223,9 @@ const moveRight = (state: EditorState): EditorState => {
   if (col < graphemeCount(lines[row])) {
     return { ...state, cursor: { row, col: col + 1 } };
   }
-  if (row < lines.length - 1) return { ...state, cursor: { row: row + 1, col: 0 } };
+  if (row < lines.length - 1) {
+    return { ...state, cursor: { row: row + 1, col: 0 } };
+  }
   return state;
 };
 
@@ -225,14 +233,20 @@ const moveUp = (state: EditorState): EditorState => {
   const { lines, cursor } = state;
   if (cursor.row === 0) return state;
   const row = cursor.row - 1;
-  return { ...state, cursor: { row, col: Math.min(cursor.col, graphemeCount(lines[row])) } };
+  return {
+    ...state,
+    cursor: { row, col: Math.min(cursor.col, graphemeCount(lines[row])) },
+  };
 };
 
 const moveDown = (state: EditorState): EditorState => {
   const { lines, cursor } = state;
   if (cursor.row === lines.length - 1) return state;
   const row = cursor.row + 1;
-  return { ...state, cursor: { row, col: Math.min(cursor.col, graphemeCount(lines[row])) } };
+  return {
+    ...state,
+    cursor: { row, col: Math.min(cursor.col, graphemeCount(lines[row])) },
+  };
 };
 
 // -- flat-position word jumps (grapheme-cluster based; "\n" is a separator
@@ -248,7 +262,9 @@ const toFlat = (state: EditorState): { clusters: string[]; pos: number } => {
     for (const g of graphemes(state.lines[i])) clusters.push(g);
   }
   let pos = 0;
-  for (let i = 0; i < state.cursor.row; i++) pos += graphemeCount(state.lines[i]) + 1;
+  for (let i = 0; i < state.cursor.row; i++) {
+    pos += graphemeCount(state.lines[i]) + 1;
+  }
   pos += state.cursor.col;
   return { clusters, pos };
 };
@@ -344,7 +360,10 @@ const moveLineStart = (state: EditorState): EditorState => ({
 
 const moveLineEnd = (state: EditorState): EditorState => ({
   ...state,
-  cursor: { ...state.cursor, col: graphemeCount(state.lines[state.cursor.row]) },
+  cursor: {
+    ...state.cursor,
+    col: graphemeCount(state.lines[state.cursor.row]),
+  },
 });
 
 // -- history ----------------------------------------------------------------
@@ -461,7 +480,10 @@ export const editorReducer = (
       return [ev.mods.alt ? moveWordRight(state) : moveRight(state), undefined];
     case "up":
       // multi-line buffer: navigate rows; single-line: recall history.
-      return [state.lines.length > 1 ? moveUp(state) : historyUp(state), undefined];
+      return [
+        state.lines.length > 1 ? moveUp(state) : historyUp(state),
+        undefined,
+      ];
     case "down":
       return [
         state.lines.length > 1 ? moveDown(state) : historyDown(state),
@@ -487,7 +509,11 @@ const BOTTOM_RIGHT = "╯";
 const HBAR = "─";
 const VBAR = "│";
 
-const span = (text: string, fg: Color, extra: { reverse?: boolean; dim?: boolean } = {}): StyledSpan => ({
+const span = (
+  text: string,
+  fg: Color,
+  extra: { reverse?: boolean; dim?: boolean } = {},
+): StyledSpan => ({
   text,
   style: { fg, ...extra },
 });

@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assert, assertEquals } from "@std/assert";
 import { Effect } from "effect";
 import {
   applyPatchTool,
@@ -189,7 +189,7 @@ Deno.test("update_plan persists and rejects >1 in_progress", async () => {
 
 Deno.test("question routes through ctx.ask and rejects with feedback", async () => {
   const c = mkCtx({
-    askImpl: async () => ({ decision: "reject", feedback: "skip it" }),
+    askImpl: () => Promise.resolve({ decision: "reject", feedback: "skip it" }),
   });
   const out = await questionTool.execute({ question: "continue?" }, c);
   assertEquals(out.isError, true);
@@ -198,10 +198,11 @@ Deno.test("question routes through ctx.ask and rejects with feedback", async () 
 
 Deno.test("spawn_subagent wires ctx.spawnSubagent", async () => {
   const c = mkCtx({
-    spawnImpl: async (req) => ({
-      sessionId: "child-1",
-      text: `done: ${req.prompt}`,
-    }),
+    spawnImpl: (req) =>
+      Promise.resolve({
+        sessionId: "child-1",
+        text: `done: ${req.prompt}`,
+      }),
   });
   const out = await spawnSubagentTool.execute(
     { prompt: "find the answer" },
@@ -213,9 +214,9 @@ Deno.test("spawn_subagent wires ctx.spawnSubagent", async () => {
 Deno.test("scheduler runs non-conflicting reads in parallel and preserves order", async () => {
   const results = await schedule(
     [
-      { index: 0, id: "a", accesses: {}, run: async () => "A" },
-      { index: 1, id: "b", accesses: {}, run: async () => "B" },
-      { index: 2, id: "c", accesses: {}, run: async () => "C" },
+      { index: 0, id: "a", accesses: {}, run: () => Promise.resolve("A") },
+      { index: 1, id: "b", accesses: {}, run: () => Promise.resolve("B") },
+      { index: 2, id: "c", accesses: {}, run: () => Promise.resolve("C") },
     ],
     { signal: new AbortController().signal },
   );
@@ -259,8 +260,7 @@ Deno.test("scheduler queues conflicting writes", async () => {
 });
 
 Deno.test({
-  name:
-    "scheduler aborts in-flight jobs and synthesises error after grace",
+  name: "scheduler aborts in-flight jobs and synthesises error after grace",
   // The stub run() deliberately ignores the abort signal (simulating a
   // misbehaving tool) and schedules a 5s timer that the synthetic-error
   // path never cleans up — that's the whole point of the grace mechanism.
@@ -316,8 +316,8 @@ Deno.test("matchWildcard handles * and ?", () => {
 Deno.test("pipeline runs prepare/authorize/schedule/execute end-to-end", async () => {
   const reg = new ToolRegistry();
   const engine: PermissionEngine = {
-    evaluate: async () => ({ decision: "allow" }),
-    remember: async () => {},
+    evaluate: () => Promise.resolve({ decision: "allow" }),
+    remember: () => Promise.resolve(),
     patternFor: (n) => n,
   };
   const tmp = await Deno.makeTempDir();
@@ -341,9 +341,9 @@ Deno.test("pipeline surfaces Ask routing via ctx.ask", async () => {
   const asks: ApprovalInfo[] = [];
   const c = mkCtx({
     cwd: Deno.cwd(),
-    askImpl: async (info) => {
+    askImpl: (info) => {
       asks.push(info);
-      return { decision: "once" };
+      return Promise.resolve({ decision: "once" });
     },
   });
   const out = await runPipeline(
@@ -362,8 +362,8 @@ Deno.test("pipeline surfaces Ask routing via ctx.ask", async () => {
 Deno.test("pipeline surfaces unknown tool as isError", async () => {
   const reg = new ToolRegistry();
   const engine: PermissionEngine = {
-    evaluate: async () => ({ decision: "allow" }),
-    remember: async () => {},
+    evaluate: () => Promise.resolve({ decision: "allow" }),
+    remember: () => Promise.resolve(),
     patternFor: (n) => n,
   };
   const out = await runPipeline(
@@ -428,8 +428,8 @@ Deno.test("read-only mode drops mutating tools from the registry defs", () => {
 Deno.test("pipeline read-only mode short-circuits mutating tools", async () => {
   const reg = new ToolRegistry();
   const engine: PermissionEngine = {
-    evaluate: async () => ({ decision: "allow" }),
-    remember: async () => {},
+    evaluate: () => Promise.resolve({ decision: "allow" }),
+    remember: () => Promise.resolve(),
     patternFor: (n) => n,
   };
   const tmp = await Deno.makeTempDir();
@@ -474,9 +474,9 @@ Deno.test("pipeline forces Ask when a path escapes the workspace", async () => {
       engine,
       ctx: mkCtx({
         cwd: tmp,
-        askImpl: async (info) => {
+        askImpl: (info) => {
           asks.push(info);
-          return { decision: "reject", feedback: "no" };
+          return Promise.resolve({ decision: "reject", feedback: "no" });
         },
       }),
       workspaceRoot: tmp,
@@ -491,13 +491,17 @@ Deno.test("pipeline forces Ask when a path escapes the workspace", async () => {
 Deno.test("pipeline records durationMs and callId on every result", async () => {
   const reg = new ToolRegistry();
   const engine: PermissionEngine = {
-    evaluate: async () => ({ decision: "allow" }),
-    remember: async () => {},
+    evaluate: () => Promise.resolve({ decision: "allow" }),
+    remember: () => Promise.resolve(),
     patternFor: (n) => n,
   };
   const tmp = await Deno.makeTempDir();
   const out = await runPipeline(
-    [{ callId: "c-xyz", name: "write", input: { path: "y.txt", content: "z" } }],
+    [{
+      callId: "c-xyz",
+      name: "write",
+      input: { path: "y.txt", content: "z" },
+    }],
     {
       tools: new Map(reg.all().map((t) => [t.name, t])),
       engine,
@@ -645,7 +649,7 @@ function mkCtx(overrides: MkOpts = {}): ToolCtx {
     cwd: overrides.cwd ?? Deno.cwd(),
     sessionId: "test-session",
     signal: new AbortController().signal,
-    ask: overrides.askImpl ?? (async () => ({ decision: "once" })),
+    ask: overrides.askImpl ?? (() => Promise.resolve({ decision: "once" })),
     spawnSubagent: overrides.spawnImpl,
   };
 }

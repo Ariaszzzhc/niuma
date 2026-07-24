@@ -134,12 +134,16 @@ const main = async (): Promise<void> => {
 
   const text = await Deno.readTextFile(newest);
   const lines = text.split("\n").filter((l) => l.length > 0);
-  const events: Array<{ type: string; sessionId?: string; data?: unknown }> = [];
+  const events: Array<{ type: string; sessionId?: string; data?: unknown }> =
+    [];
   for (const line of lines) {
     try {
       events.push(JSON.parse(line));
     } catch (e) {
-      fail("jsonl", `non-JSON line in ${newest}: ${line} (${(e as Error).message})`);
+      fail(
+        "jsonl",
+        `non-JSON line in ${newest}: ${line} (${(e as Error).message})`,
+      );
     }
   }
   const types = new Set(events.map((e) => e.type));
@@ -164,7 +168,9 @@ const main = async (): Promise<void> => {
     fail("jsonl", "session.created event had no sessionId");
   }
   console.error(`[smoke] session id: ${sessionId}`);
-  console.error(`[smoke] event types present: ${Array.from(types).sort().join(", ")}`);
+  console.error(
+    `[smoke] event types present: ${Array.from(types).sort().join(", ")}`,
+  );
 
   // ---- 6b. Verify tool result content — read fetched the README, bash ran echo. ----
   // Both checks prove the pipeline actually executed the tool bodies (not just
@@ -180,8 +186,12 @@ const main = async (): Promise<void> => {
       `expected >=2 tool.result events, got ${toolResults.length}`,
     );
   }
-  const readResult = toolResults.find((r) => r.data.callId === "call_mock_read");
-  const bashResult = toolResults.find((r) => r.data.callId === "call_mock_bash");
+  const readResult = toolResults.find((r) =>
+    r.data.callId === "call_mock_read"
+  );
+  const bashResult = toolResults.find((r) =>
+    r.data.callId === "call_mock_bash"
+  );
   if (!readResult) fail("jsonl", "missing tool.result for call_mock_read");
   if (!bashResult) fail("jsonl", "missing tool.result for call_mock_bash");
   const readContent = stringifyContent(readResult!.data.content);
@@ -215,10 +225,12 @@ const main = async (): Promise<void> => {
   }
   try {
     const row = db!
-      .prepare("SELECT session_id, workspace, status FROM sessions WHERE session_id = ?")
+      .prepare(
+        "SELECT session_id, workspace, status FROM sessions WHERE session_id = ?",
+      )
       .get(sessionId!) as
-      | { session_id: string; workspace: string; status: string }
-      | undefined;
+        | { session_id: string; workspace: string; status: string }
+        | undefined;
     if (!row) {
       fail("db", `no row in sessions for sessionId=${sessionId}`);
     }
@@ -266,7 +278,8 @@ const stringifyContent = (content: unknown): string => {
   if (Array.isArray(content)) {
     return content
       .map((b): string =>
-        typeof b === "object" && b !== null && typeof (b as { text?: unknown }).text === "string"
+        typeof b === "object" && b !== null &&
+          typeof (b as { text?: unknown }).text === "string"
           ? (b as { text: string }).text
           : String(b)
       )

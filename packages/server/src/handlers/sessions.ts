@@ -1,11 +1,11 @@
 import {
   ApprovalReplyReq,
   CreateSessionReq,
+  decode,
   PromptReq,
   type SessionInfo,
-  decode,
 } from "@niuma/schema";
-import { Effect, Exit, ManagedRuntime, Stream } from "effect";
+import { Effect, Exit, type ManagedRuntime, Stream } from "effect";
 import { Kernel } from "../kernel.ts";
 import { SessionManager } from "../session.ts";
 import { httpError } from "../error.ts";
@@ -34,7 +34,7 @@ export interface Handlers {
   readonly history: (
     id: string,
   ) => Promise<{ events: ReadonlyArray<unknown> }>;
-};
+}
 
 const runEffect = async <A>(
   runtime: Rt,
@@ -72,7 +72,7 @@ const collectReplay = (
 export const makeHandlers = (
   runtime: Rt,
 ): Handlers => ({
-  createSession: async (raw) => {
+  createSession: (raw) => {
     const req = decode(CreateSessionReq)(raw);
     return runEffect(
       runtime,
@@ -118,7 +118,7 @@ export const makeHandlers = (
     return { info, history };
   },
 
-  prompt: async (id, raw) => {
+  prompt: (id, raw) => {
     const req = decode(PromptReq)(raw);
     return runEffect(
       runtime,
@@ -142,7 +142,7 @@ export const makeHandlers = (
       "interrupt_failed",
     ),
 
-  approval: async (sessionId, approvalId, raw) => {
+  approval: (sessionId, approvalId, raw) => {
     const req = decode(ApprovalReplyReq)(raw);
     return runEffect(
       runtime,

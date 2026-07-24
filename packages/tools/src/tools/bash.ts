@@ -2,15 +2,17 @@ import { z } from "zod";
 import type { Tool, ToolOutput } from "../types.ts";
 import { execCapture } from "../exec.ts";
 import { toolOutput } from "../truncate.ts";
-import { zodToJsonSchema } from "../jsonSchema.ts";
+import { zodToJsonSchema } from "../json_schema.ts";
 
-export const BashInput = z.object({
+// deno-lint-ignore no-slow-types
+const BashInput_ = z.object({
   command: z.string().min(1).describe("Shell command to execute."),
   timeout_ms: z.number().int().positive().optional()
     .describe("Override the default 120s timeout."),
 });
 
-export type BashInput = z.infer<typeof BashInput>;
+export type BashInput = z.infer<typeof BashInput_>;
+export const BashInput: z.ZodType<BashInput> = BashInput_;
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -36,7 +38,9 @@ export const bashTool: Tool<BashInput> = {
     if (res.stdout) parts.push(res.stdout);
     if (res.stderr) parts.push(`[stderr]\n${res.stderr}`);
     if (res.timedOut) {
-      parts.push(`[timed out after ${input.timeout_ms ?? DEFAULT_TIMEOUT_MS}ms]`);
+      parts.push(
+        `[timed out after ${input.timeout_ms ?? DEFAULT_TIMEOUT_MS}ms]`,
+      );
     }
     if (res.aborted) {
       parts.push("[aborted]");

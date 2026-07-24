@@ -1,18 +1,22 @@
 import { z } from "zod";
 import type { Tool, ToolOutput } from "../types.ts";
 import { toolOutput } from "../truncate.ts";
-import { zodToJsonSchema } from "../jsonSchema.ts";
-import { resolvePath, PathError } from "../path.ts";
+import { zodToJsonSchema } from "../json_schema.ts";
+import { PathError, resolvePath } from "../path.ts";
 
-export const ReadInput = z.object({
+// deno-lint-ignore no-slow-types
+const ReadInput_ = z.object({
   path: z.string().min(1).describe("Absolute or workspace-relative path."),
   offset: z.number().int().nonnegative().optional()
-    .describe("1-indexed line number to start from; omit to read from the top."),
+    .describe(
+      "1-indexed line number to start from; omit to read from the top.",
+    ),
   limit: z.number().int().positive().optional()
     .describe("Max number of lines to return; default 2000."),
 });
 
-export type ReadInput = z.infer<typeof ReadInput>;
+export type ReadInput = z.infer<typeof ReadInput_>;
+export const ReadInput: z.ZodType<ReadInput> = ReadInput_;
 
 const LINE_CAP = 2000;
 const IMAGE_EXTS = new Set([
@@ -52,14 +56,21 @@ export const readTool: Tool<ReadInput> = {
     try {
       stat = await Deno.stat(resolved.abs);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, { isError: true });
+      return await toolOutput(`error: ${(e as Error).message}`, callId, {
+        isError: true,
+      });
     }
     if (!stat.isFile) {
-      return { content: `error: not a regular file: ${input.path}`, isError: true };
+      return {
+        content: `error: not a regular file: ${input.path}`,
+        isError: true,
+      };
     }
     const ext = extOf(input.path);
     if (IMAGE_EXTS.has(ext)) {
-      return { content: `[image attachment not supported in v0] (${input.path})` };
+      return {
+        content: `[image attachment not supported in v0] (${input.path})`,
+      };
     }
 
     const text = await Deno.readTextFile(resolved.abs);
@@ -68,11 +79,14 @@ export const readTool: Tool<ReadInput> = {
     const startLine = Math.max(0, (input.offset ?? 1) - 1);
     const limit = input.limit ?? LINE_CAP;
     const slice = lines.slice(startLine, startLine + limit);
-    const numbered = slice.map((l, i) => `${pad(startLine + i + 1, total)}\t${l}`);
+    const numbered = slice.map((l, i) =>
+      `${pad(startLine + i + 1, total)}\t${l}`
+    );
     let body = numbered.join("\n");
     if (startLine + limit < total) {
-      body +=
-        `\n\n[truncated at line ${startLine + limit}; ${total - (startLine + limit)} more lines — re-call with offset=${startLine + limit + 1}]`;
+      body += `\n\n[truncated at line ${startLine + limit}; ${
+        total - (startLine + limit)
+      } more lines — re-call with offset=${startLine + limit + 1}]`;
     }
     return await toolOutput(body, callId);
   },

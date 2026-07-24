@@ -1,7 +1,9 @@
 import { globToRegex } from "../src/glob.ts";
 
 function assertEquals<T>(actual: T, expected: T, msg?: string): void {
-  if (actual !== expected) throw new Error(msg ?? `assertEquals: ${actual} !== ${expected}`);
+  if (actual !== expected) {
+    throw new Error(msg ?? `assertEquals: ${actual} !== ${expected}`);
+  }
 }
 
 Deno.test("globToRegex: * matches anything including /", () => {

@@ -5,7 +5,7 @@
 // envelope into model state. It is exhaustively table-driven over every event
 // type the server emits (recorded + live), and PURE: no IO, no rendering, no
 // imports from the A-side view components. That keeps it unit-testable in
-// isolation — `reduce-event_test.ts` feeds canned event sequences and asserts
+// isolation — `reduce_event_test.ts` feeds canned event sequences and asserts
 // on the model without touching the terminal or the native lib.
 //
 // The model carries the raw conversation data (messages, streaming text, tool
@@ -144,7 +144,10 @@ const joinTextParts = (parts: unknown): string => {
   if (!Array.isArray(parts)) return "";
   const out: string[] = [];
   for (const p of parts) {
-    if (p !== null && typeof p === "object" && (p as { type?: unknown }).type === "text") {
+    if (
+      p !== null && typeof p === "object" &&
+      (p as { type?: unknown }).type === "text"
+    ) {
       const t = (p as { text?: unknown }).text;
       if (typeof t === "string") out.push(t);
     }
@@ -371,7 +374,11 @@ export const reduceEvent = (
       return {
         ...model,
         lastError: message,
-        notices: [...model.notices, { id: nextId("n"), kind: "error", text: message }],
+        notices: [...model.notices, {
+          id: nextId("n"),
+          kind: "error",
+          text: message,
+        }],
       };
     }
 
@@ -389,7 +396,11 @@ export const reduceEvent = (
         turnActive: false,
         lastStopReason: "abort",
         lastError: reason,
-        notices: [...model.notices, { id: nextId("n"), kind: "abort", text: reason }],
+        notices: [...model.notices, {
+          id: nextId("n"),
+          kind: "abort",
+          text: reason,
+        }],
       };
     }
 

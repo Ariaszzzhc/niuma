@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { Tool, ToolOutput } from "../types.ts";
 import { toolOutput } from "../truncate.ts";
-import { zodToJsonSchema } from "../jsonSchema.ts";
-import { resolvePath, PathError } from "../path.ts";
+import { zodToJsonSchema } from "../json_schema.ts";
+import { PathError, resolvePath } from "../path.ts";
 import { dirname } from "@std/path";
 
 /**
@@ -25,11 +25,15 @@ import { dirname } from "@std/path";
  *   - `*** Add File` body lines without leading `+`
  *   - missing trailing newline on the patch
  */
-export const ApplyPatchInput = z.object({
-  patch: z.string().min(1).describe("Patch body in the *** Begin Patch grammar."),
+// deno-lint-ignore no-slow-types
+const ApplyPatchInput_ = z.object({
+  patch: z.string().min(1).describe(
+    "Patch body in the *** Begin Patch grammar.",
+  ),
 });
 
-export type ApplyPatchInput = z.infer<typeof ApplyPatchInput>;
+export type ApplyPatchInput = z.infer<typeof ApplyPatchInput_>;
+export const ApplyPatchInput: z.ZodType<ApplyPatchInput> = ApplyPatchInput_;
 
 type Hunk = {
   kind: "add" | "update" | "delete";
@@ -73,12 +77,18 @@ export const applyPatchTool: Tool<ApplyPatchInput> = {
     try {
       hunks = parsePatch(input.patch);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, { isError: true });
-    }
-    if (hunks.length === 0) {
-      return await toolOutput("error: patch contained no file operations", callId, {
+      return await toolOutput(`error: ${(e as Error).message}`, callId, {
         isError: true,
       });
+    }
+    if (hunks.length === 0) {
+      return await toolOutput(
+        "error: patch contained no file operations",
+        callId,
+        {
+          isError: true,
+        },
+      );
     }
 
     const summary: string[] = [];
@@ -88,7 +98,9 @@ export const applyPatchTool: Tool<ApplyPatchInput> = {
         resolved = resolvePath(ctx.cwd, h.path);
       } catch (e) {
         if (e instanceof PathError) {
-          return await toolOutput(`error: ${e.message}`, callId, { isError: true });
+          return await toolOutput(`error: ${e.message}`, callId, {
+            isError: true,
+          });
         }
         throw e;
       }
@@ -96,8 +108,13 @@ export const applyPatchTool: Tool<ApplyPatchInput> = {
         if (h.kind === "add") {
           // dirname operates on the literal string; the previous URL-based
           // computation percent-encoded spaces/non-ASCII and corrupted the path.
-          await Deno.mkdir(dirname(resolved.abs), { recursive: true }).catch(() => {});
-          await Deno.writeTextFile(resolved.abs, (h.diffLines ?? []).join("\n") + "\n");
+          await Deno.mkdir(dirname(resolved.abs), { recursive: true }).catch(
+            () => {},
+          );
+          await Deno.writeTextFile(
+            resolved.abs,
+            (h.diffLines ?? []).join("\n") + "\n",
+          );
           summary.push(`+ ${resolved.rel}`);
         } else if (h.kind === "delete") {
           await Deno.remove(resolved.abs).catch(() => {});
@@ -243,7 +260,7 @@ function tryMatch(orig: string[], diff: string[]): string | null {
   while (di < diff.length && !diff[di].startsWith(" ")) di++;
   if (di === diff.length) return null;
   const anchor = diff[di].slice(1);
-  let oi = orig.indexOf(anchor);
+  const oi = orig.indexOf(anchor);
   if (oi < 0) return null;
   // Walk diff against orig from there.
   const out: string[] = [];

@@ -20,13 +20,13 @@ export {
   substituteEnv,
 } from "./src/config.ts";
 export type {
+  NiumaConfig,
   CoreConfig,
   LoadMergedOptions,
   LogLevel,
   ModelConfig,
   ProviderConfig,
   ResolvedModel,
-  NiumaConfig,
 } from "./src/config.ts";
 
 export {

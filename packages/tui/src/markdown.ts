@@ -27,10 +27,10 @@
 // ===========================================================================
 
 import {
+  stringWidth,
+  type Style,
   type StyledLine,
   type StyledSpan,
-  type Style,
-  stringWidth,
   truncateToWidth,
 } from "@niuma/tuikit";
 import type { Theme } from "./theme.ts";
@@ -96,7 +96,15 @@ export const renderMarkdown = (
     ) {
       renderLines = fenceLines.slice(0, -1);
     }
-    out.push(...renderCodeBlock(fenceLang, renderLines, width, opts.theme, streamingOpen));
+    out.push(
+      ...renderCodeBlock(
+        fenceLang,
+        renderLines,
+        width,
+        opts.theme,
+        streamingOpen,
+      ),
+    );
     fenceChar = null;
     fenceCount = 0;
     fenceLang = "";
@@ -141,7 +149,10 @@ export const renderMarkdown = (
     if (heading) {
       out.push(
         ...wrapSpans(
-          tokenizeInline(heading.text, opts.theme, { bold: true, fg: opts.theme.accent }),
+          tokenizeInline(heading.text, opts.theme, {
+            bold: true,
+            fg: opts.theme.accent,
+          }),
           width,
         ),
       );
@@ -189,7 +200,9 @@ export const renderMarkdown = (
     // -- bullet list item (consecutive items fold into one list) ----------
     const bullet = matchBullet(line);
     if (bullet) {
-      const items: Array<{ indent: number; marker: string; text: string }> = [bullet];
+      const items: Array<{ indent: number; marker: string; text: string }> = [
+        bullet,
+      ];
       i++;
       while (i < lines.length) {
         const b = matchBullet(lines[i]);
@@ -204,7 +217,9 @@ export const renderMarkdown = (
     // -- ordered list item (consecutive items fold into one list) ---------
     const ordered = matchOrdered(line);
     if (ordered) {
-      const items: Array<{ indent: number; marker: string; text: string }> = [ordered];
+      const items: Array<{ indent: number; marker: string; text: string }> = [
+        ordered,
+      ];
       i++;
       while (i < lines.length) {
         const o = matchOrdered(lines[i]);
@@ -318,7 +333,11 @@ const tokenizeInline = (
     if (boldItalic) {
       flushLit();
       out.push(
-        ...tokenizeInline(boldItalic.content, theme, { ...base, bold: true, italic: true }),
+        ...tokenizeInline(boldItalic.content, theme, {
+          ...base,
+          bold: true,
+          italic: true,
+        }),
       );
       i += boldItalic.len;
       continue;
@@ -337,7 +356,9 @@ const tokenizeInline = (
     const italic = matchDelim(rest, "*") ?? matchDelim(rest, "_");
     if (italic) {
       flushLit();
-      out.push(...tokenizeInline(italic.content, theme, { ...base, italic: true }));
+      out.push(
+        ...tokenizeInline(italic.content, theme, { ...base, italic: true }),
+      );
       i += italic.len;
       continue;
     }
@@ -538,7 +559,11 @@ const renderCodeBlock = (
     const rightCorner = "╮";
     const leftW = stringWidth(left);
     const cornerW = stringWidth(rightCorner);
-    let shownLang = truncateToWidth(lang, Math.max(0, blockW - leftW - 1 - cornerW), false);
+    let shownLang = truncateToWidth(
+      lang,
+      Math.max(0, blockW - leftW - 1 - cornerW),
+      false,
+    );
     let labelW = leftW + stringWidth(shownLang) + 1 + cornerW;
     if (labelW > blockW) {
       // Degenerate narrow block: drop the tag rather than overflow.
@@ -575,7 +600,10 @@ const renderCodeBlock = (
     out.push({
       spans: [
         { text: "│", style: { fg: theme.border } },
-        { text: ` ${clipped}${" ".repeat(Math.max(0, pad))} `, style: { fg: theme.text, bg: theme.codeBg } },
+        {
+          text: ` ${clipped}${" ".repeat(Math.max(0, pad))} `,
+          style: { fg: theme.text, bg: theme.codeBg },
+        },
         { text: "│", style: { fg: theme.border } },
       ],
     });
@@ -620,7 +648,10 @@ const renderListItem = (
   theme: Theme,
 ): StyledLine[] => {
   const lead = " ".repeat(indent);
-  const markerSpan: StyledSpan = { text: `${lead}${marker}`, style: { fg: theme.accent } };
+  const markerSpan: StyledSpan = {
+    text: `${lead}${marker}`,
+    style: { fg: theme.accent },
+  };
   const prefixW = stringWidth(`${lead}${marker}`);
   const contentW = Math.max(1, width - prefixW);
   const wrapped = wrapSpans(
@@ -629,12 +660,18 @@ const renderListItem = (
   );
   const indentSpan: StyledSpan = { text: " ".repeat(prefixW), style: {} };
   return wrapped.map((line, idx) => ({
-    spans: idx === 0 ? [markerSpan, ...line.spans] : [indentSpan, ...line.spans],
+    spans: idx === 0
+      ? [markerSpan, ...line.spans]
+      : [indentSpan, ...line.spans],
   }));
 };
 
 /** Render a blockquote: a coloured bar prefix, dimmed wrapped content. */
-const renderBlockquote = (text: string, width: number, theme: Theme): StyledLine[] => {
+const renderBlockquote = (
+  text: string,
+  width: number,
+  theme: Theme,
+): StyledLine[] => {
   const prefix = "▎ ";
   const prefixW = stringWidth(prefix);
   const contentW = Math.max(1, width - prefixW);
@@ -774,7 +811,10 @@ const renderTable = (
  * the cell boundary (prefix-correct via `truncateToWidth`). Style is carried
  * per word so e.g. half a bold phrase still renders bold.
  */
-const wrapSpans = (spans: readonly StyledSpan[], width: number): StyledLine[] => {
+const wrapSpans = (
+  spans: readonly StyledSpan[],
+  width: number,
+): StyledLine[] => {
   const safeWidth = Math.max(1, width);
   const lines: StyledLine[] = [];
   let lineSpans: StyledSpan[] = [];

@@ -14,13 +14,13 @@
 // `dispose()` frees the handle exactly once; FinalizationRegistry is the net.
 // ===========================================================================
 
+import type { InputEvent, KeyMods, NamedKey } from "./binding_contract.ts";
 import {
-  type InputEvent,
-  type KeyEvent,
-  type KeyMods,
-  type NamedKey,
-} from "./binding-contract.ts";
-import { acquireBuffer, decodeKeyEvents, releaseBuffer, withRetry } from "./buffer.ts";
+  acquireBuffer,
+  decodeKeyEvents,
+  releaseBuffer,
+  withRetry,
+} from "./buffer.ts";
 import { checkHandle, ptrOf, symbols } from "./ffi.ts";
 
 const keysRegistry = new FinalizationRegistry((handle: Deno.PointerValue) => {
@@ -46,7 +46,10 @@ export class KeyParser {
 
   /** Create a parser. */
   static create(): KeyParser {
-    const handle = checkHandle("tuikit_keys_create", symbols().tuikit_keys_create());
+    const handle = checkHandle(
+      "tuikit_keys_create",
+      symbols().tuikit_keys_create(),
+    );
     return new KeyParser(handle);
   }
 
@@ -96,9 +99,31 @@ export class KeyParser {
 
 /** The named keys patterns may reference. */
 const NAMED_PATTERN_SET: ReadonlySet<string> = new Set<NamedKey>([
-  "enter", "tab", "backspace", "up", "down", "right", "left", "home", "end",
-  "pageUp", "pageDown", "insert", "delete", "f1", "f2", "f3", "f4", "f5", "f6",
-  "f7", "f8", "f9", "f10", "f11", "f12",
+  "enter",
+  "tab",
+  "backspace",
+  "up",
+  "down",
+  "right",
+  "left",
+  "home",
+  "end",
+  "pageUp",
+  "pageDown",
+  "insert",
+  "delete",
+  "f1",
+  "f2",
+  "f3",
+  "f4",
+  "f5",
+  "f6",
+  "f7",
+  "f8",
+  "f9",
+  "f10",
+  "f11",
+  "f12",
 ]);
 
 interface ParsedPattern {
@@ -111,7 +136,17 @@ interface ParsedPattern {
   readonly text?: string;
 }
 
-const MOD_WORDS = new Set(["ctrl", "control", "alt", "option", "meta", "shift", "super", "cmd", "win"]);
+const MOD_WORDS = new Set([
+  "ctrl",
+  "control",
+  "alt",
+  "option",
+  "meta",
+  "shift",
+  "super",
+  "cmd",
+  "win",
+]);
 
 /** Parse a "mod+mod+key" pattern. */
 const parsePattern = (pattern: string): ParsedPattern => {
@@ -133,13 +168,21 @@ const parsePattern = (pattern: string): ParsedPattern => {
     return { shift, alt, ctrl, super: sup, kind: "esc" };
   }
   if (NAMED_PATTERN_SET.has(keyTok)) {
-    return { shift, alt, ctrl, super: sup, kind: "named", named: keyTok as NamedKey };
+    return {
+      shift,
+      alt,
+      ctrl,
+      super: sup,
+      kind: "named",
+      named: keyTok as NamedKey,
+    };
   }
   return { shift, alt, ctrl, super: sup, kind: "text", text: keyTok };
 };
 
 const modsEqual = (a: KeyMods, p: ParsedPattern): boolean =>
-  a.shift === p.shift && a.alt === p.alt && a.ctrl === p.ctrl && a.super === p.super;
+  a.shift === p.shift && a.alt === p.alt && a.ctrl === p.ctrl &&
+  a.super === p.super;
 
 /**
  * Test whether a decoded event matches a human pattern. Supported forms:

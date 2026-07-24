@@ -1,8 +1,8 @@
-import {
-  type ApprovalResolvedData,
-  type RecordedEvent,
-  type SessionInfo,
-  type StopReason,
+import type {
+  ApprovalResolvedData,
+  RecordedEvent,
+  SessionInfo,
+  StopReason,
 } from "@niuma/schema";
 import { Kysely, sql } from "kysely";
 import { createNodeSqliteDialect } from "@niuma/store/vendor/node-sqlite-dialect.ts";

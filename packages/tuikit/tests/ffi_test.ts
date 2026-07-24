@@ -18,11 +18,8 @@
 // The pure-TS `matchesKey` tests have no FFI dependency and always run.
 // ===========================================================================
 
-import { assert, assertEquals, assertFalse } from "jsr:@std/assert@^1.0.0";
-import type {
-  TerminalCaps,
-  TuikitLib,
-} from "../src/binding-contract.ts";
+import { assert, assertEquals, assertFalse } from "@std/assert";
+import type { TerminalCaps, TuikitLib } from "../src/binding_contract.ts";
 import { openLib } from "../src/ffi.ts";
 import { Frame } from "../src/frame.ts";
 import { KeyParser, matchesKey } from "../src/keys.ts";
@@ -81,7 +78,12 @@ const containsBytes = (haystack: Uint8Array, needle: Uint8Array): boolean => {
 
 Deno.test("matchesKey: enter / esc exact match", () => {
   assertEquals(
-    matchesKey({ kind: "key", key: "enter", mods: { shift: false, alt: false, ctrl: false, super: false }, eventType: "press" }, "enter"),
+    matchesKey({
+      kind: "key",
+      key: "enter",
+      mods: { shift: false, alt: false, ctrl: false, super: false },
+      eventType: "press",
+    }, "enter"),
     true,
   );
   assertEquals(matchesKey({ kind: "esc" }, "esc"), true);
@@ -89,24 +91,49 @@ Deno.test("matchesKey: enter / esc exact match", () => {
 });
 
 Deno.test("matchesKey: shift+tab / alt+left modifier combinations", () => {
-  const shiftTab = { kind: "key", key: "tab", mods: { shift: true, alt: false, ctrl: false, super: false }, eventType: "press" } as const;
+  const shiftTab = {
+    kind: "key",
+    key: "tab",
+    mods: { shift: true, alt: false, ctrl: false, super: false },
+    eventType: "press",
+  } as const;
   assertEquals(matchesKey(shiftTab, "shift+tab"), true);
   assertEquals(matchesKey(shiftTab, "tab"), false); // exact mods
 
-  const altLeft = { kind: "key", key: "left", mods: { shift: false, alt: true, ctrl: false, super: false }, eventType: "press" } as const;
+  const altLeft = {
+    kind: "key",
+    key: "left",
+    mods: { shift: false, alt: true, ctrl: false, super: false },
+    eventType: "press",
+  } as const;
   assertEquals(matchesKey(altLeft, "alt+left"), true);
   assertEquals(matchesKey(altLeft, "left"), false);
 });
 
 Deno.test("matchesKey: ctrl+c matches Kitty form and legacy \\x03 byte", () => {
   // Kitty / disambiguated form: the letter with ctrl set.
-  const kitty = { kind: "text", text: "c", mods: { shift: false, alt: false, ctrl: true, super: false }, eventType: "press" } as const;
+  const kitty = {
+    kind: "text",
+    text: "c",
+    mods: { shift: false, alt: false, ctrl: true, super: false },
+    eventType: "press",
+  } as const;
   assertEquals(matchesKey(kitty, "ctrl+c"), true);
   // Legacy form: terminal sends raw ETX (0x03) with NO modifier flags.
-  const legacy = { kind: "text", text: "\x03", mods: { shift: false, alt: false, ctrl: false, super: false }, eventType: "press" } as const;
+  const legacy = {
+    kind: "text",
+    text: "\x03",
+    mods: { shift: false, alt: false, ctrl: false, super: false },
+    eventType: "press",
+  } as const;
   assertEquals(matchesKey(legacy, "ctrl+c"), true);
   // A literal "c" without ctrl must not match ctrl+c.
-  const plain = { kind: "text", text: "c", mods: { shift: false, alt: false, ctrl: false, super: false }, eventType: "press" } as const;
+  const plain = {
+    kind: "text",
+    text: "c",
+    mods: { shift: false, alt: false, ctrl: false, super: false },
+    eventType: "press",
+  } as const;
   assertFalse(matchesKey(plain, "ctrl+c"));
 });
 
@@ -259,7 +286,10 @@ Deno.test("frame: diff emits changed text with an ESC introducer", () => {
       sameA.writeLine(0, 0, [{ text: "xx", style: {} }]);
       sameB.writeLine(0, 0, [{ text: "xx", style: {} }]);
       const noop = sameA.diff(sameB, ALL_CAPS);
-      assertFalse(containsBytes(noop, enc("xx")), "identical frames diff away the text");
+      assertFalse(
+        containsBytes(noop, enc("xx")),
+        "identical frames diff away the text",
+      );
     } finally {
       sameA.dispose();
       sameB.dispose();
@@ -383,8 +413,14 @@ Deno.test("frame: wide -> narrow replacement leaves no stale continuation", () =
     next.writeLine(0, 0, [{ text: "xaby", style: {} }]);
     const bytes = prev.diff(next, ALL_CAPS);
     // Run starting at col 2 (1-based): repaints "ab" over the wide glyph.
-    assert(containsBytes(bytes, enc("ab")), "stale half of wide glyph repainted");
-    assertFalse(containsBytes(bytes, enc("中")), "must not re-emit the wide glyph");
+    assert(
+      containsBytes(bytes, enc("ab")),
+      "stale half of wide glyph repainted",
+    );
+    assertFalse(
+      containsBytes(bytes, enc("中")),
+      "must not re-emit the wide glyph",
+    );
   } finally {
     prev.dispose();
     next.dispose();
@@ -400,7 +436,10 @@ Deno.test("frame: spilled ZWJ family survives resize + identical-frame diff", ()
     f.writeLine(0, 0, [{ text: fam + "ab", style: {} }]);
     f.resize(6, 1);
     const full = f.renderFull(ALL_CAPS);
-    assert(containsBytes(full, enc(fam)), "spilled cluster preserved across resize");
+    assert(
+      containsBytes(full, enc(fam)),
+      "spilled cluster preserved across resize",
+    );
     g.writeLine(0, 0, [{ text: fam + "ab", style: {} }]);
     const noop = f.diff(g, ALL_CAPS);
     assertEquals(noop.length, 0, "identical spill frames diff to nothing");
@@ -442,11 +481,23 @@ Deno.test("frame: large diff forces out-buffer growth past the initial cap", () 
   const prev = Frame.create(120, 40);
   const next = Frame.create(120, 40);
   try {
-    next.writeLine(0, 0, [{ text: "Q".repeat(119), style: { fg: { rgb: [1, 2, 3] } } }]);
-    next.writeLine(39, 0, [{ text: "Z".repeat(119), style: { bg: { rgb: [9, 9, 9] } } }]);
+    next.writeLine(0, 0, [{
+      text: "Q".repeat(119),
+      style: { fg: { rgb: [1, 2, 3] } },
+    }]);
+    next.writeLine(39, 0, [{
+      text: "Z".repeat(119),
+      style: { bg: { rgb: [9, 9, 9] } },
+    }]);
     const bytes = prev.diff(next, ALL_CAPS);
-    assert(containsBytes(bytes, enc("Q")), "top row repaint survived the retry");
-    assert(containsBytes(bytes, enc("Z")), "bottom row repaint survived the retry");
+    assert(
+      containsBytes(bytes, enc("Q")),
+      "top row repaint survived the retry",
+    );
+    assert(
+      containsBytes(bytes, enc("Z")),
+      "bottom row repaint survived the retry",
+    );
   } finally {
     prev.dispose();
     next.dispose();

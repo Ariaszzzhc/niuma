@@ -6,7 +6,7 @@
 // open, and the `TuikitError` raised whenever a native function returns its
 // panic sentinel (-1 / null handle).
 //
-// The symbol table itself lives in `binding-contract.ts` (SYMBOLS) and is the
+// The symbol table itself lives in `binding_contract.ts` (SYMBOLS) and is the
 // authoritative mirror of `native/src/abi.rs`. This module MUST NOT invent or
 // rename symbols — it only opens what the contract declares.
 //
@@ -16,7 +16,7 @@
 // ===========================================================================
 
 import { dirname, fromFileUrl, join } from "@std/path";
-import { SYMBOLS, type TuikitLib } from "./binding-contract.ts";
+import { SYMBOLS, type TuikitLib } from "./binding_contract.ts";
 
 // ---------------------------------------------------------------------------
 // Library path resolution
@@ -135,7 +135,10 @@ export const checkI64 = (op: string, v: number | bigint): number => {
  * a zero bigint (PointerValue is `PointerObject | bigint`; the PointerObject
  * form is never null-ish, so we only need to reject null/undefined and 0n).
  */
-export const checkHandle = (op: string, h: Deno.PointerValue): Deno.PointerValue => {
+export const checkHandle = (
+  op: string,
+  h: Deno.PointerValue,
+): Deno.PointerValue => {
   if (h === null || h === undefined) throw new TuikitError(op);
   if (typeof h === "bigint" && h === 0n) throw new TuikitError(op);
   return h;

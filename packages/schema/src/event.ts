@@ -15,11 +15,14 @@ const recordedBase = {
   sessionId: Schema.String,
 };
 
-export const SessionCreatedData = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const SessionCreatedData_ = Schema.Struct({
   workspace: Schema.String,
   model: Schema.String,
 });
-export type SessionCreatedData = Schema.Schema.Type<typeof SessionCreatedData>;
+export type SessionCreatedData = Schema.Schema.Type<typeof SessionCreatedData_>;
+export const SessionCreatedData: Schema.Codec<SessionCreatedData> =
+  SessionCreatedData_;
 
 export const SessionCreatedEvent = Schema.Struct({
   ...recordedBase,
@@ -30,17 +33,22 @@ export type SessionCreatedEvent = Schema.Schema.Type<
   typeof SessionCreatedEvent
 >;
 
-export const UserMessageData = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const UserMessageData_ = Schema.Struct({
   parts: Schema.Array(Part),
 });
-export type UserMessageData = Schema.Schema.Type<typeof UserMessageData>;
+export type UserMessageData = Schema.Schema.Type<typeof UserMessageData_>;
+export const UserMessageData: Schema.Codec<UserMessageData> = UserMessageData_;
 
-export const UserMessageEvent = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const UserMessageEvent_ = Schema.Struct({
   ...recordedBase,
   type: Schema.Literal("user.message"),
   data: UserMessageData,
 });
-export type UserMessageEvent = Schema.Schema.Type<typeof UserMessageEvent>;
+export type UserMessageEvent = Schema.Schema.Type<typeof UserMessageEvent_>;
+export const UserMessageEvent: Schema.Codec<UserMessageEvent> =
+  UserMessageEvent_;
 
 export const AssistantMessageData = Schema.Struct({
   parts: Schema.Array(Part),
@@ -96,12 +104,15 @@ export type ToolCallApprovedEvent = Schema.Schema.Type<
   typeof ToolCallApprovedEvent
 >;
 
-export const ToolCallDeniedData = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const ToolCallDeniedData_ = Schema.Struct({
   callId: Schema.String,
   reason: Schema.optional(Schema.String),
   always: Schema.optional(PermissionRule),
 });
-export type ToolCallDeniedData = Schema.Schema.Type<typeof ToolCallDeniedData>;
+export type ToolCallDeniedData = Schema.Schema.Type<typeof ToolCallDeniedData_>;
+export const ToolCallDeniedData: Schema.Codec<ToolCallDeniedData> =
+  ToolCallDeniedData_;
 
 export const ToolCallDeniedEvent = Schema.Struct({
   ...recordedBase,
@@ -112,55 +123,75 @@ export type ToolCallDeniedEvent = Schema.Schema.Type<
   typeof ToolCallDeniedEvent
 >;
 
-export const ToolResultData = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const ToolResultData_ = Schema.Struct({
   callId: Schema.String,
   content: ToolResultContent,
   isError: Schema.Boolean,
   durationMs: Schema.Number,
 });
-export type ToolResultData = Schema.Schema.Type<typeof ToolResultData>;
+export type ToolResultData = Schema.Schema.Type<typeof ToolResultData_>;
+export const ToolResultData: Schema.Codec<ToolResultData> = ToolResultData_;
 
-export const ToolResultEvent = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const ToolResultEvent_ = Schema.Struct({
   ...recordedBase,
   type: Schema.Literal("tool.result"),
   data: ToolResultData,
 });
-export type ToolResultEvent = Schema.Schema.Type<typeof ToolResultEvent>;
+export type ToolResultEvent = Schema.Schema.Type<typeof ToolResultEvent_>;
+export const ToolResultEvent: Schema.Codec<ToolResultEvent> = ToolResultEvent_;
 
-export const TurnStartedData = Schema.Struct({});
-export type TurnStartedData = Schema.Schema.Type<typeof TurnStartedData>;
+// deno-lint-ignore no-slow-types
+const TurnStartedData_ = Schema.Struct({});
+export type TurnStartedData = Schema.Schema.Type<typeof TurnStartedData_>;
+export const TurnStartedData: Schema.Codec<TurnStartedData> = TurnStartedData_;
 
-export const TurnStartedEvent = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const TurnStartedEvent_ = Schema.Struct({
   ...recordedBase,
   type: Schema.Literal("turn.started"),
   data: TurnStartedData,
 });
-export type TurnStartedEvent = Schema.Schema.Type<typeof TurnStartedEvent>;
+export type TurnStartedEvent = Schema.Schema.Type<typeof TurnStartedEvent_>;
+export const TurnStartedEvent: Schema.Codec<TurnStartedEvent> =
+  TurnStartedEvent_;
 
-export const TurnCompletedData = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const TurnCompletedData_ = Schema.Struct({
   stopReason: StopReason,
   usage: Usage,
 });
-export type TurnCompletedData = Schema.Schema.Type<typeof TurnCompletedData>;
+export type TurnCompletedData = Schema.Schema.Type<typeof TurnCompletedData_>;
+export const TurnCompletedData: Schema.Codec<TurnCompletedData> =
+  TurnCompletedData_;
 
-export const TurnCompletedEvent = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const TurnCompletedEvent_ = Schema.Struct({
   ...recordedBase,
   type: Schema.Literal("turn.completed"),
   data: TurnCompletedData,
 });
-export type TurnCompletedEvent = Schema.Schema.Type<typeof TurnCompletedEvent>;
+export type TurnCompletedEvent = Schema.Schema.Type<typeof TurnCompletedEvent_>;
+export const TurnCompletedEvent: Schema.Codec<TurnCompletedEvent> =
+  TurnCompletedEvent_;
 
-export const TurnAbortedData = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const TurnAbortedData_ = Schema.Struct({
   reason: Schema.String,
 });
-export type TurnAbortedData = Schema.Schema.Type<typeof TurnAbortedData>;
+export type TurnAbortedData = Schema.Schema.Type<typeof TurnAbortedData_>;
+export const TurnAbortedData: Schema.Codec<TurnAbortedData> = TurnAbortedData_;
 
-export const TurnAbortedEvent = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const TurnAbortedEvent_ = Schema.Struct({
   ...recordedBase,
   type: Schema.Literal("turn.aborted"),
   data: TurnAbortedData,
 });
-export type TurnAbortedEvent = Schema.Schema.Type<typeof TurnAbortedEvent>;
+export type TurnAbortedEvent = Schema.Schema.Type<typeof TurnAbortedEvent_>;
+export const TurnAbortedEvent: Schema.Codec<TurnAbortedEvent> =
+  TurnAbortedEvent_;
 
 export const CompactionPerformedData = Schema.Struct({
   summaryMessageId: Schema.optional(Schema.String),
@@ -240,20 +271,27 @@ export type SubagentSpawnedEvent = Schema.Schema.Type<
   typeof SubagentSpawnedEvent
 >;
 
-export const ErrorOccurredData = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const ErrorOccurredData_ = Schema.Struct({
   message: Schema.String,
   retryable: Schema.Boolean,
 });
-export type ErrorOccurredData = Schema.Schema.Type<typeof ErrorOccurredData>;
+export type ErrorOccurredData = Schema.Schema.Type<typeof ErrorOccurredData_>;
+export const ErrorOccurredData: Schema.Codec<ErrorOccurredData> =
+  ErrorOccurredData_;
 
-export const ErrorOccurredEvent = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const ErrorOccurredEvent_ = Schema.Struct({
   ...recordedBase,
   type: Schema.Literal("error.occurred"),
   data: ErrorOccurredData,
 });
-export type ErrorOccurredEvent = Schema.Schema.Type<typeof ErrorOccurredEvent>;
+export type ErrorOccurredEvent = Schema.Schema.Type<typeof ErrorOccurredEvent_>;
+export const ErrorOccurredEvent: Schema.Codec<ErrorOccurredEvent> =
+  ErrorOccurredEvent_;
 
-export const RecordedEvent = Schema.Union([
+// deno-lint-ignore no-slow-types
+const RecordedEvent_ = Schema.Union([
   SessionCreatedEvent,
   UserMessageEvent,
   AssistantMessageEvent,
@@ -270,9 +308,11 @@ export const RecordedEvent = Schema.Union([
   SubagentSpawnedEvent,
   ErrorOccurredEvent,
 ]);
-export type RecordedEvent = Schema.Schema.Type<typeof RecordedEvent>;
+export type RecordedEvent = Schema.Schema.Type<typeof RecordedEvent_>;
+export const RecordedEvent: Schema.Codec<RecordedEvent> = RecordedEvent_;
 
-export const RecordedEventType = Schema.Literals([
+// deno-lint-ignore no-slow-types
+const RecordedEventType_ = Schema.Literals([
   "session.created",
   "user.message",
   "assistant.message",
@@ -289,7 +329,9 @@ export const RecordedEventType = Schema.Literals([
   "subagent.spawned",
   "error.occurred",
 ]);
-export type RecordedEventType = Schema.Schema.Type<typeof RecordedEventType>;
+export type RecordedEventType = Schema.Schema.Type<typeof RecordedEventType_>;
+export const RecordedEventType: Schema.Codec<RecordedEventType> =
+  RecordedEventType_;
 
 // Alias: every recorded event is an envelope. Generic helpers can use this.
 export type EventEnvelope = RecordedEvent;
@@ -305,51 +347,67 @@ const liveBase = {
   sessionId: Schema.String,
 };
 
-export const TextDeltaData = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const TextDeltaData_ = Schema.Struct({
   delta: Schema.String,
 });
-export type TextDeltaData = Schema.Schema.Type<typeof TextDeltaData>;
+export type TextDeltaData = Schema.Schema.Type<typeof TextDeltaData_>;
+export const TextDeltaData: Schema.Codec<TextDeltaData> = TextDeltaData_;
 
-export const TextDeltaLive = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const TextDeltaLive_ = Schema.Struct({
   ...liveBase,
   type: Schema.Literal("text.delta"),
   data: TextDeltaData,
 });
-export type TextDeltaLive = Schema.Schema.Type<typeof TextDeltaLive>;
+export type TextDeltaLive = Schema.Schema.Type<typeof TextDeltaLive_>;
+export const TextDeltaLive: Schema.Codec<TextDeltaLive> = TextDeltaLive_;
 
-export const ToolProgressData = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const ToolProgressData_ = Schema.Struct({
   callId: Schema.String,
   message: Schema.optional(Schema.String),
 });
-export type ToolProgressData = Schema.Schema.Type<typeof ToolProgressData>;
+export type ToolProgressData = Schema.Schema.Type<typeof ToolProgressData_>;
+export const ToolProgressData: Schema.Codec<ToolProgressData> =
+  ToolProgressData_;
 
-export const ToolProgressLive = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const ToolProgressLive_ = Schema.Struct({
   ...liveBase,
   type: Schema.Literal("tool.progress"),
   data: ToolProgressData,
 });
-export type ToolProgressLive = Schema.Schema.Type<typeof ToolProgressLive>;
+export type ToolProgressLive = Schema.Schema.Type<typeof ToolProgressLive_>;
+export const ToolProgressLive: Schema.Codec<ToolProgressLive> =
+  ToolProgressLive_;
 
 // Live-only reset signal: emitted before re-sampling after a mid-stream retry
 // so clients clear their streaming text buffer. Never persisted to the JSONL
 // log (no replay concerns — niuma has no client-side dedup, so we reset live).
-export const TextResetLive = Schema.Struct({
+// deno-lint-ignore no-slow-types
+const TextResetLive_ = Schema.Struct({
   ...liveBase,
   type: Schema.Literal("text.reset"),
   data: Schema.Struct({}),
 });
-export type TextResetLive = Schema.Schema.Type<typeof TextResetLive>;
+export type TextResetLive = Schema.Schema.Type<typeof TextResetLive_>;
+export const TextResetLive: Schema.Codec<TextResetLive> = TextResetLive_;
 
-export const LiveEvent = Schema.Union([
+// deno-lint-ignore no-slow-types
+const LiveEvent_ = Schema.Union([
   TextDeltaLive,
   ToolProgressLive,
   TextResetLive,
 ]);
-export type LiveEvent = Schema.Schema.Type<typeof LiveEvent>;
+export type LiveEvent = Schema.Schema.Type<typeof LiveEvent_>;
+export const LiveEvent: Schema.Codec<LiveEvent> = LiveEvent_;
 
-export const LiveEventType = Schema.Literals([
+// deno-lint-ignore no-slow-types
+const LiveEventType_ = Schema.Literals([
   "text.delta",
   "tool.progress",
   "text.reset",
 ]);
-export type LiveEventType = Schema.Schema.Type<typeof LiveEventType>;
+export type LiveEventType = Schema.Schema.Type<typeof LiveEventType_>;
+export const LiveEventType: Schema.Codec<LiveEventType> = LiveEventType_;

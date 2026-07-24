@@ -1,31 +1,31 @@
 import { Effect, Layer } from "effect";
 import { ensureSchema, type Projection } from "./projection.ts";
-import { makeEventLog, type EventLog } from "./eventLog.ts";
+import { type EventLog, makeEventLog } from "./event_log.ts";
 import { Kernel, KernelLive, makeKernel } from "./kernel.ts";
-import { makeEventBus, type EventBus } from "./eventBus.ts";
+import { type EventBus, makeEventBus } from "./event_bus.ts";
 import {
   SessionManager,
-  SessionManagerLive,
   type SessionManagerInfra,
+  SessionManagerLive,
 } from "./session.ts";
-import { dataPaths, type DataPaths } from "./paths.ts";
+import { type DataPaths, dataPaths } from "./paths.ts";
 import { makeOpenAIAdapter, type ProviderAdapter } from "@niuma/provider";
 import {
+  type NiumaConfig,
+  niumaPaths,
   ConfigError,
   loadMergedConfig,
   loadMergedMcpConfig,
   readAuthFile,
   resolveModelRef,
   substituteEnv,
-  niumaPaths,
-  type NiumaConfig,
   type McpConfig,
 } from "@niuma/config";
 import { connectMcpServers, type McpServerHandle } from "@niuma/mcp";
 import {
   MemoryPermissionEngine,
-  ToolRegistry,
   type SubagentResult,
+  ToolRegistry,
 } from "@niuma/tools";
 import { runTurn } from "@niuma/agent";
 import {
@@ -37,7 +37,7 @@ import {
 
 export interface BootstrapDeps {
   readonly paths?: DataPaths;
-  readonly eventLog?: EventLog;
+  readonly event_log?: EventLog;
   readonly projection?: Projection;
   readonly bus?: EventBus;
   readonly infra?: Partial<SessionManagerInfra>;
@@ -56,7 +56,7 @@ export interface BootstrapDeps {
 
 export interface BootstrapResult {
   readonly paths: DataPaths;
-  readonly eventLog: EventLog;
+  readonly event_log: EventLog;
   readonly projection: Projection;
   readonly bus: EventBus;
   readonly infra: SessionManagerInfra;
@@ -96,7 +96,7 @@ export const bootstrap = async (
   await Deno.mkdir(paths.root, { recursive: true });
   await Deno.mkdir(paths.sessions, { recursive: true });
 
-  const eventLog = deps.eventLog ??
+  const event_log = deps.event_log ??
     makeEventLog({ sessionsDir: paths.sessions });
   const projection = deps.projection ?? await ensureSchema(paths.db);
   const bus = deps.bus ?? await Effect.runPromise(makeEventBus());
@@ -136,7 +136,7 @@ export const bootstrap = async (
   // it. The Layer we hand downstream wraps the same value (Layer.succeed),
   // keeping a single kernel instance across the bootstrap + session layer.
   const kernel = await Effect.runPromise(
-    makeKernel({ eventLog, projection, bus }),
+    makeKernel({ event_log, projection, bus }),
   );
 
   // ---- Agent infra: provider + tool pipeline. ----
@@ -210,7 +210,7 @@ export const bootstrap = async (
 
       const result = await Effect.runPromise(
         runTurn(childId, {
-          eventLog: kernelEventLog(kernel),
+          event_log: kernelEventLog(kernel),
           provider,
           tools: toolsForSubagent,
           approvals: kernelApprovalGateway(kernel),
@@ -230,7 +230,7 @@ export const bootstrap = async (
               stopReason: "stop" as const,
               usage: { inputTokens: 0, outputTokens: 0 },
               text: `error: ${String(cause)}`,
-            })),
+            }))
           ),
         ),
       );
@@ -257,9 +257,7 @@ export const bootstrap = async (
     tools,
     defaultModel,
     defaultWorkspace: workspace,
-    ...(defaultContextWindow !== undefined
-      ? { defaultContextWindow }
-      : {}),
+    ...(defaultContextWindow !== undefined ? { defaultContextWindow } : {}),
     ...(defaultMaxTokens !== undefined ? { defaultMaxTokens } : {}),
   };
 
@@ -271,7 +269,7 @@ export const bootstrap = async (
 
   return {
     paths,
-    eventLog,
+    event_log,
     projection,
     bus,
     infra,
@@ -294,7 +292,8 @@ const withDefaultModel = (
 ): ProviderAdapter =>
   defaultModel.length === 0 ? adapter : {
     listModels: adapter.listModels,
-    stream: (req) => adapter.stream({ ...req, model: req.model ?? defaultModel }),
+    stream: (req) =>
+      adapter.stream({ ...req, model: req.model ?? defaultModel }),
   };
 
 /**
@@ -336,7 +335,7 @@ const makeProviderFromConfig = async (config: NiumaConfig, ref?: string) => {
   });
 };
 
-export { Kernel, SessionManager, KernelLive };
-export { makeProjection, ensureSchema } from "./projection.ts";
-export { makeEventLog } from "./eventLog.ts";
-export { makeEventBus } from "./eventBus.ts";
+export { Kernel, KernelLive, SessionManager };
+export { ensureSchema, makeProjection } from "./projection.ts";
+export { makeEventLog } from "./event_log.ts";
+export { makeEventBus } from "./event_bus.ts";

@@ -5,10 +5,10 @@ import type {
   RecordedEvent,
 } from "@niuma/schema";
 import type { ProviderAdapter } from "@niuma/provider";
-import {
-  type PermissionEngine,
+import type {
+  PermissionEngine,
+  SubagentResult,
   ToolRegistry,
-  type SubagentResult,
 } from "@niuma/tools";
 import type {
   ApprovalGateway,
@@ -27,10 +27,12 @@ import type { Kernel } from "./kernel.ts";
 
 export const kernelEventLog = (kernel: Kernel): EventLog => ({
   append: (sessionId, input) =>
-    kernel.append({
-      ...input,
-      sessionId,
-    } as Parameters<typeof kernel.append>[0]),
+    kernel.append(
+      {
+        ...input,
+        sessionId,
+      } as Parameters<typeof kernel.append>[0],
+    ),
   replay: (sessionId) =>
     Effect.gen(function* () {
       const out: RecordedEvent[] = [];
@@ -147,7 +149,7 @@ export { makeAgentToolPipeline as makeToolPipelineFromAgent };
 
 export const kernelEmitLive = (
   kernel: Kernel,
-): ((event: LiveEvent) => void) => {
+): (event: LiveEvent) => void => {
   return (event) => {
     void Effect.runPromise(kernel.live(event));
   };
@@ -156,7 +158,7 @@ export const kernelEmitLive = (
 // ---------------------------------------------------------------------------
 // Infra bundle handed to the SessionManager so it can build RunTurnDeps per
 // session without re-resolving provider/tools on every prompt. We deliberately
-// do NOT extend @niuma/agent's AgentInfra here — that one bakes in eventLog /
+// do NOT extend @niuma/agent's AgentInfra here — that one bakes in event_log /
 // approvals / emitLive because AgentSession consumes them as long-lived
 // members; the server builds them per-session from the Kernel (so each
 // session's events/approvals land in its own JSONL file).

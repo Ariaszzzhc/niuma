@@ -20,7 +20,7 @@ import { runOneshot } from "./run.ts";
 import { runServe } from "./serve.ts";
 import { spawnServerWorker } from "./worker.ts";
 import { runInteractive } from "./interactive.ts";
-import { loadMergedConfig, resolveModelRef, niumaPaths } from "@niuma/config";
+import { niumaPaths, loadMergedConfig, resolveModelRef } from "@niuma/config";
 
 // Configuration comes from config.toml (+ auth.json for credentials) — see
 // @niuma/config. There is deliberately no .env loading and no NIUMA_* env
@@ -73,9 +73,7 @@ const main = async (): Promise<number> => {
       if (!ref) {
         console.error(
           `niuma: no model configured. Set one with --model provider/model-id,` +
-            ` or add e.g.\n  model = "myprovider/my-model"\nto ${
-            niumaPaths().configFile
-          }`,
+            ` or add e.g.\n  model = "myprovider/my-model"\nto ${niumaPaths().configFile}`,
         );
         return 1;
       }

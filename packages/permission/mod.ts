@@ -13,19 +13,16 @@ export type { RuleSpec, RuleWithAction } from "./src/matcher.ts";
 
 export {
   FILE_TOOLS,
-  SENSITIVE_PATTERNS,
   isSensitivePath,
   normalizePath,
   normalizePattern,
+  SENSITIVE_PATTERNS,
 } from "./src/sensitive.ts";
 
 export { READ_ONLY_TOOLS, runPolicy, toDecision } from "./src/policy.ts";
 export type { Verdict } from "./src/policy.ts";
 
-export {
-  PermissionEngine,
-  makePermissionEngine,
-} from "./src/engine.ts";
+export { makePermissionEngine, PermissionEngine } from "./src/engine.ts";
 export type {
   PermissionEngineOptions,
   PermissionEngineShape,

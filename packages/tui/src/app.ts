@@ -2,17 +2,17 @@
 // @niuma/tui — the TEA Program (app.ts, INPUT/ORCHESTRATION half)
 // ---------------------------------------------------------------------------
 // Wires the input components (editor / palette / approval) and the SSE reducer
-// (`reduce-event.ts`) into one `Program<AppModel, Msg>` for `@niuma/tuikit`'s
+// (`reduce_event.ts`) into one `Program<AppModel, Msg>` for `@niuma/tuikit`'s
 // `run`. Owns the full-screen layout (transcript / statusline / editor) and
 // overlays the palette + approval modal on a dimmed base scene.
 //
 // INTERLOCK (A-side, owned by a parallel agent — imported, not stubbed):
 //   - renderTranscript(state: TranscriptState, w, h, theme)       [transcript.ts]
-//   - renderToolCall(call: ToolCallView, w, theme)                [tool-call.ts]
+//   - renderToolCall(call: ToolCallView, w, theme)                [tool_call.ts]
 //   - renderStatusline(view: StatusView, w, theme)                [statusline.ts]
 //   - Theme / pickTheme / detectTerminalBg                        [theme.ts]
 // This file ADAPTS this package's data model (`TuiModelState` from
-// reduce-event.ts) into the view-models those renderers expect. The exact
+// reduce_event.ts) into the view-models those renderers expect. The exact
 // field shapes of `TranscriptState` / `ToolCallView` / `StatusView` are the
 // reconciliation surface; `app.ts` therefore type-checks only once the A-side
 // modules land with matching shapes (expected mid-run friction).
@@ -20,25 +20,22 @@
 
 import {
   type Cmd,
+  cmd,
   type Color,
-  type KeyMsg,
   type LoopMsg,
+  matchesKey,
   type Program,
-  type ResizeMsg,
   type StyledLine,
   type StyledSpan,
   type Sub,
-  type TickMsg,
-  cmd,
-  matchesKey,
   tick,
 } from "@niuma/tuikit";
 
 // -- B-side (this package) ---------------------------------------------------
 import {
-  type EditorState,
   createEditorState,
   editorReducer,
+  type EditorState,
   renderEditor,
 } from "./components/editor.ts";
 import {
@@ -48,33 +45,37 @@ import {
   stringifyInput,
 } from "./components/approval.ts";
 import {
-  type PaletteState,
   closePalette,
   initialPaletteState,
   paletteReducer,
+  type PaletteState,
   renderPalette,
 } from "./components/palette.ts";
 import {
-  type SseEvent,
-  type TuiToolCall,
   initialModelState,
   reduceEvent,
-} from "./reduce-event.ts";
-import { type ApprovalDecision, type TuiClient, parseSseStream } from "./client.ts";
+  type SseEvent,
+  type TuiToolCall,
+} from "./reduce_event.ts";
+import {
+  type ApprovalDecision,
+  parseSseStream,
+  type TuiClient,
+} from "./client.ts";
 
 // -- A-side view layer (parallel agent) --------------------------------------
 // Imported by signature; shapes reconciled against the landed modules.
-import { type Theme } from "./theme.ts";
+import type { Theme } from "./theme.ts";
 import {
   type ChatMessage,
-  type TranscriptMsg,
-  type TranscriptState,
   renderTranscript,
   transcriptContentHeight,
+  type TranscriptMsg,
   transcriptReducer,
+  type TranscriptState,
 } from "./components/transcript.ts";
-import { type ToolCallView } from "./components/tool-call.ts";
-import { type StatusView, renderStatusline } from "./components/statusline.ts";
+import type { ToolCallView } from "./components/tool_call.ts";
+import { renderStatusline, type StatusView } from "./components/statusline.ts";
 
 // ---------------------------------------------------------------------------
 // Local theme adapters (EditorTheme / ApprovalTheme / PaletteTheme -> Theme)
@@ -115,7 +116,10 @@ type PromptedMsg = {
   readonly body: string;
 };
 type ApprovalReplyMsg = { readonly type: "tui:approval"; readonly ok: boolean };
-type InterruptDoneMsg = { readonly type: "tui:interrupt"; readonly ok: boolean };
+type InterruptDoneMsg = {
+  readonly type: "tui:interrupt";
+  readonly ok: boolean;
+};
 type QuitMsg = { readonly type: "tui:quit" };
 
 type Msg =
@@ -158,7 +162,7 @@ interface AppModel {
 // ---------------------------------------------------------------------------
 
 // The app advances `spinnerFrame` on each TickMsg; the A-side statusline and
-// tool-call components map that index to a braille glyph themselves, so no
+// tool_call components map that index to a braille glyph themselves, so no
 // frame table is needed here.
 
 // ---------------------------------------------------------------------------
@@ -174,7 +178,7 @@ export interface AppDeps {
 }
 
 export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
-  const { client, theme, version, workspace } = deps;
+  const { client, theme } = deps;
   const colors = themeColors(theme);
 
   const initialModel: AppModel = {
@@ -193,10 +197,11 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
   };
 
   // -- subscriptions: spinner tick + SSE pump -----------------------------
-  const spinnerSub: Sub<Msg> = tick(80, (n) => ({
-    type: "tuikit:tick",
-    n,
-  }) as Msg);
+  const spinnerSub: Sub<Msg> = tick(80, (n) =>
+    ({
+      type: "tuikit:tick",
+      n,
+    }) as Msg);
 
   const sseSub: Sub<Msg> = {
     subscribe: (emit) => {
@@ -252,7 +257,9 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       resultLines: c.resultLines,
       expanded: c.expanded,
     };
-    return c.status === "running" ? view : { ...view, durationMs: c.durationMs };
+    return c.status === "running"
+      ? view
+      : { ...view, durationMs: c.durationMs };
   };
 
   /**
@@ -267,7 +274,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     model: AppModel,
   ): { readonly transcriptH: number; readonly editorH: number } => {
     const H = Math.max(1, model.height);
-    const editorContentRows = Math.min(5, Math.max(1, model.editor.lines.length));
+    const editorContentRows = Math.min(
+      5,
+      Math.max(1, model.editor.lines.length),
+    );
     const editorH = editorContentRows + 2;
     const statusH = 1;
     const transcriptH = Math.max(0, H - statusH - editorH);
@@ -282,10 +292,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
    * They are passed through verbatim — never re-derived from the offset — so an
    * incoming SSE event while the user is scrolled up cannot re-pin the view.
    *
-   * INTERLEAVING NOTE: reduce-event keeps user/assistant text and tool calls
+   * INTERLEAVING NOTE: reduce_event keeps user/assistant text and tool calls
    * in separate arrays, so here we append tool calls after the text messages
    * and the live streaming text last. Perfect message/tool interleaving would
-   * need a single ordered timeline in reduce-event (future refinement).
+   * need a single ordered timeline in reduce_event (future refinement).
    */
   const buildTranscriptMessages = (model: AppModel): ChatMessage[] => {
     const baseMsgs: ChatMessage[] = model.state.messages.map((m) =>
@@ -339,7 +349,11 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     });
     const viewportHeight = transcriptViewportHeight(model);
     const next = transcriptReducer(ts, msg, { contentLines, viewportHeight });
-    return { ...model, transcriptScroll: next.scrollOffset, followTail: next.followTail };
+    return {
+      ...model,
+      transcriptScroll: next.scrollOffset,
+      followTail: next.followTail,
+    };
   };
 
   const toStatusView = (model: AppModel): StatusView => ({
@@ -354,7 +368,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
 
   // -- key handling -------------------------------------------------------
 
-  const handleKey = (model: AppModel, event: import("@niuma/tuikit").InputEvent): readonly [AppModel, ...Cmd<Msg>[]] => {
+  const handleKey = (
+    model: AppModel,
+    event: import("@niuma/tuikit").InputEvent,
+  ): readonly [AppModel, ...Cmd<Msg>[]] => {
     // 1) approval modal takes INPUT priority (it is also painted on top in the
     //    view): it captures y / a / n / esc and swallows everything else while
     //    up. This MUST come before the palette so an approval arriving while
@@ -368,7 +385,11 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
         return [
           cleared,
           cmd(async () => {
-            const r = await client.approve(approvalId, decision.decision, decision.feedback);
+            const r = await client.approve(
+              approvalId,
+              decision.decision,
+              decision.feedback,
+            );
             return { type: "tui:approval", ok: r.ok } as Msg;
           }),
         ];
@@ -407,7 +428,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           lastCtrlC: now,
           state: {
             ...model.state,
-            notices: [...model.state.notices, notice("press ctrl+c again to quit")],
+            notices: [
+              ...model.state.notices,
+              notice("press ctrl+c again to quit"),
+            ],
           },
         },
       ];
@@ -433,7 +457,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
 
     // 5) tab: toggle focus editor <-> transcript
     if (event.kind === "key" && event.key === "tab") {
-      return [{ ...model, focus: model.focus === "editor" ? "transcript" : "editor" }];
+      return [{
+        ...model,
+        focus: model.focus === "editor" ? "transcript" : "editor",
+      }];
     }
 
     // 6) scroll keys when the transcript is focused — routed through the pure
@@ -455,7 +482,12 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
 
     // 7) esc: cancel an in-flight scroll / refocus editor
     if (event.kind === "esc") {
-      return [{ ...model, focus: "editor", transcriptScroll: 0, followTail: true }];
+      return [{
+        ...model,
+        focus: "editor",
+        transcriptScroll: 0,
+        followTail: true,
+      }];
     }
 
     // 8) editor: everything else
@@ -552,13 +584,18 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
         return [{ ...model, spinnerFrame: msg.n }];
 
       case "tuikit:error": {
-        const message = msg.error instanceof Error ? msg.error.message : String(msg.error);
+        const message = msg.error instanceof Error
+          ? msg.error.message
+          : String(msg.error);
         return [
           {
             ...model,
             state: {
               ...model.state,
-              notices: [...model.state.notices, notice(`error: ${message}`, "error")],
+              notices: [
+                ...model.state.notices,
+                notice(`error: ${message}`, "error"),
+              ],
             },
           },
         ];
@@ -618,7 +655,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
             ...model,
             state: {
               ...model.state,
-              notices: [...model.state.notices, notice("approval POST failed", "error")],
+              notices: [
+                ...model.state.notices,
+                notice("approval POST failed", "error"),
+              ],
             },
           },
         ];
@@ -645,8 +685,6 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     const layout = computeLayout(model);
 
     // editor height: 2 borders + up to 5 content rows
-    const editorH = layout.editorH;
-    const statusH = 1;
     const transcriptH = layout.transcriptH;
 
     // transcript
@@ -666,7 +704,9 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       } catch {
         tlines = [];
       }
-      for (let i = 0; i < transcriptH; i++) lines.push(tlines[i] ?? blankLine());
+      for (let i = 0; i < transcriptH; i++) {
+        lines.push(tlines[i] ?? blankLine());
+      }
     }
 
     // statusline (1 row)
@@ -677,12 +717,17 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     }
 
     // editor (bottom)
-    const editorLines = renderEditor(model.editor, W, model.focus === "editor", {
-      border: colors.border,
-      accent: colors.accent,
-      text: colors.text,
-      placeholder: colors.placeholder,
-    });
+    const editorLines = renderEditor(
+      model.editor,
+      W,
+      model.focus === "editor",
+      {
+        border: colors.border,
+        accent: colors.accent,
+        text: colors.text,
+        placeholder: colors.placeholder,
+      },
+    );
     for (const l of editorLines) lines.push(l);
 
     // -- overlay compositing (palette / approval) -------------------------
@@ -698,13 +743,16 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
         kind: "box" as const,
       }
       : model.palette.open
-      ? { ...renderPalette(model.palette, W, H, {
+      ? {
+        ...renderPalette(model.palette, W, H, {
           border: colors.border,
           accent: colors.accent,
           text: colors.text,
           muted: colors.muted,
           prompt: colors.prompt,
-        }), kind: "box" as const }
+        }),
+        kind: "box" as const,
+      }
       : null;
 
     if (overlay !== null) {
@@ -741,7 +789,9 @@ const approvalDecision = (
 
 /** Map a named key to a transcript scroll reducer message (home/end are handled
  *  inline by the caller as absolute jumps). Returns null for non-scroll keys. */
-const scrollMsg = (key: import("@niuma/tuikit").NamedKey): TranscriptMsg | null => {
+const scrollMsg = (
+  key: import("@niuma/tuikit").NamedKey,
+): TranscriptMsg | null => {
   switch (key) {
     case "up":
       return { type: "ScrollUp" };
@@ -759,7 +809,11 @@ const scrollMsg = (key: import("@niuma/tuikit").NamedKey): TranscriptMsg | null 
 /** Dim every span of the base scene, then stamp the overlay rows at (top,left). */
 const compositeWithOverlay = (
   base: readonly StyledLine[],
-  overlay: { readonly lines: readonly StyledLine[]; readonly top: number; readonly left: number },
+  overlay: {
+    readonly lines: readonly StyledLine[];
+    readonly top: number;
+    readonly left: number;
+  },
   W: number,
   H: number,
 ): StyledLine[] => {
@@ -784,7 +838,9 @@ const dimLine = (line: StyledLine): StyledLine => ({
   })),
 });
 
-const blankLineStatic = (): StyledLine => ({ spans: [{ text: "", style: {} }] });
+const blankLineStatic = (): StyledLine => ({
+  spans: [{ text: "", style: {} }],
+});
 
 const stampOverlayRow = (
   base: StyledLine | undefined,
@@ -815,14 +871,16 @@ const cellWidth = (s: string): number => {
   for (const ch of s) {
     const cp = ch.codePointAt(0) ?? 0;
     w += cp >= 0x1100 && (
-      cp <= 0x115f || // Hangul Jamo
-      (cp >= 0x2e80 && cp <= 0xa4cf && cp !== 0x303f) || // CJK
-      (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul syllables
-      (cp >= 0xf900 && cp <= 0xfaff) || // CJK compat
-      (cp >= 0xfe30 && cp <= 0xfe4f) ||
-      (cp >= 0xff00 && cp <= 0xff60) ||
-      (cp >= 0xffe0 && cp <= 0xffe6)
-    ) ? 2 : 1;
+        cp <= 0x115f || // Hangul Jamo
+        (cp >= 0x2e80 && cp <= 0xa4cf && cp !== 0x303f) || // CJK
+        (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul syllables
+        (cp >= 0xf900 && cp <= 0xfaff) || // CJK compat
+        (cp >= 0xfe30 && cp <= 0xfe4f) ||
+        (cp >= 0xff00 && cp <= 0xff60) ||
+        (cp >= 0xffe0 && cp <= 0xffe6)
+      )
+      ? 2
+      : 1;
   }
   return w;
 };

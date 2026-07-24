@@ -13,7 +13,7 @@ const READING = new Set(["read", "grep", "glob"]);
 // Adapted verbatim from codex prompts/templates/compact/prompt.md. Sent as the
 // final user message of the summarization call; instructs the model to write a
 // handoff summary for the next LLM that will resume from the compacted state.
-export const SUMMARIZATION_PROMPT =
+export const SUMMARIZATION_PROMPT: string =
   `You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
 
 Include:
@@ -28,7 +28,7 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 // Prepended to the summary body (both LLM and template modes) so the bridge
 // message is recognisable by isSummaryMessage regardless of how the body was
 // produced — matches codex's single-marker design.
-export const SUMMARY_PREFIX =
+export const SUMMARY_PREFIX: string =
   `Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:`;
 
 // Marker for prior compaction bridge messages so callers can recognise them.
@@ -140,7 +140,7 @@ export function summarizeHistory(
       Stream.runForEach((ev) =>
         Effect.sync(() => {
           if (ev._tag === "TextDelta") text += ev.text;
-        }),
+        })
       ),
     );
     const trimmed = text.trim();

@@ -1,10 +1,10 @@
 export * from "./vendor/node-sqlite-dialect.ts";
 
 export {
+  dbPath,
   DEFAULT_DATA_DIR,
   DEFAULT_DB_PATH,
   DEFAULT_SESSIONS_DIR,
-  dbPath,
   ensureDataDirSync,
   pathExistsSync,
   sessionFilePath,
@@ -27,4 +27,4 @@ export type {
   ProjectionServiceShape,
 } from "./src/services.ts";
 
-export type { SessionsTable, SessionSeqTable, NiumaDB } from "./src/db.ts";
+export type { NiumaDB, SessionSeqTable, SessionsTable } from "./src/db.ts";

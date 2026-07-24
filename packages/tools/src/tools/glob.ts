@@ -1,19 +1,23 @@
 import { z } from "zod";
 import type { Tool, ToolOutput } from "../types.ts";
 import { toolOutput } from "../truncate.ts";
-import { zodToJsonSchema } from "../jsonSchema.ts";
-import { resolvePath, PathError } from "../path.ts";
-import { shouldSkipDir } from "../pathUtil.ts";
+import { zodToJsonSchema } from "../json_schema.ts";
+import { PathError, resolvePath } from "../path.ts";
+import { shouldSkipDir } from "../path_util.ts";
 import { execCapture } from "../exec.ts";
 
-export const GlobInput = z.object({
+// deno-lint-ignore no-slow-types
+const GlobInput_ = z.object({
   pattern: z.string().min(1).describe("Glob pattern (rg --files compatible)."),
-  path: z.string().optional().describe("Directory to start from; defaults to workspace root."),
+  path: z.string().optional().describe(
+    "Directory to start from; defaults to workspace root.",
+  ),
   maxResults: z.number().int().positive().optional()
     .describe("Cap on results; default 200."),
 });
 
-export type GlobInput = z.infer<typeof GlobInput>;
+export type GlobInput = z.infer<typeof GlobInput_>;
+export const GlobInput: z.ZodType<GlobInput> = GlobInput_;
 
 const DEFAULT_CAP = 200;
 
@@ -44,8 +48,9 @@ export const globTool: Tool<GlobInput> = {
 
     const rg = await findRgPath();
     if (rg) {
-      const cmd =
-        `${rg} --files --sortr=modified -g ${escape(input.pattern)} -- ${escape(root)}`;
+      const cmd = `${rg} --files --sortr=modified -g ${
+        escape(input.pattern)
+      } -- ${escape(root)}`;
       const r = await execCapture(cmd, { cwd: ctx.cwd, timeoutMs: 60_000 });
       if (r.code === 0 || r.code === 1) {
         const all = r.stdout.split("\n").filter(Boolean);
@@ -95,14 +100,20 @@ export const globTool: Tool<GlobInput> = {
 async function findRgPath(): Promise<string | null> {
   const explicit = Deno.env.get("NIUMA_RG");
   if (explicit) return explicit;
-  const r = await execCapture("command -v rg", { timeoutMs: 2000 }).catch(() => null);
+  const r = await execCapture("command -v rg", { timeoutMs: 2000 }).catch(() =>
+    null
+  );
   if (r && r.code === 0 && r.stdout.trim()) return r.stdout.trim();
   return null;
 }
 
 function compileGlob(glob: string): RegExp {
   return new RegExp(
-    "^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") +
+    "^" +
+      glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(
+        /\?/g,
+        ".",
+      ) +
       "$",
   );
 }

@@ -80,8 +80,9 @@ export const runOneshot = async (
   // Cursor 0 replays session.created + the upcoming turn events. Opening
   // first guarantees we do not miss a quick approval.requested that fires
   // between prompt() and the GET.
-  const eventsUrl =
-    `${BASE}/events?session=${encodeURIComponent(sessionId)}&cursor=0`;
+  const eventsUrl = `${BASE}/events?session=${
+    encodeURIComponent(sessionId)
+  }&cursor=0`;
   let sseRes: Response;
   try {
     sseRes = await fetchImpl(eventsUrl);

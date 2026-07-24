@@ -155,7 +155,9 @@ const parseProvider = (
   const path = `provider.${id}`;
   if (!isRecord(raw)) throw typeErr(path, "a table", raw);
   const rawModels = raw.models ?? {};
-  if (!isRecord(rawModels)) throw typeErr(`${path}.models`, "a table", rawModels);
+  if (!isRecord(rawModels)) {
+    throw typeErr(`${path}.models`, "a table", rawModels);
+  }
   const models: Record<string, ModelConfig> = {};
   for (const [modelId, m] of Object.entries(rawModels)) {
     models[modelId] = parseModelConfig(m, `${path}.models.${modelId}`);
@@ -173,7 +175,10 @@ const parseProvider = (
 };
 
 /** Parse already-read TOML text. Throws ConfigError on bad syntax/types. */
-export const parseConfig = (text: string, source = "config.toml"): NiumaConfig => {
+export const parseConfig = (
+  text: string,
+  source = "config.toml",
+): NiumaConfig => {
   let raw: unknown;
   try {
     raw = parseToml(text);
@@ -194,9 +199,9 @@ export const parseConfig = (text: string, source = "config.toml"): NiumaConfig =
     !(LOG_LEVELS as readonly string[]).includes(logLevelRaw)
   ) {
     throw new ConfigError(
-      `config: core.log_level must be one of ${LOG_LEVELS.join("|")}, got "${
-        logLevelRaw
-      }"`,
+      `config: core.log_level must be one of ${
+        LOG_LEVELS.join("|")
+      }, got "${logLevelRaw}"`,
     );
   }
 

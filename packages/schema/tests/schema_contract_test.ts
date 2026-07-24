@@ -1,9 +1,11 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { Schema } from "effect";
 import {
+  ApprovalDecisionType,
   Decision,
   LiveEvent,
   Message,
+  parseEventLine,
   Part,
   RecordedEvent,
   Role,
@@ -12,12 +14,10 @@ import {
   SseEvent,
   StopReason,
   StreamEvent,
+  stringifyEventLine,
   ToolDef,
   ToolParameters,
   ToolResultContent,
-  ApprovalDecisionType,
-  parseEventLine,
-  stringifyEventLine,
 } from "../mod.ts";
 
 // Locks the effect@4.0.0-beta.100 Schema API contract that @niuma/schema relies
@@ -39,14 +39,24 @@ Deno.test("Role: multi-value Literals enumerates every role, not just the first"
 });
 
 Deno.test("StopReason: all five stop reasons decode", () => {
-  for (const r of ["stop", "length", "tool_calls", "content_filter", "abort"] as const) {
+  for (
+    const r of [
+      "stop",
+      "length",
+      "tool_calls",
+      "content_filter",
+      "abort",
+    ] as const
+  ) {
     assertEquals(dec(StopReason)(r), r);
   }
   assertRejectsSync(() => dec(StopReason)("nope"));
 });
 
 Deno.test("RuleAction / SessionStatus / ApprovalDecisionType: multi-value literals enumerate fully", () => {
-  for (const a of ["allow", "deny", "ask"] as const) assertEquals(dec(RuleAction)(a), a);
+  for (const a of ["allow", "deny", "ask"] as const) {
+    assertEquals(dec(RuleAction)(a), a);
+  }
   for (const s of ["idle", "running", "waiting_approval", "aborted"] as const) {
     assertEquals(dec(SessionStatus)(s), s);
   }
@@ -74,19 +84,28 @@ Deno.test("ToolResultContent / Part / Decision / LiveEvent / SseEvent / Recorded
     { type: "text", text: "x" },
   ]);
 
-  assertEquals(dec(Part)({ type: "text", text: "hi" }), { type: "text", text: "hi" });
-  assertEquals(dec(Part)({
-    type: "tool_call",
-    id: "c1",
-    name: "bash",
-    input: { cmd: "ls" },
-  }), { type: "tool_call", id: "c1", name: "bash", input: { cmd: "ls" } });
-  assertEquals(dec(Part)({
-    type: "tool_result",
-    toolCallId: "c1",
-    content: "ok",
-    isError: false,
-  }), { type: "tool_result", toolCallId: "c1", content: "ok", isError: false });
+  assertEquals(dec(Part)({ type: "text", text: "hi" }), {
+    type: "text",
+    text: "hi",
+  });
+  assertEquals(
+    dec(Part)({
+      type: "tool_call",
+      id: "c1",
+      name: "bash",
+      input: { cmd: "ls" },
+    }),
+    { type: "tool_call", id: "c1", name: "bash", input: { cmd: "ls" } },
+  );
+  assertEquals(
+    dec(Part)({
+      type: "tool_result",
+      toolCallId: "c1",
+      content: "ok",
+      isError: false,
+    }),
+    { type: "tool_result", toolCallId: "c1", content: "ok", isError: false },
+  );
 
   assertEquals(dec(Decision)({ decision: "allow" }), { decision: "allow" });
   assertEquals(dec(Decision)({ decision: "deny", reason: "no" }), {
@@ -95,68 +114,88 @@ Deno.test("ToolResultContent / Part / Decision / LiveEvent / SseEvent / Recorded
   });
   assertEquals(dec(Decision)({ decision: "ask" }), { decision: "ask" });
 
-  assertEquals(dec(LiveEvent)({
-    ts: 1,
-    sessionId: "s",
-    type: "text.delta",
-    data: { delta: "x" },
-  }), { ts: 1, sessionId: "s", type: "text.delta", data: { delta: "x" } });
-  assertEquals(dec(LiveEvent)({
-    ts: 1,
-    sessionId: "s",
-    type: "tool.progress",
-    data: { callId: "c1", message: "running" },
-  }), { ts: 1, sessionId: "s", type: "tool.progress", data: { callId: "c1", message: "running" } });
+  assertEquals(
+    dec(LiveEvent)({
+      ts: 1,
+      sessionId: "s",
+      type: "text.delta",
+      data: { delta: "x" },
+    }),
+    { ts: 1, sessionId: "s", type: "text.delta", data: { delta: "x" } },
+  );
+  assertEquals(
+    dec(LiveEvent)({
+      ts: 1,
+      sessionId: "s",
+      type: "tool.progress",
+      data: { callId: "c1", message: "running" },
+    }),
+    {
+      ts: 1,
+      sessionId: "s",
+      type: "tool.progress",
+      data: { callId: "c1", message: "running" },
+    },
+  );
 
   // SseEvent nests the array-form Union of (RecordedEvent | LiveEvent).
-  assertEquals(dec(SseEvent)({
-    cursor: 5,
-    event: {
-      ts: 1,
-      sessionId: "s",
-      type: "text.delta",
-      data: { delta: "x" },
+  assertEquals(
+    dec(SseEvent)({
+      cursor: 5,
+      event: {
+        ts: 1,
+        sessionId: "s",
+        type: "text.delta",
+        data: { delta: "x" },
+      },
+    }),
+    {
+      cursor: 5,
+      event: {
+        ts: 1,
+        sessionId: "s",
+        type: "text.delta",
+        data: { delta: "x" },
+      },
     },
-  }), {
-    cursor: 5,
-    event: {
-      ts: 1,
-      sessionId: "s",
-      type: "text.delta",
-      data: { delta: "x" },
-    },
-  });
+  );
 
   // RecordedEvent: one of each arm is exercised in the round-trip test below;
   // here we just prove the union decodes a sample.
-  assertEquals(dec(RecordedEvent)({
-    seq: 1,
-    ts: 1,
-    sessionId: "s",
-    type: "session.created",
-    data: { workspace: "/w", model: "m" },
-  }), {
-    seq: 1,
-    ts: 1,
-    sessionId: "s",
-    type: "session.created",
-    data: { workspace: "/w", model: "m" },
-  });
+  assertEquals(
+    dec(RecordedEvent)({
+      seq: 1,
+      ts: 1,
+      sessionId: "s",
+      type: "session.created",
+      data: { workspace: "/w", model: "m" },
+    }),
+    {
+      seq: 1,
+      ts: 1,
+      sessionId: "s",
+      type: "session.created",
+      data: { workspace: "/w", model: "m" },
+    },
+  );
 
   // StreamEvent: provider-side flat union.
   assertEquals(dec(StreamEvent)({ type: "text.delta", delta: "x" }), {
     type: "text.delta",
     delta: "x",
   });
-  assertEquals(dec(StreamEvent)({
-    type: "message.done",
-    usage: { inputTokens: 1, outputTokens: 2 },
-    stopReason: "stop",
-  }), {
-    type: "message.done",
-    usage: { inputTokens: 1, outputTokens: 2 },
-    stopReason: "stop",
-  });
+  assertEquals(
+    dec(StreamEvent)({
+      type: "message.done",
+      usage: { inputTokens: 1, outputTokens: 2 },
+      stopReason: "stop",
+    }),
+    {
+      type: "message.done",
+      usage: { inputTokens: 1, outputTokens: 2 },
+      stopReason: "stop",
+    },
+  );
 });
 
 Deno.test("Message: assistant role round-trips (regression for Role Literals bug)", () => {
@@ -186,24 +225,107 @@ Deno.test("ToolDef: encodes with arbitrary JSON-Schema parameters object", () =>
 // `type` field AND the union decoding.
 Deno.test("parseEventLine/stringifyEventLine: round-trip every RecordedEvent variant", () => {
   const samples: ReadonlyArray<Schema.Schema.Type<typeof RecordedEvent>> = [
-    { seq: 1, ts: 1, sessionId: "s", type: "session.created", data: { workspace: "/w", model: "m" } },
-    { seq: 2, ts: 2, sessionId: "s", type: "user.message", data: { parts: [{ type: "text", text: "hi" }] } },
     {
-      seq: 3, ts: 3, sessionId: "s", type: "assistant.message",
-      data: { parts: [{ type: "text", text: "hello" }], usage: { inputTokens: 1, outputTokens: 2 } },
+      seq: 1,
+      ts: 1,
+      sessionId: "s",
+      type: "session.created",
+      data: { workspace: "/w", model: "m" },
     },
-    { seq: 4, ts: 4, sessionId: "s", type: "tool.call.requested", data: { callId: "c1", name: "bash", input: { cmd: "ls" } } },
-    { seq: 5, ts: 5, sessionId: "s", type: "tool.call.approved", data: { callId: "c1", reason: "ok" } },
-    { seq: 6, ts: 6, sessionId: "s", type: "tool.call.denied", data: { callId: "c1", reason: "no" } },
-    { seq: 7, ts: 7, sessionId: "s", type: "tool.result", data: { callId: "c1", content: "done", isError: false, durationMs: 10 } },
+    {
+      seq: 2,
+      ts: 2,
+      sessionId: "s",
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "hi" }] },
+    },
+    {
+      seq: 3,
+      ts: 3,
+      sessionId: "s",
+      type: "assistant.message",
+      data: {
+        parts: [{ type: "text", text: "hello" }],
+        usage: { inputTokens: 1, outputTokens: 2 },
+      },
+    },
+    {
+      seq: 4,
+      ts: 4,
+      sessionId: "s",
+      type: "tool.call.requested",
+      data: { callId: "c1", name: "bash", input: { cmd: "ls" } },
+    },
+    {
+      seq: 5,
+      ts: 5,
+      sessionId: "s",
+      type: "tool.call.approved",
+      data: { callId: "c1", reason: "ok" },
+    },
+    {
+      seq: 6,
+      ts: 6,
+      sessionId: "s",
+      type: "tool.call.denied",
+      data: { callId: "c1", reason: "no" },
+    },
+    {
+      seq: 7,
+      ts: 7,
+      sessionId: "s",
+      type: "tool.result",
+      data: { callId: "c1", content: "done", isError: false, durationMs: 10 },
+    },
     { seq: 8, ts: 8, sessionId: "s", type: "turn.started", data: {} },
-    { seq: 9, ts: 9, sessionId: "s", type: "turn.completed", data: { stopReason: "stop", usage: { inputTokens: 1, outputTokens: 2 } } },
-    { seq: 10, ts: 10, sessionId: "s", type: "turn.aborted", data: { reason: "user" } },
+    {
+      seq: 9,
+      ts: 9,
+      sessionId: "s",
+      type: "turn.completed",
+      data: { stopReason: "stop", usage: { inputTokens: 1, outputTokens: 2 } },
+    },
+    {
+      seq: 10,
+      ts: 10,
+      sessionId: "s",
+      type: "turn.aborted",
+      data: { reason: "user" },
+    },
     { seq: 11, ts: 11, sessionId: "s", type: "compaction.performed", data: {} },
-    { seq: 12, ts: 12, sessionId: "s", type: "approval.requested", data: { approvalId: "a1", callId: "c1", name: "bash", input: { cmd: "rm" } } },
-    { seq: 13, ts: 13, sessionId: "s", type: "approval.resolved", data: { approvalId: "a1", decision: "once" } },
-    { seq: 14, ts: 14, sessionId: "s", type: "subagent.spawned", data: { parentSessionId: "p", childSessionId: "c", prompt: "go" } },
-    { seq: 15, ts: 15, sessionId: "s", type: "error.occurred", data: { message: "boom", retryable: false } },
+    {
+      seq: 12,
+      ts: 12,
+      sessionId: "s",
+      type: "approval.requested",
+      data: {
+        approvalId: "a1",
+        callId: "c1",
+        name: "bash",
+        input: { cmd: "rm" },
+      },
+    },
+    {
+      seq: 13,
+      ts: 13,
+      sessionId: "s",
+      type: "approval.resolved",
+      data: { approvalId: "a1", decision: "once" },
+    },
+    {
+      seq: 14,
+      ts: 14,
+      sessionId: "s",
+      type: "subagent.spawned",
+      data: { parentSessionId: "p", childSessionId: "c", prompt: "go" },
+    },
+    {
+      seq: 15,
+      ts: 15,
+      sessionId: "s",
+      type: "error.occurred",
+      data: { message: "boom", retryable: false },
+    },
   ];
   assertEquals(samples.length, 15);
 

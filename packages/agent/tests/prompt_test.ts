@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import {
   buildSystemPrompt,
@@ -22,7 +22,9 @@ Deno.test("buildSystemPrompt: renders <environment_context> block", async () => 
     assertEquals(prompt.includes(`<cwd>${tmp}</cwd>`), true);
     assertEquals(prompt.includes("<shell>"), true);
     assertEquals(
-      prompt.includes(`<current_date>${new Date().toISOString().slice(0, 10)}</current_date>`),
+      prompt.includes(
+        `<current_date>${new Date().toISOString().slice(0, 10)}</current_date>`,
+      ),
       true,
     );
     assertEquals(prompt.includes("<files"), true);
@@ -91,7 +93,10 @@ Deno.test("listWorkspaceFiles: walk fallback skips node_modules and .git", async
     const listing = await listWorkspaceFiles(tmp);
     assertEquals(listing.paths.includes("src/a.ts"), true);
     assertEquals(listing.paths.includes("root.ts"), true);
-    assertEquals(listing.paths.some((p) => p.startsWith("node_modules")), false);
+    assertEquals(
+      listing.paths.some((p) => p.startsWith("node_modules")),
+      false,
+    );
     // .hidden is a dot-directory → pruned
     assertEquals(listing.paths.some((p) => p.startsWith(".hidden")), false);
   } finally {
@@ -129,7 +134,10 @@ Deno.test("listWorkspaceFiles: caps at 200 paths and sets truncated", async () =
   try {
     // Fresh tempdir → walk fallback exercises the cap.
     for (let i = 0; i < 210; i++) {
-      await Deno.writeTextFile(join(tmp, `f${String(i).padStart(3, "0")}.ts`), "x");
+      await Deno.writeTextFile(
+        join(tmp, `f${String(i).padStart(3, "0")}.ts`),
+        "x",
+      );
     }
     const listing = await listWorkspaceFiles(tmp);
     assertEquals(listing.paths.length <= 200, true);
@@ -169,7 +177,10 @@ Deno.test("environmentContext: renders count and truncated attributes", () => {
 Deno.test("buildSystemPrompt: still appends AGENTS.md (regression)", async () => {
   const tmp = await Deno.makeTempDir();
   try {
-    await Deno.writeTextFile(join(tmp, "AGENTS.md"), "# Rules\n\nbe concise and kind");
+    await Deno.writeTextFile(
+      join(tmp, "AGENTS.md"),
+      "# Rules\n\nbe concise and kind",
+    );
     const prompt = await buildSystemPrompt(tmp);
     assertEquals(prompt.includes("AGENTS.md"), true);
     assertEquals(prompt.includes("be concise and kind"), true);

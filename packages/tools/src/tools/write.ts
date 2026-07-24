@@ -1,16 +1,18 @@
 import { z } from "zod";
 import type { Tool, ToolOutput } from "../types.ts";
 import { toolOutput } from "../truncate.ts";
-import { zodToJsonSchema } from "../jsonSchema.ts";
-import { resolvePath, PathError } from "../path.ts";
+import { zodToJsonSchema } from "../json_schema.ts";
+import { PathError, resolvePath } from "../path.ts";
 import { dirname } from "@std/path";
 
-export const WriteInput = z.object({
+// deno-lint-ignore no-slow-types
+const WriteInput_ = z.object({
   path: z.string().min(1).describe("Absolute or workspace-relative path."),
   content: z.string().describe("Full file content to write."),
 });
 
-export type WriteInput = z.infer<typeof WriteInput>;
+export type WriteInput = z.infer<typeof WriteInput_>;
+export const WriteInput: z.ZodType<WriteInput> = WriteInput_;
 
 export const writeTool: Tool<WriteInput> = {
   name: "write",
@@ -42,7 +44,9 @@ export const writeTool: Tool<WriteInput> = {
         .catch(() => {/* ignore — mkdir on existing dir is fine */});
       await Deno.writeTextFile(resolved.abs, input.content);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, { isError: true });
+      return await toolOutput(`error: ${(e as Error).message}`, callId, {
+        isError: true,
+      });
     }
     const bytes = new TextEncoder().encode(input.content).byteLength;
     return await toolOutput(`wrote ${bytes} bytes to ${resolved.rel}`, callId);

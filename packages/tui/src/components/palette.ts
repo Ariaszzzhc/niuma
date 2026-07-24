@@ -14,10 +14,10 @@
 import {
   type Color,
   type InputEvent,
-  type StyledLine,
-  type StyledSpan,
   matchesKey,
   stringWidth,
+  type StyledLine,
+  type StyledSpan,
   truncateToWidth,
 } from "@niuma/tuikit";
 
@@ -100,8 +100,9 @@ const fuzzyFilter = (query: string): readonly Scored[] => {
 };
 
 /** The filtered command list for a state (what the renderer lists). */
-export const paletteFiltered = (state: PaletteState): readonly PaletteCommand[] =>
-  fuzzyFilter(state.query).map((s) => s.cmd);
+export const paletteFiltered = (
+  state: PaletteState,
+): readonly PaletteCommand[] => fuzzyFilter(state.query).map((s) => s.cmd);
 
 const clamp = (n: number, lo: number, hi: number): number =>
   n < lo ? lo : n > hi ? hi : n;
@@ -165,28 +166,42 @@ export const paletteReducer = (
       const filtered = paletteFiltered(state);
       const cmd = filtered[clamp(state.selected, 0, filtered.length - 1)];
       if (!cmd) return [closePalette(state), { type: "close" }];
-      return [{ ...closePalette(state), selected: 0 }, { type: "execute", command: cmd }];
+      return [{ ...closePalette(state), selected: 0 }, {
+        type: "execute",
+        command: cmd,
+      }];
     }
     case "up":
       return [move(state, -1), undefined];
     case "down":
       return [move(state, 1), undefined];
     case "left":
-      return [{ ...state, caret: clamp(state.caret - 1, 0, state.query.length) }, undefined];
+      return [{
+        ...state,
+        caret: clamp(state.caret - 1, 0, state.query.length),
+      }, undefined];
     case "right":
-      return [{ ...state, caret: clamp(state.caret + 1, 0, state.query.length) }, undefined];
+      return [{
+        ...state,
+        caret: clamp(state.caret + 1, 0, state.query.length),
+      }, undefined];
     case "home":
       return [{ ...state, caret: 0 }, undefined];
     case "end":
       return [{ ...state, caret: state.query.length }, undefined];
     case "backspace": {
       if (state.caret === 0) return [state, undefined];
-      const q = state.query.slice(0, state.caret - 1) + state.query.slice(state.caret);
-      return [resetSelection({ ...state, query: q, caret: state.caret - 1 }), undefined];
+      const q = state.query.slice(0, state.caret - 1) +
+        state.query.slice(state.caret);
+      return [
+        resetSelection({ ...state, query: q, caret: state.caret - 1 }),
+        undefined,
+      ];
     }
     case "delete": {
       if (state.caret === state.query.length) return [state, undefined];
-      const q = state.query.slice(0, state.caret) + state.query.slice(state.caret + 1);
+      const q = state.query.slice(0, state.caret) +
+        state.query.slice(state.caret + 1);
       return [{ ...state, query: q }, undefined];
     }
     case "tab": {
@@ -212,8 +227,13 @@ const resetSelection = (state: PaletteState): PaletteState => ({
 
 const appendToQuery = (state: PaletteState, text: string): PaletteState => {
   if (text === "") return state;
-  const q = state.query.slice(0, state.caret) + text + state.query.slice(state.caret);
-  return resetSelection({ ...state, query: q, caret: state.caret + text.length });
+  const q = state.query.slice(0, state.caret) + text +
+    state.query.slice(state.caret);
+  return resetSelection({
+    ...state,
+    query: q,
+    caret: state.caret + text.length,
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -256,7 +276,10 @@ export const renderPalette = (
   const filtered = paletteFiltered(state);
   const maxBoxW = Math.max(24, screenW - 2);
   const minBoxW = 28;
-  const longest = PALETTE_COMMANDS.reduce((m, c) => Math.max(m, stringWidth(c)), 0);
+  const longest = PALETTE_COMMANDS.reduce(
+    (m, c) => Math.max(m, stringWidth(c)),
+    0,
+  );
   const queryW = stringWidth(PROMPT + state.query);
   const contentW = Math.max(longest, queryW);
   const boxW = Math.max(minBoxW, Math.min(maxBoxW, contentW + 6));
@@ -276,15 +299,27 @@ export const renderPalette = (
     const beforeW = stringWidth(before);
     if (beforeW >= innerW - stringWidth(PROMPT)) {
       // caret off-screen: show plain truncated query
-      spans.push(span(truncateToWidth(state.query, Math.max(1, innerW - stringWidth(PROMPT))), theme.text));
+      spans.push(
+        span(
+          truncateToWidth(
+            state.query,
+            Math.max(1, innerW - stringWidth(PROMPT)),
+          ),
+          theme.text,
+        ),
+      );
     } else {
       spans.push(span(before, theme.text));
-      const cursorChar = state.caret < state.query.length ? state.query[state.caret] : " ";
+      const cursorChar = state.caret < state.query.length
+        ? state.query[state.caret]
+        : " ";
       spans.push(span(cursorChar, theme.text, { reverse: true }));
       const used = beforeW + Math.max(1, stringWidth(cursorChar));
       const remain = innerW - stringWidth(PROMPT) - used;
       if (remain > 0) {
-        const after = state.caret < state.query.length ? state.query.slice(state.caret + 1) : "";
+        const after = state.caret < state.query.length
+          ? state.query.slice(state.caret + 1)
+          : "";
         const t = truncateToWidth(after, remain);
         spans.push(span(t, theme.text));
         const pad = remain - stringWidth(t);
@@ -315,7 +350,9 @@ export const renderPalette = (
 
   // bottom border
   lines.push({
-    spans: [span(BOTTOM_LEFT + repeat(HBAR, boxW - 2) + BOTTOM_RIGHT, theme.border)],
+    spans: [
+      span(BOTTOM_LEFT + repeat(HBAR, boxW - 2) + BOTTOM_RIGHT, theme.border),
+    ],
   });
 
   const boxH = lines.length;

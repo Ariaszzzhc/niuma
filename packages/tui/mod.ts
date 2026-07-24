@@ -18,81 +18,79 @@
 // `app.ts` directly; they are not re-exported here.
 // ===========================================================================
 
-import {
-  type TerminalCaps,
-  Terminal,
-  run,
-} from "@niuma/tuikit";
+import { run, Terminal, type TerminalCaps } from "@niuma/tuikit";
 
 // -- A-side theme (parallel agent) ------------------------------------------
 import { detectTerminalBg, pickTheme } from "./src/theme.ts";
 
 // -- B-side (this package) --------------------------------------------------
-import { buildProgram, type AppDeps } from "./src/app.ts";
+import { buildProgram } from "./src/app.ts";
 import { createTuiClient, type TuiClient } from "./src/client.ts";
 
 // Re-exports: currency types + factories consumers (the CLI) may want.
 export type { AppDeps } from "./src/app.ts";
 export {
   createEditorState,
+  editorIsEmpty,
   editorReducer,
   editorText,
-  editorIsEmpty,
   renderEditor,
 } from "./src/components/editor.ts";
 export type {
-  EditorState,
-  EditorCursor,
   EditorAction,
+  EditorCursor,
+  EditorState,
   EditorTheme,
 } from "./src/components/editor.ts";
 
 export {
-  stringifyInput,
   makeApprovalPreview,
   renderApprovalOverlay,
+  stringifyInput,
 } from "./src/components/approval.ts";
-export type { ApprovalView, ApprovalTheme } from "./src/components/approval.ts";
+export type { ApprovalTheme, ApprovalView } from "./src/components/approval.ts";
 
 export {
+  closePalette,
   initialPaletteState,
   openPalette,
-  closePalette,
-  paletteReducer,
-  paletteFiltered,
-  renderPalette,
   PALETTE_COMMANDS,
+  paletteFiltered,
+  paletteReducer,
+  renderPalette,
 } from "./src/components/palette.ts";
-export type { PaletteState, PaletteAction, PaletteCommand, PaletteTheme } from "./src/components/palette.ts";
-
-export {
-  createTuiClient,
-  parseSseStream,
-} from "./src/client.ts";
 export type {
-  TuiClient,
-  TuiClientOptions,
+  PaletteAction,
+  PaletteCommand,
+  PaletteState,
+  PaletteTheme,
+} from "./src/components/palette.ts";
+
+export { createTuiClient, parseSseStream } from "./src/client.ts";
+export type {
   ApprovalDecision,
   ClientResult,
+  TuiClient,
+  TuiClientOptions,
 } from "./src/client.ts";
 
 export {
+  initialModelState,
   reduceEvent,
   reduceEventSequence,
-  initialModelState,
-} from "./src/reduce-event.ts";
+} from "./src/reduce_event.ts";
 export type {
-  TuiModelState,
-  TuiMessage,
-  TuiRole,
-  TuiToolCall,
-  ToolCallStatus,
-  StreamingText,
-  TuiNotice,
   NoticeKind,
   PendingApproval,
   SseEvent,
-} from "./src/reduce-event.ts";
+  StreamingText,
+  ToolCallStatus,
+  TuiMessage,
+  TuiModelState,
+  TuiNotice,
+  TuiRole,
+  TuiToolCall,
+} from "./src/reduce_event.ts";
 
 export { buildProgram } from "./src/app.ts";
 
@@ -118,7 +116,7 @@ export interface RunTuiDeps {
 export const runTui = async (deps: RunTuiDeps): Promise<number> => {
   let terminal: Terminal | null = null;
   try {
-    terminal = await Terminal.open();
+    terminal = Terminal.open();
     const caps: TerminalCaps = terminal.caps;
     const bg = await detectTerminalBg(terminal, 300);
     const theme = pickTheme(bg, caps);
@@ -147,7 +145,9 @@ export const runTui = async (deps: RunTuiDeps): Promise<number> => {
     await run(terminal, program);
     return 0;
   } catch (err) {
-    console.error(`niuma: tui error: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(
+      `niuma: tui error: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return 1;
   } finally {
     try {

@@ -20,9 +20,9 @@
 
 import {
   type Color,
+  stringWidth,
   type StyledLine,
   type StyledSpan,
-  stringWidth,
   truncateToWidth,
 } from "@niuma/tuikit";
 
@@ -86,7 +86,9 @@ export const stringifyInput = (input: unknown, maxChars = 480): string => {
     }
   }
   if (text.length > maxChars) {
-    return `${text.slice(0, maxChars)}… (+${text.length - maxChars} more chars)`;
+    return `${text.slice(0, maxChars)}… (+${
+      text.length - maxChars
+    } more chars)`;
   }
   return text;
 };
@@ -137,7 +139,9 @@ export interface RenderedOverlay {
   readonly left: number;
 }
 
-const EMPTY_PREVIEW: StyledLine = { spans: [{ text: "(no input)", style: { dim: true } }] };
+const EMPTY_PREVIEW: StyledLine = {
+  spans: [{ text: "(no input)", style: { dim: true } }],
+};
 
 /**
  * Render the approval modal. Returns the modal lines (border + header + preview
@@ -162,7 +166,9 @@ export const renderApprovalOverlay = (
   const footerW = stringWidth(footerText);
   let previewInner = 0;
   for (const line of view.preview) {
-    for (const s of line.spans) previewInner = Math.max(previewInner, stringWidth(s.text));
+    for (const s of line.spans) {
+      previewInner = Math.max(previewInner, stringWidth(s.text));
+    }
   }
   const contentW = Math.max(headerW - 2, footerW - 2, previewInner);
   const boxW = Math.max(minBoxW, Math.min(maxBoxW, contentW + 4));
@@ -190,7 +196,13 @@ export const renderApprovalOverlay = (
   });
 
   // a blank padding row
-  lines.push({ spans: [span(`${VBAR} `, theme.border), span(repeat(" ", innerW), theme.text), span(` ${VBAR}`, theme.border)] });
+  lines.push({
+    spans: [
+      span(`${VBAR} `, theme.border),
+      span(repeat(" ", innerW), theme.text),
+      span(` ${VBAR}`, theme.border),
+    ],
+  });
 
   // preview body (truncated to innerW)
   for (const line of preview) {
@@ -208,7 +220,13 @@ export const renderApprovalOverlay = (
   }
 
   // blank padding row
-  lines.push({ spans: [span(`${VBAR} `, theme.border), span(repeat(" ", innerW), theme.text), span(` ${VBAR}`, theme.border)] });
+  lines.push({
+    spans: [
+      span(`${VBAR} `, theme.border),
+      span(repeat(" ", innerW), theme.text),
+      span(` ${VBAR}`, theme.border),
+    ],
+  });
 
   // footer
   const footPad = innerW - stringWidth(footerText);
@@ -223,7 +241,9 @@ export const renderApprovalOverlay = (
 
   // bottom border
   lines.push({
-    spans: [span(BOTTOM_LEFT + repeat(HBAR, boxW - 2) + BOTTOM_RIGHT, theme.border)],
+    spans: [
+      span(BOTTOM_LEFT + repeat(HBAR, boxW - 2) + BOTTOM_RIGHT, theme.border),
+    ],
   });
 
   const boxH = lines.length;

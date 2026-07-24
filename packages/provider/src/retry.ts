@@ -1,17 +1,19 @@
 import { Duration, Effect, Schedule } from "effect";
 import { isRetryable, type ProviderError } from "./errors.ts";
 
-export const providerRetrySchedule = Schedule.exponential("500 millis").pipe(
-  Schedule.jittered,
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.min(duration, Duration.seconds(8))),
-  ),
-);
+export const providerRetrySchedule: Schedule.Schedule<Duration.Duration> =
+  Schedule.exponential("500 millis").pipe(
+    Schedule.jittered,
+    Schedule.modifyDelay(({ duration }) =>
+      Effect.succeed(Duration.min(duration, Duration.seconds(8)))
+    ),
+  );
 
-export const retryOptions = (isAborted?: () => boolean) => ({
+export const retryOptions = (
+  isAborted?: () => boolean,
+): Effect.Retry.Options<ProviderError> => ({
   schedule: providerRetrySchedule,
-  while: (e: ProviderError) =>
-    isRetryable(e) && !(isAborted?.() ?? false),
+  while: (e: ProviderError) => isRetryable(e) && !(isAborted?.() ?? false),
   times: 5,
 });
 

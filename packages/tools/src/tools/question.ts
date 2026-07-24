@@ -1,15 +1,17 @@
 import { z } from "zod";
 import type { Tool, ToolOutput } from "../types.ts";
 import { toolOutput } from "../truncate.ts";
-import { zodToJsonSchema } from "../jsonSchema.ts";
+import { zodToJsonSchema } from "../json_schema.ts";
 
-export const QuestionInput = z.object({
+// deno-lint-ignore no-slow-types
+const QuestionInput_ = z.object({
   question: z.string().min(1).describe("Question to surface to the user."),
   options: z.array(z.string()).optional()
     .describe("Suggested options; the user may also type a free-text answer."),
 });
 
-export type QuestionInput = z.infer<typeof QuestionInput>;
+export type QuestionInput = z.infer<typeof QuestionInput_>;
+export const QuestionInput: z.ZodType<QuestionInput> = QuestionInput_;
 
 export const questionTool: Tool<QuestionInput> = {
   name: "question",
@@ -25,7 +27,9 @@ export const questionTool: Tool<QuestionInput> = {
   async execute(input, ctx): Promise<ToolOutput> {
     const callId = `question:${ctx.sessionId}`;
     const detail = input.options?.length
-      ? `${input.question}\n\nOptions:\n${input.options.map((o, i) => `  ${i + 1}. ${o}`).join("\n")}`
+      ? `${input.question}\n\nOptions:\n${
+        input.options.map((o, i) => `  ${i + 1}. ${o}`).join("\n")
+      }`
       : input.question;
     const reply = await ctx.ask({
       callId,
