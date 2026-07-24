@@ -256,7 +256,9 @@ Deno.test({
     await reader.cancel();
     assert(
       liveChunk.includes("event: text.delta"),
-      `live text.delta never arrived on the SSE stream: ${liveChunk.slice(0, 200)}`,
+      `live text.delta never arrived on the SSE stream: ${
+        liveChunk.slice(0, 200)
+      }`,
     );
     assert(
       liveChunk.includes("hello-live"),

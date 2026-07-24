@@ -185,11 +185,16 @@ export const renderMarkdown = (
     // the NEXT line is a delimiter (`| --- | --- |`). While streaming, the
     // delimiter may not have arrived yet — fall through to paragraph so the
     // header text is not swallowed.
-    if (isTableRow(line) && i + 1 < lines.length && isTableDelimiter(lines[i + 1])) {
+    if (
+      isTableRow(line) && i + 1 < lines.length && isTableDelimiter(lines[i + 1])
+    ) {
       const header = splitTableRow(line);
       i += 2; // consume header + delimiter
       const rows: string[][] = [];
-      while (i < lines.length && isTableRow(lines[i]) && !matchThematicBreak(lines[i])) {
+      while (
+        i < lines.length && isTableRow(lines[i]) &&
+        !matchThematicBreak(lines[i])
+      ) {
         rows.push(splitTableRow(lines[i]));
         i++;
       }
@@ -244,7 +249,8 @@ export const renderMarkdown = (
         matchOrdered(next) ||
         matchBlockquote(next) ||
         matchThematicBreak(next) ||
-        (isTableRow(next) && i + 1 < lines.length && isTableDelimiter(lines[i + 1]))
+        (isTableRow(next) && i + 1 < lines.length &&
+          isTableDelimiter(lines[i + 1]))
       ) {
         break;
       }
@@ -721,7 +727,10 @@ const renderTable = (
   // separators) plus the column text itself, so on a very narrow viewport we
   // TRIM trailing columns until the remaining ones fit at MIN_COL. A caller
   // that passes width < 5 gets a one-column table truncated to width.
-  const maxColsByChrome = Math.max(1, Math.floor((width - 2) / (MIN_COL + SEP_W)) + 1);
+  const maxColsByChrome = Math.max(
+    1,
+    Math.floor((width - 2) / (MIN_COL + SEP_W)) + 1,
+  );
   if (normHeader.length > maxColsByChrome) {
     normHeader = normHeader.slice(0, maxColsByChrome);
     normRows = normRows.map((r) => r.slice(0, maxColsByChrome));
@@ -739,7 +748,10 @@ const renderTable = (
   });
 
   // Total width if we used natural widths everywhere.
-  const budget = Math.max(usedCols, width - SEP_W * (usedCols - 1) - 2 * usedCols);
+  const budget = Math.max(
+    usedCols,
+    width - SEP_W * (usedCols - 1) - 2 * usedCols,
+  );
   const naturalTotal = natural.reduce((a, b) => a + b, 0);
 
   // Shrink proportionally from the widest columns until we fit the budget.
@@ -770,7 +782,11 @@ const renderTable = (
     }],
   });
 
-  const cellSpans = (text: string, col: number, bold: boolean): StyledSpan[] => {
+  const cellSpans = (
+    text: string,
+    col: number,
+    bold: boolean,
+  ): StyledSpan[] => {
     const truncated = truncateToWidth(text, colW[col], false);
     const pad = colW[col] - stringWidth(truncated);
     const spans = tokenizeInline(truncated, theme, {
@@ -786,7 +802,9 @@ const renderTable = (
   const rowLine = (cells: readonly string[], bold: boolean): StyledLine => {
     const spans: StyledSpan[] = [];
     cells.forEach((cell, c) => {
-      if (c > 0) spans.push({ text: " │ ", style: { fg: theme.border, dim: true } });
+      if (c > 0) {
+        spans.push({ text: " │ ", style: { fg: theme.border, dim: true } });
+      }
       spans.push({ text: " ", style: {} });
       spans.push(...cellSpans(cell, c, bold));
       spans.push({ text: " ", style: {} });

@@ -354,7 +354,9 @@ Deno.test("markdown: GFM table renders aligned rows + header rule", () => {
   assert(rule.includes("┼"), "header rule must contain ┼");
   assert(rule.includes("─"), "header rule must contain ─");
   // Columns align: every line has the same display width.
-  const widths = lines.map((l) => l.spans.reduce((n, s) => n + stringWidth(s.text), 0));
+  const widths = lines.map((l) =>
+    l.spans.reduce((n, s) => n + stringWidth(s.text), 0)
+  );
   assertEquals(new Set(widths).size, 1, `widths differ: ${widths.join(",")}`);
   assertNoOverflow(lines);
 });
@@ -363,8 +365,14 @@ Deno.test("markdown: GFM table CJK cells align by display width", () => {
   const lines = render(
     "| 特性 | 状态 |\n| --- | --- |\n| Agent 循环 | ✅ 已完成 |\n| 工具系统 | ✅ 已完成 |",
   );
-  const widths = lines.map((l) => l.spans.reduce((n, s) => n + stringWidth(s.text), 0));
-  assertEquals(new Set(widths).size, 1, `CJK widths differ: ${widths.join(",")}`);
+  const widths = lines.map((l) =>
+    l.spans.reduce((n, s) => n + stringWidth(s.text), 0)
+  );
+  assertEquals(
+    new Set(widths).size,
+    1,
+    `CJK widths differ: ${widths.join(",")}`,
+  );
 });
 
 Deno.test("markdown: GFM table shrinks columns to fit a narrow viewport", () => {
@@ -394,17 +402,29 @@ Deno.test("markdown: streaming — header row before delimiter arrives is not sw
 Deno.test("markdown: streaming — partial body rows render as they arrive", () => {
   const lines = render("| a | b |\n| --- | --- |\n| 1 | 2 |", true);
   const text = allText(lines);
-  assert(text.includes("┼"), "table with delimiter renders even while streaming");
+  assert(
+    text.includes("┼"),
+    "table with delimiter renders even while streaming",
+  );
   assert(text.includes("1"), "first body row present");
 });
 
 Deno.test("markdown: short table row is blank-padded to the column count", () => {
   const lines = render("| a | b | c |\n| --- | --- | --- |\n| 1 |");
-  const widths = lines.map((l) => l.spans.reduce((n, s) => n + stringWidth(s.text), 0));
-  assertEquals(new Set(widths).size, 1, `ragged row misaligned: ${widths.join(",")}`);
+  const widths = lines.map((l) =>
+    l.spans.reduce((n, s) => n + stringWidth(s.text), 0)
+  );
+  assertEquals(
+    new Set(widths).size,
+    1,
+    `ragged row misaligned: ${widths.join(",")}`,
+  );
 });
 
 Deno.test("markdown: bold inside a table cell survives as a bold span", () => {
   const lines = render("| a |\n| --- |\n| **x** |");
-  assertEquals(allSpans(lines).some((s) => hasFlag(s, "bold") && s.text.includes("x")), true);
+  assertEquals(
+    allSpans(lines).some((s) => hasFlag(s, "bold") && s.text.includes("x")),
+    true,
+  );
 });

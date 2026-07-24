@@ -79,7 +79,9 @@ export const setupLogger = async (
     const { log: logDir } = niumaPaths();
     await Deno.mkdir(logDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const sinks = { file: makeFileSink(join(logDir, `${stamp}-${Deno.pid}.log`)) };
+    const sinks = {
+      file: makeFileSink(join(logDir, `${stamp}-${Deno.pid}.log`)),
+    };
     await configure({
       sinks,
       filters: {},
