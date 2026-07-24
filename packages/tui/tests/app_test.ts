@@ -65,6 +65,8 @@ const ok: ClientResult = { ok: true, status: 200, body: "" };
 
 const fakeClient: TuiClient = {
   sessionId: "s1",
+  contextWindow: 200_000,
+  mcpServers: [],
   // Never consumed here (we drive update() directly, not the loop), but the
   // field is required; close immediately so nothing hangs if subscribed.
   eventsStream: new ReadableStream<Uint8Array>({

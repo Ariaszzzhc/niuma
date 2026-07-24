@@ -4,9 +4,10 @@ import { type EventLog, makeEventLog } from "./event_log.ts";
 import { Kernel, KernelLive, makeKernel } from "./kernel.ts";
 import { type EventBus, makeEventBus } from "./event_bus.ts";
 import {
+  bindSessionEnv,
+  makeSessionManager,
   SessionManager,
   type SessionManagerInfra,
-  SessionManagerLive,
 } from "./session.ts";
 import { type DataPaths, dataPaths } from "./paths.ts";
 import {
@@ -273,9 +274,26 @@ export const bootstrap = async (
 
   // Wrap the eagerly-built kernel in a Layer so downstream consumers (the
   // session layer, the runtime built in createServerApp) all see the same
-  // instance the spawn_subagent closure captured.
+  // instance the spawn_subagent closure captured. The session layer binds
+  // boot metadata (context window, MCP server status) onto the service as it
+  // is built so the /sessions create response can surface it.
   const kernelLayer = Layer.succeed(Kernel, kernel);
-  const sessionLayer = SessionManagerLive(infra);
+  const sessionEnv = {
+    ...(defaultContextWindow !== undefined
+      ? { contextWindow: defaultContextWindow }
+      : {}),
+    mcpServers: mcpServers.map((s: McpServerHandle) => ({
+      id: s.id,
+      toolCount: s.tools.length,
+    })),
+  };
+  const sessionLayer = Layer.effect(
+    SessionManager,
+    Effect.map(
+      makeSessionManager(infra, sessionEnv),
+      (sm) => bindSessionEnv(sm, sessionEnv),
+    ),
+  );
 
   return {
     paths,

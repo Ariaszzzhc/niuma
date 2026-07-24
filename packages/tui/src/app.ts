@@ -75,7 +75,11 @@ import {
   type TranscriptState,
 } from "./components/transcript.ts";
 import type { ToolCallView } from "./components/tool_call.ts";
-import { renderStatusline, type StatusView } from "./components/statusline.ts";
+import {
+  type GitStatus,
+  renderStatusline,
+  type StatusView,
+} from "./components/statusline.ts";
 
 // ---------------------------------------------------------------------------
 // Local theme adapters (EditorTheme / ApprovalTheme / PaletteTheme -> Theme)
@@ -120,6 +124,8 @@ type InterruptDoneMsg = {
   readonly type: "tui:interrupt";
   readonly ok: boolean;
 };
+type GitTickMsg = { readonly type: "tuikit:git-tick"; readonly n: number };
+type GitMsg = { readonly type: "tui:git"; readonly status: GitStatus | null };
 type QuitMsg = { readonly type: "tui:quit" };
 
 type Msg =
@@ -128,6 +134,8 @@ type Msg =
   | PromptedMsg
   | ApprovalReplyMsg
   | InterruptDoneMsg
+  | GitTickMsg
+  | GitMsg
   | QuitMsg;
 
 // ---------------------------------------------------------------------------
@@ -142,6 +150,8 @@ interface AppModel {
   readonly palette: PaletteState;
   readonly approval: ApprovalView | null;
   readonly spinnerFrame: number;
+  /** Git state for the workspace, refreshed by a periodic probe Cmd. */
+  readonly gitStatus: GitStatus | null;
   /** Scroll offset (rendered lines from the top). Authoritative only while
    * `followTail` is false; ignored (pinned to bottom) while following. */
   readonly transcriptScroll: number;
@@ -187,6 +197,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     palette: initialPaletteState,
     approval: null,
     spinnerFrame: 0,
+    gitStatus: null,
     transcriptScroll: 0,
     followTail: true,
     focus: "editor",
@@ -196,12 +207,21 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     height: deps.size.rows,
   };
 
-  // -- subscriptions: spinner tick + SSE pump -----------------------------
+  // -- subscriptions: spinner tick + SSE pump + git probe -------------------
   const spinnerSub: Sub<Msg> = tick(80, (n) =>
     ({
       type: "tuikit:tick",
       n,
     }) as Msg);
+
+  // Slow tick driving the git probe: branch + dirty state change only on
+  // user/git actions outside the TUI, so a 2s cadence is plenty fresh. The
+  // probe itself runs inside a Cmd (async, off the update path).
+  const GIT_PROBE_MS = 2000;
+  const gitTickSub: Sub<Msg> = tick(
+    GIT_PROBE_MS,
+    (n) => ({ type: "tuikit:git-tick", n }) as Msg,
+  );
 
   const sseSub: Sub<Msg> = {
     subscribe: (emit) => {
@@ -308,10 +328,16 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     );
     let messages: ChatMessage[] = [...baseMsgs, ...toolMsgs];
     const streaming = model.state.streaming;
-    if (streaming && (streaming.text.length > 0 || streaming.thinking.length > 0)) {
+    if (
+      streaming && (streaming.text.length > 0 || streaming.thinking.length > 0)
+    ) {
       messages = [
         ...messages,
-        { role: "assistant", text: streaming.text, thinking: streaming.thinking },
+        {
+          role: "assistant",
+          text: streaming.text,
+          thinking: streaming.thinking,
+        },
       ];
     }
     return messages;
@@ -359,10 +385,26 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
 
   const toStatusView = (model: AppModel): StatusView => ({
     model: model.state.model ?? "",
-    tokensIn: 0,
-    tokensOut: 0,
+    tokensIn: model.state.tokensIn,
+    tokensOut: model.state.tokensOut,
+    lastInputTokens: model.state.lastInputTokens,
+    contextWindow: model.state.contextWindow ?? client.contextWindow,
+    cwd: deps.workspace,
+    git: model.gitStatus,
+    // The MCP list is known the moment the session was created (client) OR
+    // when session.created replays over SSE — whichever landed first. null
+    // means "handshake still pending" and animates in the status line.
+    mcpServers: client.mcpServers.length > 0
+      ? client.mcpServers
+      : model.state.mcpServers.length > 0
+      ? model.state.mcpServers
+      : model.state.sessionId === null && model.state.model === null
+      ? null
+      : [],
     activity: model.state.turnActive
-      ? (model.state.streaming !== null ? "generating" : "working")
+      ? (model.state.streaming !== null
+        ? model.state.streaming.text.length > 0 ? "generating" : "thinking"
+        : "working")
       : null,
     spinnerFrame: model.spinnerFrame,
   });
@@ -584,6 +626,24 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       case "tuikit:tick":
         return [{ ...model, spinnerFrame: msg.n }];
 
+      case "tuikit:git-tick":
+        return [
+          model,
+          cmd(async () => {
+            const status = await probeGitStatus(deps.workspace);
+            // Skip the model write when nothing changed (the probe is mostly
+            // stable — avoid re-painting every 2s for nothing).
+            const prev = model.gitStatus;
+            const same = prev === null && status === null ||
+              prev !== null && status !== null &&
+                prev.branch === status.branch && prev.dirty === status.dirty;
+            return same ? null : ({ type: "tui:git", status } as Msg);
+          }),
+        ];
+
+      case "tui:git":
+        return [{ ...model, gitStatus: msg.status }];
+
       case "tuikit:error": {
         const message = msg.error instanceof Error
           ? msg.error.message
@@ -763,12 +823,57 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
   };
 
   return {
-    init: () => [initialModel],
+    init: () => [
+      initialModel,
+      // Probe git state for the very first frame (the slow tick only fires
+      // GIT_PROBE_MS in).
+      cmd(async () => {
+        const status = await probeGitStatus(deps.workspace);
+        return { type: "tui:git", status } as Msg;
+      }),
+    ],
     update,
     view,
-    subscriptions: () => [spinnerSub, sseSub],
+    subscriptions: () => [spinnerSub, gitTickSub, sseSub],
     shouldQuit: (model, msg) => model.quitting || msg.type === "tui:quit",
   };
+};
+
+// ---------------------------------------------------------------------------
+// Git probe (best-effort, never throws — outside a repo / no git binary just
+// yields null and the status line hides the slot)
+// ---------------------------------------------------------------------------
+
+const runGit = async (
+  cwd: string,
+  args: readonly string[],
+): Promise<string | null> => {
+  try {
+    const out = await new Deno.Command("git", {
+      args: ["-C", cwd, ...args],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    if (!out.success) return null;
+    return new TextDecoder().decode(out.stdout).trim();
+  } catch {
+    return null;
+  }
+};
+
+/** Probe branch + dirty state for `cwd`. null when not a git work tree. */
+export const probeGitStatus = async (
+  cwd: string,
+): Promise<GitStatus | null> => {
+  const branch = await runGit(cwd, ["branch", "--show-current"]);
+  if (branch === null) return null;
+  // Detached HEAD: --show-current is empty; fall back to the short hash.
+  const name = branch.length > 0
+    ? branch
+    : (await runGit(cwd, ["rev-parse", "--short", "HEAD"])) ?? "";
+  if (name.length === 0) return null;
+  const dirtyOut = await runGit(cwd, ["status", "--porcelain"]);
+  return { branch: name, dirty: (dirtyOut ?? "").length > 0 };
 };
 
 // ---------------------------------------------------------------------------

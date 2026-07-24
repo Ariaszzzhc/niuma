@@ -48,6 +48,12 @@ export interface TuiClientOptions {
 export interface TuiClient {
   /** The session this client is bound to. */
   readonly sessionId: string;
+  /** Resolved context window for the session's model, when the server knows
+   * it (drives the status line's context-usage percentage). */
+  readonly contextWindow: number | null;
+  /** MCP servers the server connected at boot (id + contributed tool count).
+   * Empty when none are configured. */
+  readonly mcpServers: ReadonlyArray<{ id: string; toolCount: number }>;
   /** The open SSE `/events` body; the app consumes it via `parseSseStream`. */
   readonly eventsStream: ReadableStream<Uint8Array>;
   /** Submit a prompt (kicks off an agent turn). */
@@ -94,6 +100,8 @@ export const createTuiClient = async (
 ): Promise<TuiClient> => {
   // 1. Create session ------------------------------------------------------
   let sessionId: string;
+  let contextWindow: number | null = null;
+  let mcpServers: ReadonlyArray<{ id: string; toolCount: number }> = [];
   const createBody: Record<string, unknown> = { workspace: opts.workspace };
   if (opts.model !== undefined) createBody.model = opts.model;
   try {
@@ -107,11 +115,29 @@ export const createTuiClient = async (
         `session create failed (${res.status}) ${await safeText(res)}`,
       );
     }
-    const created = (await res.json()) as { sessionId?: string };
+    const created = (await res.json()) as {
+      sessionId?: string;
+      contextWindow?: number;
+      mcpServers?: Array<{ id: string; toolCount: number }>;
+    };
     if (typeof created.sessionId !== "string") {
       throw new Error("session create returned no sessionId");
     }
     sessionId = created.sessionId;
+    // Older servers omit these; treat both as "unknown / none" rather than
+    // failing the boot.
+    if (
+      typeof created.contextWindow === "number" &&
+      Number.isFinite(created.contextWindow) && created.contextWindow > 0
+    ) {
+      contextWindow = created.contextWindow;
+    }
+    if (Array.isArray(created.mcpServers)) {
+      mcpServers = created.mcpServers.filter(
+        (s): s is { id: string; toolCount: number } =>
+          typeof s?.id === "string" && typeof s?.toolCount === "number",
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`niuma: session create error: ${msg}`);
@@ -159,7 +185,15 @@ export const createTuiClient = async (
       {},
     );
 
-  return { sessionId, eventsStream, prompt, approve, interrupt };
+  return {
+    sessionId,
+    contextWindow,
+    mcpServers,
+    eventsStream,
+    prompt,
+    approve,
+    interrupt,
+  };
 };
 
 /**

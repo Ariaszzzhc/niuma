@@ -167,14 +167,32 @@ const wrapPlain = (text: string, width: number): string[] => {
 
 /**
  * Render assistant thinking/reasoning as dimmed, italic lines above the body.
- * Word-wrapped like plain text; visually de-emphasised (textDim + dim + italic)
- * so it reads as secondary to the answer. Both finalized and still-streaming
- * thinking use this — the model is the same shape either way.
+ * Each line carries a "⋮ " gutter prefix (hanging indent on wraps) and the
+ * text is word-wrapped into the remaining width; visually de-emphasised
+ * (textDim + dim + italic) so it reads as secondary to the answer. Both
+ * finalized and still-streaming thinking use this — the model is the same
+ * shape either way.
  */
-const renderThinking = (text: string, width: number, theme: Theme): StyledLine[] => {
-  const wrapped = wrapPlain(text, Math.max(1, width));
-  return wrapped.map((line) => ({
-    spans: [{ text: line, style: { fg: theme.textDim, dim: true, italic: true } }],
+const renderThinking = (
+  text: string,
+  width: number,
+  theme: Theme,
+): StyledLine[] => {
+  const prefix = "⋮ ";
+  const prefixW = stringWidth(prefix);
+  const contentW = Math.max(1, width - prefixW);
+  const gutter: StyledSpan = {
+    text: prefix,
+    style: { fg: theme.textDim, dim: true },
+  };
+  const indent: StyledSpan = { text: " ".repeat(prefixW), style: {} };
+  const wrapped = wrapPlain(text, contentW);
+  if (wrapped.length === 0) return [{ spans: [gutter] }];
+  return wrapped.map((line, idx) => ({
+    spans: [
+      idx === 0 ? gutter : indent,
+      { text: line, style: { fg: theme.textDim, dim: true, italic: true } },
+    ],
   }));
 };
 

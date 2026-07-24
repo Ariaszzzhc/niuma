@@ -15,10 +15,25 @@ const recordedBase = {
   sessionId: Schema.String,
 };
 
+// `contextWindow` is the resolved window for the session's model (the status
+// line shows context usage against it); absent when the server cannot resolve
+// one (injected test infra). `mcpServers` lists the MCP servers that came up
+// at boot — the TUI animates "connecting" until this event arrives with the
+// final list. Both are optional so replays of pre-change event logs still
+// decode.
+const McpServerStatus_ = Schema.Struct({
+  id: Schema.String,
+  toolCount: Schema.Number,
+});
+export type McpServerStatus = Schema.Schema.Type<typeof McpServerStatus_>;
+export const McpServerStatus: Schema.Codec<McpServerStatus> = McpServerStatus_;
+
 // deno-lint-ignore no-slow-types
 const SessionCreatedData_ = Schema.Struct({
   workspace: Schema.String,
   model: Schema.String,
+  contextWindow: Schema.optional(Schema.Number),
+  mcpServers: Schema.optional(Schema.Array(McpServerStatus_)),
 });
 export type SessionCreatedData = Schema.Schema.Type<typeof SessionCreatedData_>;
 export const SessionCreatedData: Schema.Codec<SessionCreatedData> =

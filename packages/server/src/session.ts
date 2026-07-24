@@ -58,10 +58,47 @@ const newSessionId = (): string => {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
+// ---------------------------------------------------------------------------
+// Session-manager environment metadata
+// ---------------------------------------------------------------------------
+// Ambient facts the TUI status line wants at boot (before the first turn):
+// the resolved context-window size and the MCP servers that came up. Captured
+// once on the service so any consumer (HTTP handlers, future in-process
+// callers) reads the same snapshot.
+
+export interface McpServerStatus {
+  readonly id: string;
+  /** Tools the server contributed to the shared registry. */
+  readonly toolCount: number;
+}
+
+export interface SessionManagerEnv {
+  readonly contextWindow?: number;
+  readonly mcpServers: ReadonlyArray<McpServerStatus>;
+}
+
+const sessionEnv = new Map<SessionManager, SessionManagerEnv>();
+
+/** Attach boot metadata to a SessionManager instance (bootstrap-only). */
+export const bindSessionEnv = (
+  sm: SessionManager,
+  env: SessionManagerEnv,
+): SessionManager => {
+  sessionEnv.set(sm, env);
+  return sm;
+};
+
+/** Read the boot metadata bound to a SessionManager (empty when unbound —
+ * e.g. a hand-rolled test double that never went through bootstrap). */
+export const getSessionEnv = (
+  sm: SessionManager,
+): SessionManagerEnv => sessionEnv.get(sm) ?? { mcpServers: [] };
+
 export interface SessionManagerInfra extends AgentInfra {}
 
 export const makeSessionManager = (
   infra: SessionManagerInfra,
+  env: SessionManagerEnv = { mcpServers: [] },
 ): Effect.Effect<SessionManager, never, Kernel> =>
   Effect.gen(function* () {
     const kernel = yield* Kernel;
@@ -75,7 +112,14 @@ export const makeSessionManager = (
         yield* kernel.append({
           type: "session.created",
           sessionId,
-          data: { workspace, model },
+          data: {
+            workspace,
+            model,
+            ...(infra.defaultContextWindow !== undefined
+              ? { contextWindow: infra.defaultContextWindow }
+              : {}),
+            mcpServers: [...env.mcpServers],
+          },
         });
         const info = yield* kernel.projection().pipe(
           Effect.flatMap((p) => Effect.promise(() => p.getSession(sessionId))),
@@ -293,5 +337,6 @@ export const makeSessionManager = (
 
 export const SessionManagerLive = (
   infra: SessionManagerInfra,
+  env?: SessionManagerEnv,
 ): Layer.Layer<SessionManager, never, Kernel> =>
-  Layer.effect(SessionManager, makeSessionManager(infra));
+  Layer.effect(SessionManager, makeSessionManager(infra, env));

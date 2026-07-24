@@ -106,6 +106,46 @@ Deno.test("transcript: content shorter than viewport is blank-padded", () => {
   assertEquals(lineText(lines[4]).trim().length, 0);
 });
 
+Deno.test("transcript: thinking renders with a ⋮ gutter, dim + italic", () => {
+  const state: TranscriptState = {
+    messages: [
+      {
+        role: "assistant",
+        text: "answer",
+        thinking: "let me think about this",
+      },
+    ],
+    scrollOffset: 0,
+    followTail: true,
+  };
+  const lines = renderTranscriptContent(state, 40, THEME);
+  // thinking line sits above the markdown body.
+  assertEquals(lines.length >= 2, true);
+  const thinkLine = lines[0];
+  assertEquals(lineText(thinkLine).startsWith("⋮ "), true);
+  assertEquals(lineText(thinkLine).includes("let me think about this"), true);
+  const textSpan = thinkLine.spans[1];
+  assertEquals(textSpan.style.italic, true);
+  assertEquals(textSpan.style.dim, true);
+  assertEquals(colorEq(textSpan.style.fg, THEME.textDim), true);
+});
+
+Deno.test("transcript: thinking wraps with a hanging indent", () => {
+  const long = Array.from({ length: 30 }, (_, i) => `w${i}`).join(" ");
+  const state: TranscriptState = {
+    messages: [{ role: "assistant", text: "", thinking: long }],
+    scrollOffset: 0,
+    followTail: true,
+  };
+  const lines = renderTranscriptContent(state, 24, THEME);
+  assertEquals(lines.length > 1, true);
+  // First line carries the gutter, continuations are indented under the text.
+  assertEquals(lineText(lines[0]).startsWith("⋮ "), true);
+  assertEquals(lineText(lines[1]).startsWith("  "), true);
+  // No line exceeds the width.
+  for (const l of lines) assertGreaterOrEqual(24, lineWidth(l));
+});
+
 Deno.test("transcript: scroll up breaks follow and moves the window up", () => {
   const state: TranscriptState = {
     messages: alphaTranscript(8),
@@ -316,14 +356,27 @@ Deno.test("tool_call: never overflows the given width", () => {
 // statusline
 // ===========================================================================
 
+const baseStatus = (over: Partial<StatusView> = {}): StatusView => ({
+  model: "",
+  tokensIn: 0,
+  tokensOut: 0,
+  lastInputTokens: 0,
+  contextWindow: null,
+  cwd: "",
+  git: null,
+  mcpServers: [],
+  activity: null,
+  spinnerFrame: 0,
+  ...over,
+});
+
 Deno.test("statusline: fits exactly to width at several widths (with activity)", () => {
-  const view: StatusView = {
+  const view = baseStatus({
     model: "claude-sonnet-4.5",
     tokensIn: 1234,
     tokensOut: 500,
     activity: "thinking",
-    spinnerFrame: 0,
-  };
+  });
   for (const w of [80, 60, 40, 28]) {
     const line = renderStatusline(view, w, THEME);
     assertEquals(lineWidth(line), w, `width ${w} should fit exactly`);
@@ -331,13 +384,10 @@ Deno.test("statusline: fits exactly to width at several widths (with activity)",
 });
 
 Deno.test("statusline: idle (no activity) still fits width with metrics only", () => {
-  const view: StatusView = {
+  const view = baseStatus({
     model: "claude-sonnet-4.5",
     tokensIn: 99,
-    tokensOut: 0,
-    activity: null,
-    spinnerFrame: 0,
-  };
+  });
   const line = renderStatusline(view, 60, THEME);
   assertEquals(lineWidth(line), 60);
   const text = lineText(line);
@@ -349,13 +399,7 @@ Deno.test("statusline: idle (no activity) still fits width with metrics only", (
 });
 
 Deno.test("statusline: activity cluster is gradient-painted (many spans)", () => {
-  const view: StatusView = {
-    model: "m",
-    tokensIn: 0,
-    tokensOut: 0,
-    activity: "working",
-    spinnerFrame: 3,
-  };
+  const view = baseStatus({ model: "m", activity: "working", spinnerFrame: 3 });
   const line = renderStatusline(view, 40, THEME);
   // gradient returns one span per cluster -> several spans for "⠼ working"
   assert(
@@ -366,16 +410,106 @@ Deno.test("statusline: activity cluster is gradient-painted (many spans)", () =>
 });
 
 Deno.test("statusline: token counts compact-format k / M", () => {
-  const view: StatusView = {
-    model: "m",
-    tokensIn: 1500,
-    tokensOut: 1_500_000,
-    activity: null,
-    spinnerFrame: 0,
-  };
+  const view = baseStatus({ tokensIn: 1500, tokensOut: 1_500_000 });
   const text = lineText(renderStatusline(view, 60, THEME));
   assertEquals(text.includes("↑1.5k"), true);
   assertEquals(text.includes("↓1.5M"), true);
+});
+
+Deno.test("statusline: context fullness renders as ctx n%", () => {
+  const view = baseStatus({
+    lastInputTokens: 24_000,
+    contextWindow: 200_000,
+  });
+  const text = lineText(renderStatusline(view, 80, THEME));
+  assertEquals(text.includes("ctx 12%"), true);
+});
+
+Deno.test("statusline: no ctx slot when the window is unknown", () => {
+  const view = baseStatus({ lastInputTokens: 25_000, contextWindow: null });
+  const text = lineText(renderStatusline(view, 80, THEME));
+  assertFalse(text.includes("ctx"));
+});
+
+Deno.test("statusline: cwd is home-abbreviated, git branch + dirty mark shown", () => {
+  const home = Deno.env.get("HOME") ?? "/home/u";
+  const view = baseStatus({
+    cwd: `${home}/Projects/niuma`,
+    git: { branch: "main", dirty: true },
+  });
+  const line = renderStatusline(view, 100, THEME);
+  const text = lineText(line);
+  assertEquals(text.includes("~/Projects/niuma"), true);
+  assertEquals(text.includes("main"), true);
+  // dirty mark painted in the warning colour
+  const dirty = line.spans.find((s) => s.text === "±");
+  assert(dirty !== undefined, "expected a dirty ± span");
+  assertEquals(colorEq(dirty.style.fg, THEME.warning), true);
+});
+
+Deno.test("statusline: mcp spins while pending, counts when connected", () => {
+  const pending = lineText(
+    renderStatusline(
+      baseStatus({ mcpServers: null, spinnerFrame: 0 }),
+      80,
+      THEME,
+    ),
+  );
+  assertEquals(pending.includes("⠋ mcp"), true);
+
+  const connected = lineText(
+    renderStatusline(
+      baseStatus({
+        mcpServers: [
+          { id: "context7", toolCount: 2 },
+          { id: "grep", toolCount: 1 },
+        ],
+      }),
+      80,
+      THEME,
+    ),
+  );
+  assertEquals(connected.includes("mcp 2"), true);
+  assertFalse(connected.includes("⠋ mcp"));
+});
+
+Deno.test("statusline: full row composes and fits at a realistic width", () => {
+  const view = baseStatus({
+    model: "kimi-k3",
+    tokensIn: 12_345,
+    tokensOut: 678,
+    lastInputTokens: 100_000,
+    contextWindow: 1_000_000,
+    cwd: "/Users/arias/Projects/niuma",
+    git: { branch: "feat/status", dirty: false },
+    mcpServers: [{ id: "context7", toolCount: 2 }],
+    activity: "generating",
+    spinnerFrame: 2,
+  });
+  const line = renderStatusline(view, 100, THEME);
+  assertEquals(lineWidth(line), 100);
+  const text = lineText(line);
+  assertEquals(text.includes("kimi-k3"), true);
+  assertEquals(text.includes("ctx 10%"), true);
+  assertEquals(text.includes("feat/status"), true);
+  assertEquals(text.includes("mcp 1"), true);
+  assertEquals(text.includes("generating"), true);
+});
+
+Deno.test("statusline: clusters drop gracefully at narrow widths", () => {
+  const view = baseStatus({
+    model: "a-very-long-model-name-here",
+    tokensIn: 999,
+    tokensOut: 999,
+    cwd: "/some/deeply/nested/workspace/path",
+    git: { branch: "long-branch-name", dirty: true },
+    mcpServers: [{ id: "x", toolCount: 1 }],
+    activity: "working",
+  });
+  for (const w of [30, 24, 16]) {
+    const line = renderStatusline(view, w, THEME);
+    assertEquals(lineWidth(line), w, `width ${w} should fit exactly`);
+  }
 });
 
 // ===========================================================================

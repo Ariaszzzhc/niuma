@@ -7,7 +7,7 @@ import {
 } from "@niuma/schema";
 import { Effect, Exit, type ManagedRuntime, Stream } from "effect";
 import { Kernel } from "../kernel.ts";
-import { SessionManager } from "../session.ts";
+import { getSessionEnv, SessionManager } from "../session.ts";
 import { httpError } from "../error.ts";
 
 // The set of services the handlers need from the runtime.
@@ -19,6 +19,10 @@ export interface Handlers {
     sessionId: string;
     workspace: string;
     model: string;
+    /** Resolved context window for the session's model, when known. */
+    contextWindow?: number;
+    /** MCP servers that came up at boot (empty until/without any). */
+    mcpServers: ReadonlyArray<{ id: string; toolCount: number }>;
   }>;
   readonly listSessions: () => Promise<ReadonlyArray<SessionInfo>>;
   readonly getSession: (
@@ -82,10 +86,15 @@ export const makeHandlers = (
           workspace: req.workspace ?? ".",
           model: req.model ?? "default",
         });
+        const env = getSessionEnv(sm);
         return {
           sessionId: info.sessionId,
           workspace: info.workspace,
           model: info.model,
+          ...(env.contextWindow !== undefined
+            ? { contextWindow: env.contextWindow }
+            : {}),
+          mcpServers: env.mcpServers,
         };
       }),
       "session_create_failed",

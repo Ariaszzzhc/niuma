@@ -80,6 +80,17 @@ export interface TuiModelState {
   readonly sessionId: string | null;
   readonly workspace: string | null;
   readonly model: string | null;
+  /** Resolved context window from session.created (drives the status line's
+   * context-usage percentage); null until/ unless the server reports it. */
+  readonly contextWindow: number | null;
+  /** MCP servers connected at boot (empty until session.created arrives). */
+  readonly mcpServers: ReadonlyArray<{ id: string; toolCount: number }>;
+  /** Cumulative billed tokens this session (assistant.message usage). */
+  readonly tokensIn: number;
+  readonly tokensOut: number;
+  /** Latest assistant.message inputTokens — the best proxy for how full the
+   * context window currently is. */
+  readonly lastInputTokens: number;
   readonly messages: readonly TuiMessage[];
   readonly streaming: StreamingText | null;
   readonly toolCalls: readonly TuiToolCall[];
@@ -108,6 +119,11 @@ export const initialModelState = (): TuiModelState => ({
   sessionId: null,
   workspace: null,
   model: null,
+  contextWindow: null,
+  mcpServers: [],
+  tokensIn: 0,
+  tokensOut: 0,
+  lastInputTokens: 0,
   messages: [],
   streaming: null,
   toolCalls: [],
@@ -169,7 +185,10 @@ const joinThinkingParts = (parts: unknown): string => {
   if (!Array.isArray(parts)) return "";
   const out: string[] = [];
   for (const p of parts) {
-    if (p !== null && typeof p === "object" && (p as { type?: unknown }).type === "thinking") {
+    if (
+      p !== null && typeof p === "object" &&
+      (p as { type?: unknown }).type === "thinking"
+    ) {
       const t = (p as { text?: unknown }).text;
       if (typeof t === "string") out.push(t);
     }
@@ -189,6 +208,34 @@ const extractResultLines = (content: unknown): string[] => {
     ) {
       const t = (block as { text?: unknown }).text;
       if (typeof t === "string") out.push(...t.split("\n"));
+    }
+  }
+  return out;
+};
+
+/** Extract `{inputTokens, outputTokens}` from a `usage` payload, tolerantly. */
+const extractUsage = (
+  usage: unknown,
+): { input: number; output: number } | null => {
+  if (usage === null || typeof usage !== "object") return null;
+  const input = asNumber((usage as { inputTokens?: unknown }).inputTokens);
+  const output = asNumber((usage as { outputTokens?: unknown }).outputTokens);
+  if (input === null || output === null) return null;
+  return { input, output };
+};
+
+/** Extract the mcpServers array from a session.created payload. */
+const extractMcpServers = (
+  v: unknown,
+): ReadonlyArray<{ id: string; toolCount: number }> => {
+  if (!Array.isArray(v)) return [];
+  const out: Array<{ id: string; toolCount: number }> = [];
+  for (const s of v) {
+    if (s === null || typeof s !== "object") continue;
+    const id = (s as { id?: unknown }).id;
+    const toolCount = asNumber((s as { toolCount?: unknown }).toolCount);
+    if (typeof id === "string" && toolCount !== null) {
+      out.push({ id, toolCount });
     }
   }
   return out;
@@ -252,12 +299,16 @@ export const reduceEvent = (
 
   switch (ev.type) {
     // -- session lifecycle -------------------------------------------------
-    case "session.created":
+    case "session.created": {
+      const mcp = extractMcpServers(d["mcpServers"]);
       return {
         ...model,
         workspace: asString(d["workspace"]) ?? model.workspace,
         model: asString(d["model"]) ?? model.model,
+        contextWindow: asNumber(d["contextWindow"]) ?? model.contextWindow,
+        mcpServers: mcp.length > 0 ? mcp : model.mcpServers,
       };
+    }
 
     case "turn.started":
       return { ...model, turnActive: true };
@@ -316,8 +367,17 @@ export const reduceEvent = (
         return { ...model, streaming: null };
       }
       const id = model.streaming?.id ?? nextId("a");
+      // Accumulate billed usage; keep the latest inputTokens as the
+      // context-fullness proxy for the status line.
+      const usage = extractUsage(d["usage"]);
+      const tokensIn = model.tokensIn + (usage?.input ?? 0);
+      const tokensOut = model.tokensOut + (usage?.output ?? 0);
+      const lastInputTokens = usage?.input ?? model.lastInputTokens;
       return {
         ...model,
+        tokensIn,
+        tokensOut,
+        lastInputTokens,
         messages: [
           ...model.messages,
           {

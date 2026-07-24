@@ -107,7 +107,10 @@ describe("reduce_event: streaming thinking accumulation", () => {
     // it. Without this the reducer would drop the reasoning on the floor.
     const m = reduceEventSequence([
       ev("thinking.delta", { delta: "reasoning only" }),
-      ev("assistant.message", { parts: [], usage: { inputTokens: 0, outputTokens: 0 } }),
+      ev("assistant.message", {
+        parts: [],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      }),
     ]);
     assertStrictEquals(m.streaming, null);
     assertStrictEquals(m.messages.length, 1);
@@ -145,7 +148,10 @@ describe("reduce_event: streaming thinking accumulation", () => {
     assertStrictEquals(m.messages.length, 1);
     assertStrictEquals(m.messages[0].text, "the answer");
     assertStrictEquals(m.messages[0].thinking, "let me reason");
-    assert(m.messages[0].thinking!.includes("sig-abc123") === false, "encrypted credential leaked into thinking text");
+    assert(
+      m.messages[0].thinking!.includes("sig-abc123") === false,
+      "encrypted credential leaked into thinking text",
+    );
   });
 
   it("assistant.message joins multiple ThinkingParts in order", () => {
@@ -171,7 +177,11 @@ describe("reduce_event: streaming thinking accumulation", () => {
     // message, just with no body text.
     const m = reduceEventSequence([
       ev("assistant.message", {
-        parts: [{ type: "thinking", text: "I will not comply", encrypted: "sig-r" }],
+        parts: [{
+          type: "thinking",
+          text: "I will not comply",
+          encrypted: "sig-r",
+        }],
         usage: { inputTokens: 0, outputTokens: 0 },
       }),
     ]);
