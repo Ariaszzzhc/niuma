@@ -1,4 +1,5 @@
 import { Effect, Layer, Stream } from "effect";
+import { niumaFetch } from "./http.ts";
 import { Provider, type ProviderAdapter } from "./contract.ts";
 import type { ChatRequest, ModelRef } from "./domain.ts";
 import {
@@ -109,7 +110,7 @@ const fetchCompletion = (
 ): Effect.Effect<Response, ProviderError> =>
   Effect.tryPromise({
     try: () =>
-      fetch(`${config.baseUrl}/chat/completions`, {
+      niumaFetch(`${config.baseUrl}/chat/completions`, {
         method: "POST",
         headers: headersFor(config.apiKey),
         body: buildBody(config, req),
@@ -124,7 +125,7 @@ const fetchModels = (
 ): Effect.Effect<ReadonlyArray<ModelRef>, ProviderError> =>
   Effect.tryPromise({
     try: () =>
-      fetch(`${config.baseUrl}/models`, {
+      niumaFetch(`${config.baseUrl}/models`, {
         method: "GET",
         headers: headersFor(config.apiKey),
       }),

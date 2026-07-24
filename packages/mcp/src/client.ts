@@ -11,7 +11,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { getLogger } from "@logtape/logtape";
-import type { McpConfig, McpServerConfig } from "@niuma/config";
+import { type McpConfig, type McpServerConfig, VERSION } from "@niuma/config";
 import type { Accesses, Tool } from "@niuma/tools";
 import { mcpToolToNiumaTool } from "./tool.ts";
 
@@ -47,7 +47,7 @@ export const connectMcpServers = async (
 const connectServer = async (
   server: McpServerConfig,
 ): Promise<McpServerHandle> => {
-  const client = new Client({ name: "niuma", version: "0.0.0" });
+  const client = new Client({ name: "niuma", version: VERSION });
   const { transport, accesses } = makeTransport(server);
   await client.connect(transport);
 

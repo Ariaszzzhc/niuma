@@ -1,5 +1,6 @@
 import { assertEquals } from "jsr:@std/assert@^1.0.0";
 import { Effect, Stream } from "effect";
+import { VERSION } from "@niuma/config";
 import {
   makeAnthropicAdapter,
   messagesToAnthropic,
@@ -266,6 +267,9 @@ Deno.test("Anthropic request headers use x-api-key and anthropic-version, no Aut
   assertEquals(map["x-api-key"], "test-key");
   assertEquals(map["anthropic-version"], "2023-06-01");
   assertEquals("authorization" in map, false);
+  // The niuma UA is stamped by the shared fetch wrapper, not headersFor — this
+  // guards that the adapter routes through niumaFetch.
+  assertEquals(map["user-agent"], `niuma/${VERSION}`);
   assertEquals(url, "https://example.test/v1/messages");
 });
 

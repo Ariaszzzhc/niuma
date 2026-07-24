@@ -46,6 +46,8 @@ export type {
 
 export { parseOpenAISSE } from "./src/sse.ts";
 
+export { niumaFetch } from "./src/http.ts";
+
 export {
   makeOpenAIAdapter,
   normalizeConfig,
