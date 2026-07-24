@@ -12,10 +12,16 @@ export interface Message {
   readonly toolCalls?: ReadonlyArray<ToolCall>;
   readonly toolCallId?: string;
   readonly name?: string;
-  // Provider reasoning/thinking text replayed back to the wire on a follow-up
+  // Provider reasoning/thinking replayed back to the wire on a follow-up
   // turn (convert-layer product). `keep` filtering happens upstream in the
-  // context projection layer; this field is the raw material.
-  readonly reasoningContent?: string;
+  // context projection layer; this field is the raw material. The array
+  // mirrors ThinkingPart's multi-block structure: each block's `text` is the
+  // cross-provider body, `encrypted` is an opaque replay credential (e.g.
+  // Anthropic signature) held verbatim for credential-protocol providers.
+  readonly reasoningContent?: ReadonlyArray<{
+    readonly text: string;
+    readonly encrypted?: string;
+  }>;
 }
 
 export interface ToolDef {

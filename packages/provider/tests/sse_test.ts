@@ -65,7 +65,10 @@ Deno.test("messagesToOpenAI emits assistant reasoning_content", () => {
   assertEquals(messagesToOpenAI([{
     role: "assistant",
     content: "answer",
-    reasoningContent: "reasoning",
+    reasoningContent: [
+      { text: "rea" },
+      { text: "soning", encrypted: "opaque" },
+    ],
   }]), [{
     role: "assistant",
     content: "answer",

@@ -81,6 +81,12 @@ export interface ModelConfig {
 export interface ProviderConfig {
   readonly id: string;
   readonly name?: string;
+  /** Wire-protocol flavour this provider speaks. Defaults to "openai" when
+   * the provider table is partial (limits-only); the resolver / bootstrap
+   * falls back to the same default when the field is absent. Free string
+   * names would be more permissive, but a closed set lets the bootstrap
+   * dispatch without a runtime "unknown protocol" branch. */
+  readonly type?: ProviderType;
   /** Required in the file that DEFINES the provider; partial project-level
    * tables (limits only) omit it and inherit via mergeConfig. Enforced at
    * resolveModelRef time against the merged config. */
@@ -163,6 +169,34 @@ const optThinkingKeep = (
   return v as "all" | "none";
 };
 
+/** Wire-protocol flavours a provider can speak. niuma core only knows how to
+ * dispatch on this label; the legal values themselves are config-level
+ * vocabulary (mirrors how `thinking_effort` is a free string). */
+export const PROVIDER_TYPES = ["openai", "anthropic"] as const;
+export type ProviderType = (typeof PROVIDER_TYPES)[number];
+
+/** Canonical endpoint for the anthropic flavour when the provider table
+ * leaves base_url unset. Lives next to the type vocabulary so config and
+ * bootstrap share one default. */
+export const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
+
+const optProviderType = (
+  obj: Record<string, unknown>,
+  key: string,
+  path: string,
+): ProviderType | undefined => {
+  const v = obj[key];
+  if (v === undefined) return undefined;
+  if (typeof v !== "string" || !(PROVIDER_TYPES as readonly string[]).includes(v)) {
+    throw new ConfigError(
+      `config: ${path}.${key} must be one of ${
+        PROVIDER_TYPES.join("|")
+      }, got ${typeof v === "string" ? `"${v}"` : typeof v}`,
+    );
+  }
+  return v as ProviderType;
+};
+
 const parseModelConfig = (
   raw: unknown,
   path: string,
@@ -197,12 +231,14 @@ const parseProvider = (
     models[modelId] = parseModelConfig(m, `${path}.models.${modelId}`);
   }
   const name = optString(raw, "name", path);
+  const type = optProviderType(raw, "type", path);
   const apiKey = optString(raw, "api_key", path);
   const baseUrl = optString(raw, "base_url", path)?.replace(/\/+$/, "");
   return {
     id,
     ...(baseUrl !== undefined ? { baseUrl } : {}),
     ...(name !== undefined ? { name } : {}),
+    ...(type !== undefined ? { type } : {}),
     ...(apiKey !== undefined ? { apiKey } : {}),
     models,
   };
@@ -292,8 +328,8 @@ export const mergeConfig = (
   const providers: Record<string, ProviderConfig> = { ...base.providers };
   for (const [id, p] of Object.entries(override.providers)) {
     const existing = providers[id];
-    // baseUrl/name/apiKey inherit from the base when the override's table is
-    // partial (limits-only); models merge per id.
+    // baseUrl/name/apiKey/type inherit from the base when the override's
+    // table is partial (limits-only); models merge per id.
     providers[id] = existing
       ? {
         ...existing,
@@ -430,14 +466,19 @@ export const resolveModelRef = (
         (known.length > 0 ? ` (configured: ${known.join(", ")})` : ""),
     );
   }
-  if (!provider.baseUrl) {
+  // base_url is required for the default openai flavour; anthropic providers
+  // may omit it and fall back to the protocol's canonical host (the bootstrap
+  // substitutes https://api.anthropic.com when the table leaves it unset).
+  const baseUrl = provider.baseUrl ??
+    (provider.type === "anthropic" ? ANTHROPIC_DEFAULT_BASE_URL : undefined);
+  if (!baseUrl) {
     throw new ConfigError(
       `config: provider "${providerId}" has no base_url. Add one to its ` +
         `[provider.${providerId}] table in config.toml`,
     );
   }
   return {
-    provider: provider as ProviderConfig & { readonly baseUrl: string },
+    provider: { ...provider, baseUrl },
     modelId,
     model: provider.models[modelId] ?? {
       contextWindow: DEFAULT_CONTEXT_WINDOW,

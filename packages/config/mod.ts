@@ -4,6 +4,7 @@ export { niumaPaths } from "./src/paths.ts";
 export type { NiumaPaths } from "./src/paths.ts";
 
 export {
+  ANTHROPIC_DEFAULT_BASE_URL,
   ConfigError,
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_MAX_OUTPUT,
@@ -16,6 +17,7 @@ export {
   PROJECT_CONFIG_BASENAME,
   PROJECT_DIR_BASENAME,
   projectConfigDirs,
+  PROVIDER_TYPES,
   resolveModelRef,
   substituteEnv,
 } from "./src/config.ts";
@@ -26,6 +28,7 @@ export type {
   LogLevel,
   ModelConfig,
   ProviderConfig,
+  ProviderType,
   ResolvedModel,
 } from "./src/config.ts";
 

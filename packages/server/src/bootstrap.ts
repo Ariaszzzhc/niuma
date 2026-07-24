@@ -10,11 +10,13 @@ import {
 } from "./session.ts";
 import { type DataPaths, dataPaths } from "./paths.ts";
 import {
+  makeAnthropicAdapter,
   makeOpenAIAdapter,
   type ProviderAdapter,
   type ThinkingConfig,
 } from "@niuma/provider";
 import {
+  ANTHROPIC_DEFAULT_BASE_URL,
   type NiumaConfig,
   niumaPaths,
   ConfigError,
@@ -335,6 +337,14 @@ const thinkingFromModel = (
  *   1. auth.json[<providerId>]      (the canonical credential store)
  *   2. provider api_key with {env:VAR} substitution (explicit escape hatch)
  * Missing credentials fail at boot with a pointer to both locations.
+ *
+ * Dispatch is driven by `provider.type` (default "openai"). Anthropic's
+ * wire protocol has its own host — https://api.anthropic.com — independent
+ * of the OpenAI-compatible defaults, so we substitute it whenever the
+ * provider's table leaves baseUrl unset. Once the dispatch reaches the
+ * adapter factory, the protocol- specific concerns (header shape, payload
+ * schema, streaming) are the adapter's business; this file only knows the
+ * two labels and their default endpoints.
  */
 const makeProviderFromConfig = async (config: NiumaConfig, ref?: string) => {
   const modelRef = ref ?? config.model;
@@ -359,11 +369,23 @@ const makeProviderFromConfig = async (config: NiumaConfig, ref?: string) => {
         `  { "${resolved.provider.id}": { "type": "api", "key": "..." } }`,
     );
   }
-  return makeOpenAIAdapter({
-    baseUrl: resolved.provider.baseUrl,
-    apiKey,
-    defaultModel: resolved.modelId,
-  });
+  switch (resolved.provider.type ?? "openai") {
+    case "anthropic":
+      // resolveModelRef already substitutes ANTHROPIC_DEFAULT_BASE_URL for a
+      // base-url-less anthropic table; the ?? here is belt-and-braces for any
+      // future caller that bypasses the resolver.
+      return makeAnthropicAdapter({
+        baseUrl: resolved.provider.baseUrl ?? ANTHROPIC_DEFAULT_BASE_URL,
+        apiKey,
+        defaultModel: resolved.modelId,
+      });
+    case "openai":
+      return makeOpenAIAdapter({
+        baseUrl: resolved.provider.baseUrl,
+        apiKey,
+        defaultModel: resolved.modelId,
+      });
+  }
 };
 
 export { Kernel, KernelLive, SessionManager };

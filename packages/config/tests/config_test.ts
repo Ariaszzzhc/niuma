@@ -1,6 +1,7 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import {
+  ANTHROPIC_DEFAULT_BASE_URL,
   loadConfigFile,
   loadMergedConfig,
   mergeConfig,
@@ -57,6 +58,22 @@ Deno.test("parseConfig: provider without base_url parses (partial table), resolv
   );
 });
 
+Deno.test("resolveModelRef: anthropic provider without base_url falls back to the canonical host", () => {
+  const c = parseConfig(`
+[provider.anthropic]
+type = "anthropic"
+`);
+  const r = resolveModelRef(c, "anthropic/claude-sonnet");
+  assertEquals(r.provider.baseUrl, ANTHROPIC_DEFAULT_BASE_URL);
+  // openai flavour (and untyped providers) still require an explicit base_url.
+  const untyped = parseConfig(`[provider.x]`);
+  assertThrows(
+    () => resolveModelRef(untyped, "x/m"),
+    ConfigError,
+    "no base_url",
+  );
+});
+
 Deno.test("parseConfig: wrong field types are rejected", () => {
   assertThrows(
     () =>
@@ -75,6 +92,51 @@ context_window = "128k"
     "log_level",
   );
   assertThrows(() => parseConfig(`model = 3`), ConfigError, "string");
+});
+
+Deno.test("parseConfig: provider.type defaults to undefined, accepts openai/anthropic", () => {
+  // Absent → undefined (the consumer, not config, picks the default protocol).
+  const c0 = parseConfig(`
+[provider.x]
+base_url = "https://x"
+`);
+  assertEquals(c0.providers.x!.type, undefined);
+  const c1 = parseConfig(`
+[provider.anthropic]
+type = "anthropic"
+base_url = "https://api.anthropic.com"
+`);
+  assertEquals(c1.providers.anthropic!.type, "anthropic");
+  const c2 = parseConfig(`
+[provider.openai]
+type = "openai"
+base_url = "https://api.openai.com/v1"
+`);
+  assertEquals(c2.providers.openai!.type, "openai");
+});
+
+Deno.test("parseConfig: invalid provider.type is rejected", () => {
+  assertThrows(
+    () =>
+      parseConfig(`
+[provider.x]
+type = "cohere"
+base_url = "https://x"
+`),
+    ConfigError,
+    "provider.x.type must be one of openai|anthropic",
+  );
+  // Non-string also rejected — keeps the surface honest about the union.
+  assertThrows(
+    () =>
+      parseConfig(`
+[provider.x]
+type = 1
+base_url = "https://x"
+`),
+    ConfigError,
+    "provider.x.type must be one of openai|anthropic",
+  );
 });
 
 Deno.test("parseConfig: undeclared model gets default limits", () => {
@@ -206,6 +268,29 @@ Deno.test("mergeConfig: empty override is the identity", () => {
     `model = "a/m"\n[provider.a]\nbase_url = "https://a"`,
   );
   assertEquals(mergeConfig(base, parseConfig("")), base);
+});
+
+Deno.test("mergeConfig: provider.type inherits from base, override wins", () => {
+  const base = parseConfig(`
+[provider.anthropic]
+type = "anthropic"
+base_url = "https://api.anthropic.com"
+`);
+  // Partial override (limits-only) — base.type should survive.
+  const limitsOnly = parseConfig(`
+[provider.anthropic.models.claude-sonnet]
+context_window = 200000
+`);
+  const merged1 = mergeConfig(base, limitsOnly);
+  assertEquals(merged1.providers.anthropic!.type, "anthropic");
+
+  // Override that explicitly sets type replaces the base.
+  const override = parseConfig(`
+[provider.anthropic]
+type = "openai"
+`);
+  const merged2 = mergeConfig(base, override);
+  assertEquals(merged2.providers.anthropic!.type, "openai");
 });
 
 Deno.test("loadMergedConfig: project file overrides the global one", async () => {

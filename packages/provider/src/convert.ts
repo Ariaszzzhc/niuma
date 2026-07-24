@@ -50,8 +50,15 @@ export const messagesToOpenAI = (
         };
       case "assistant": {
         const calls = m.toolCalls;
+        // Chat Completions has no replay-credential concept, so blocks'
+        // `encrypted` is intentionally dropped here: texts concatenate into
+        // the single wire `reasoning_content` string. Credential-protocol
+        // providers (Anthropic) get their own convert layer that replays
+        // blocks intact.
         const reasoning = m.reasoningContent !== undefined
-          ? { reasoning_content: m.reasoningContent }
+          ? {
+            reasoning_content: m.reasoningContent.map((b) => b.text).join(""),
+          }
           : {};
         if (calls && calls.length > 0) {
           return {
@@ -109,8 +116,10 @@ export const openAIToMessages = (
         const base: Message = {
           role: "assistant",
           content: m.content ?? "",
+          // The wire carries a single reasoning string; parse back as one
+          // block (the multi-block shape is a projection-side concern).
           ...(m.reasoning_content !== undefined
-            ? { reasoningContent: m.reasoning_content }
+            ? { reasoningContent: [{ text: m.reasoning_content }] }
             : {}),
         };
         return toolCalls ? { ...base, toolCalls } : base;

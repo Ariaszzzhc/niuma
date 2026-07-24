@@ -270,12 +270,206 @@ Deno.test("eventsToMessages projects thinking unless keep is none", () => {
   assertEquals(eventsToMessages(events), [{
     role: "assistant",
     content: "answer",
-    reasoningContent: "one two",
+    reasoningContent: [
+      { text: "one" },
+      { text: " two", encrypted: "opaque" },
+    ],
   }]);
   assertEquals(eventsToMessages(events, { keepThinking: "none" }), [{
     role: "assistant",
     content: "answer",
   }]);
+});
+
+// ---------------------------------------------------------------------------
+// Encrypted replay channel + multi-provider replay
+// ---------------------------------------------------------------------------
+//
+// "encrypted" is an opaque replay credential — niuma stores/forwards it
+// without inspecting it, and the projection layer never drops or folds it
+// based on credential absence. The two integration points the tests below
+// pin down are:
+//   1. The full loop: a single turn emits a multi-block ThinkingDelta stream
+//      (one text-only block, one encrypted block). The follow-up turn's
+//      ChatRequest must carry both blocks as a 2-element reasoningContent
+//      array, with the encrypted value preserved verbatim.
+//   2. Cross-provider replay: a session whose history carries thinking from
+//      a Chat Completions turn (text-only) and an Anthropic turn (encrypted)
+//      must project both blocks intact. The convert layer decides which
+//      blocks to re-send by inspecting the credential itself; the projection
+//      layer must not pre-filter.
+
+Deno.test("runTurn: multi-block ThinkingDelta (text-only + encrypted) → 2-block reasoningContent", async () => {
+  const log = makeMemoryLog();
+  // Turn 1: sealed block (encrypted) followed by a plain-text block. The
+  // encrypted delta closes block 1, so the next ThinkingDelta opens a fresh
+  // block; the resulting recorded message therefore has two thinking parts.
+  const provider = flakyProvider([
+    {
+      events: [
+        { _tag: "ThinkingDelta", text: "alpha", encrypted: "sig-alpha" },
+        { _tag: "ThinkingDelta", text: "beta" },
+        { _tag: "TextDelta", text: "answer" },
+        { _tag: "Finish", reason: "stop" },
+      ],
+    },
+    // Turn 2: the request the model sees must carry the 2-block array on the
+    // prior assistant message — encrypted kept verbatim.
+    {
+      events: [
+        { _tag: "TextDelta", text: "ok" },
+        { _tag: "Finish", reason: "stop" },
+      ],
+    },
+  ]);
+  const infra: AgentInfra = {
+    eventLog: log,
+    provider,
+    tools: noTools,
+    approvals: makeApprovalGateway(log),
+    defaultModel: "test-model",
+  };
+  const mgr = new SessionManager(infra);
+  const session = await Effect.runPromise(
+    mgr.createAndRecord({ workspace: "/tmp/ws" }),
+  );
+  await Effect.runPromise(
+    session.prompt([{ type: "text", text: "hi" }]),
+  );
+  const firstAssistant = log.dump(session.id).find(isAssistantMessage);
+  assertEquals(firstAssistant?.data.parts, [
+    { type: "thinking", text: "alpha", encrypted: "sig-alpha" },
+    { type: "thinking", text: "beta" },
+    { type: "text", text: "answer" },
+  ]);
+
+  // Follow-up turn: the request the model sees must carry reasoningContent
+  // as a 2-block array with the encrypted credential preserved verbatim.
+  await Effect.runPromise(
+    session.prompt([{ type: "text", text: "again" }]),
+  );
+  const reqs = provider.requests();
+  assertEquals(reqs.length, 2);
+  const priorAssistant = reqs[1].messages.find((m) =>
+    m.role === "assistant" && m.reasoningContent !== undefined
+  );
+  assertEquals(priorAssistant?.reasoningContent, [
+    { text: "alpha", encrypted: "sig-alpha" },
+    { text: "beta" },
+  ]);
+});
+
+Deno.test("eventsToMessages: cross-provider replay keeps text-only and encrypted blocks intact", () => {
+  const base = { seq: 0, ts: 0, sessionId: "s" };
+  // Simulate a JSONL history where turn 1 was a Chat Completions response
+  // (text-only thinking, no credential) and turn 2 was an Anthropic response
+  // (encrypted thinking, opaque signature). The convert layer reads the
+  // encrypted field to decide which blocks to re-send; the projection layer
+  // must not pre-filter, fold, or drop either.
+  const events: RecordedEvent[] = [
+    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [
+          { type: "thinking", text: "ct reasoning" },
+          { type: "text", text: "a1" },
+        ],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u2" }] } },
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [
+          { type: "thinking", text: "x reasoning", encrypted: "sig-x" },
+          { type: "text", text: "a2" },
+        ],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+  ];
+  const messages = eventsToMessages(events);
+  assertEquals(messages.length, 4);
+  // Turn 1: Chat Completions trace — text-only block, no credential.
+  const turn1 = messages[1];
+  assertEquals(turn1.role, "assistant");
+  assertEquals(turn1.reasoningContent, [{ text: "ct reasoning" }]);
+  // Turn 2: Anthropic trace — encrypted credential travels verbatim.
+  const turn2 = messages[3];
+  assertEquals(turn2.role, "assistant");
+  assertEquals(turn2.reasoningContent, [
+    { text: "x reasoning", encrypted: "sig-x" },
+  ]);
+});
+
+Deno.test("eventsToMessages: keepThinking:none strips both text-only and encrypted blocks", () => {
+  const base = { seq: 0, ts: 0, sessionId: "s" };
+  // Reuse the cross-provider shape: a text-only block AND an encrypted block
+  // both get dropped before the convert layer ever sees them, so a credential-
+  // protocol provider never has a chance to mis-route a signature-less block.
+  const events: RecordedEvent[] = [
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [
+          { type: "thinking", text: "ct reasoning" },
+          { type: "text", text: "a1" },
+        ],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [
+          { type: "thinking", text: "x reasoning", encrypted: "sig-x" },
+          { type: "text", text: "a2" },
+        ],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+  ];
+  const messages = eventsToMessages(events, { keepThinking: "none" });
+  for (const m of messages) {
+    assertEquals(m.reasoningContent, undefined);
+  }
+});
+
+Deno.test("projectEvent: incremental mirror preserves multi-block reasoningContent (Fix D)", () => {
+  const base = { seq: 0, ts: 0, sessionId: "s" };
+  const events: RecordedEvent[] = [
+    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "assistant.message",
+      data: {
+        parts: [
+          { type: "thinking", text: "open", encrypted: "sig-open" },
+          { type: "text", text: "a1" },
+          { type: "thinking", text: "follow-up" },
+        ],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    },
+  ];
+  // projectEvent per event (the loop's incremental mirror path) must produce
+  // the same shape as the full replay driven by eventsToMessages: a single
+  // assistant message whose reasoningContent is the 2-block array in
+  // arrival order, with the encrypted credential intact.
+  const incremental: ProviderMessage[] = [];
+  for (const ev of events) projectEvent(incremental, ev);
+  const full = eventsToMessages(events);
+  assertEquals(incremental, full);
+  assertEquals(full[1].reasoningContent, [
+    { text: "open", encrypted: "sig-open" },
+    { text: "follow-up" },
+  ]);
 });
 
 Deno.test("runTurn: one tool round-trip then answer", async () => {
