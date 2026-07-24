@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context as HonoContext } from "hono";
 import { Layer, ManagedRuntime } from "effect";
-import { SERVER_VERSION } from "./version.ts";
+import { VERSION } from "@niuma/config";
 import { Kernel } from "./kernel.ts";
 import { SessionManager } from "./session.ts";
 import { bootstrap, type BootstrapResult } from "./bootstrap.ts";
@@ -84,7 +84,7 @@ export const createServerApp = async (
 
   // ---- routes ----
 
-  app.get("/health", (c) => c.json({ ok: true, version: SERVER_VERSION }));
+  app.get("/health", (c) => c.json({ ok: true, version: VERSION }));
 
   app.post("/sessions", async (c) => {
     const raw = await safeJson(c);
