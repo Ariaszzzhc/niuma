@@ -13,9 +13,10 @@
 //     scene); this module only renders the modal chrome.
 //
 // The modal is a rounded box centered on screen. Tool name is shown in a
-// warning color; the footer lists the three choices the app routes
-// (y / a / n). Local `ApprovalTheme` keeps this independent of the A-side
-// `Theme` — `app.ts` adapts.
+// warning color; the option row lists the decisions (y/a/n shortcuts plus
+// ↑/↓ + enter navigation — the selected item is reverse-video). Local
+// `ApprovalTheme` keeps this independent of the A-side `Theme` — `app.ts`
+// adapts.
 // ===========================================================================
 
 import {
@@ -34,7 +35,19 @@ export interface ApprovalView {
   readonly approvalId: string;
   readonly toolName: string;
   readonly preview: readonly StyledLine[];
+  /** Index into {@link APPROVAL_OPTIONS} of the highlighted option. */
+  readonly selection: number;
 }
+
+/**
+ * The three decisions the modal offers, in display order. `key` is the
+ * single-letter shortcut that also works while the modal is up.
+ */
+export const APPROVAL_OPTIONS = [
+  { key: "y", label: "yes, once", decision: "once" },
+  { key: "a", label: "yes, always", decision: "always" },
+  { key: "n", label: "no, reject", decision: "reject" },
+] as const;
 
 /** Colors the approval modal needs. Decoupled from the A-side `Theme`. */
 export interface ApprovalTheme {
@@ -159,18 +172,20 @@ export const renderApprovalOverlay = (
   const maxBoxW = Math.max(20, screenW - 2);
   const minBoxW = 40;
 
-  // Determine content width from the header + footer + preview.
+  // Determine content width from the header + options + preview.
   const headerText = ` approval required: ${view.toolName} `;
-  const footerText = " (y) once   (a) always   (n) reject ";
+  const optionsW = APPROVAL_OPTIONS.reduce(
+    (w, o, i) => w + stringWidth(o.label) + 6 + (i > 0 ? 3 : 0),
+    0,
+  );
   const headerW = stringWidth(headerText);
-  const footerW = stringWidth(footerText);
   let previewInner = 0;
   for (const line of view.preview) {
     for (const s of line.spans) {
       previewInner = Math.max(previewInner, stringWidth(s.text));
     }
   }
-  const contentW = Math.max(headerW - 2, footerW - 2, previewInner);
+  const contentW = Math.max(headerW - 2, optionsW, previewInner);
   const boxW = Math.max(minBoxW, Math.min(maxBoxW, contentW + 4));
   const innerW = Math.max(1, boxW - 4);
 
@@ -228,16 +243,30 @@ export const renderApprovalOverlay = (
     ],
   });
 
-  // footer
-  const footPad = innerW - stringWidth(footerText);
-  lines.push({
-    spans: [
-      span(`${VBAR} `, theme.border),
-      span(footerText, theme.accent, { bold: true }),
-      span(repeat(" ", Math.max(0, footPad)), theme.border),
-      span(` ${VBAR}`, theme.border),
-    ],
-  });
+  // option row: one item per decision; the selected item is stamped in
+  // reverse video so ↑/↓ navigation is visible at a glance.
+  {
+    const optionSpans: StyledSpan[] = [span(`${VBAR} `, theme.border)];
+    let used = 0;
+    APPROVAL_OPTIONS.forEach((o, i) => {
+      if (i > 0) {
+        optionSpans.push(span("   ", theme.muted));
+        used += 3;
+      }
+      const item = `${o.key}  ${o.label}`;
+      const selected = i === view.selection;
+      optionSpans.push(
+        selected
+          ? span(item, theme.accent, { reverse: true, bold: true })
+          : span(item, theme.text),
+      );
+      used += stringWidth(item);
+    });
+    const pad = innerW - used;
+    if (pad > 0) optionSpans.push(span(repeat(" ", pad), theme.border));
+    optionSpans.push(span(` ${VBAR}`, theme.border));
+    lines.push({ spans: optionSpans });
+  }
 
   // bottom border
   lines.push({

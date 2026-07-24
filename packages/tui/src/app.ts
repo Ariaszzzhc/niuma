@@ -34,11 +34,13 @@ import {
 // -- B-side (this package) ---------------------------------------------------
 import {
   createEditorState,
+  editorIsEmpty,
   editorReducer,
   type EditorState,
   renderEditor,
 } from "./components/editor.ts";
 import {
+  APPROVAL_OPTIONS,
   type ApprovalView,
   makeApprovalPreview,
   renderApprovalOverlay,
@@ -416,26 +418,48 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     event: import("@niuma/tuikit").InputEvent,
   ): readonly [AppModel, ...Cmd<Msg>[]] => {
     // 1) approval modal takes INPUT priority (it is also painted on top in the
-    //    view): it captures y / a / n / esc and swallows everything else while
-    //    up. This MUST come before the palette so an approval arriving while
+    //    view): it captures y / a / n, arrow-key navigation + enter, the digit
+    //    shortcuts 1..3, and esc; everything else is swallowed while it is up.
+    //    This MUST come before the palette so an approval arriving while
     //    the palette is open cannot have its y/a/n swallowed by the palette
     //    query (overlay priority and input priority then agree).
     if (model.approval !== null) {
-      const decision = approvalDecision(event);
-      if (decision !== null) {
-        const approvalId = model.approval.approvalId;
-        const cleared: AppModel = { ...model, approval: null };
+      const approval = model.approval;
+      const dispatch = (
+        m: AppModel,
+        decision: ApprovalDecision,
+        feedback?: string,
+      ): readonly [AppModel, ...Cmd<Msg>[]] => {
+        const approvalId = approval.approvalId;
+        const cleared: AppModel = { ...m, approval: null };
         return [
           cleared,
           cmd(async () => {
-            const r = await client.approve(
-              approvalId,
-              decision.decision,
-              decision.feedback,
-            );
+            const r = await client.approve(approvalId, decision, feedback);
             return { type: "tui:approval", ok: r.ok } as Msg;
           }),
         ];
+      };
+      // navigation: up/down (or left/right) move the highlight; enter confirms
+      // the highlighted option; 1..3 pick directly; y/a/n keep working.
+      if (event.kind === "key") {
+        if (event.key === "up" || event.key === "left") {
+          const selection = (approval.selection - 1 + APPROVAL_OPTIONS.length) %
+            APPROVAL_OPTIONS.length;
+          return [{ ...model, approval: { ...approval, selection } }];
+        }
+        if (event.key === "down" || event.key === "right") {
+          const selection = (approval.selection + 1) % APPROVAL_OPTIONS.length;
+          return [{ ...model, approval: { ...approval, selection } }];
+        }
+        if (event.key === "enter") {
+          const opt = APPROVAL_OPTIONS[approval.selection];
+          return dispatch(model, opt.decision as ApprovalDecision);
+        }
+      }
+      const decision = approvalDecision(event);
+      if (decision !== null) {
+        return dispatch(model, decision.decision, decision.feedback);
       }
       return [model]; // swallow everything else while the modal is up
     }
@@ -450,7 +474,31 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       return [m];
     }
 
-    // 3) ctrl+c: interrupt an active turn, else double-press-to-quit
+    // 3) ctrl+d: quit when the editor is empty (readline-style EOF), with the
+    //    same double-press-confirm as ctrl+c. When the editor has content the
+    //    key falls through to the editor, which swallows ctrl-prefixed text
+    //    events (matching the previous behavior).
+    if (matchesKey(event, "ctrl+d") && editorIsEmpty(model.editor)) {
+      const now = Date.now();
+      if (now - model.lastCtrlC < 500) {
+        return [{ ...model, quitting: true }];
+      }
+      return [
+        {
+          ...model,
+          lastCtrlC: now,
+          state: {
+            ...model.state,
+            notices: [
+              ...model.state.notices,
+              notice("press ctrl+d again to quit"),
+            ],
+          },
+        },
+      ];
+    }
+
+    // 4) ctrl+c: interrupt an active turn, else double-press-to-quit
     if (matchesKey(event, "ctrl+c")) {
       if (model.state.turnActive) {
         return [
@@ -523,8 +571,18 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       }
     }
 
-    // 7) esc: cancel an in-flight scroll / refocus editor
+    // 7) esc: interrupt an in-flight turn (same as ctrl+c), otherwise cancel
+    //    an in-flight scroll / refocus the editor.
     if (event.kind === "esc") {
+      if (model.state.turnActive) {
+        return [
+          model,
+          cmd(async () => {
+            const r = await client.interrupt();
+            return { type: "tui:interrupt", ok: r.ok } as Msg;
+          }),
+        ];
+      }
       return [{
         ...model,
         focus: "editor",
@@ -587,7 +645,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
             notices: [
               ...model.state.notices,
               notice(
-                "enter submit · shift+enter newline · ctrl+p palette · ctrl+o expand · ctrl+c interrupt/quit · tab focus",
+                "enter submit · shift+enter/ctrl+j newline · ctrl+p palette · ctrl+o expand · esc/ctrl+c interrupt · ctrl+c/d quit · ctrl+- undo · tab focus",
               ),
             ],
           },
@@ -675,6 +733,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           approval = {
             approvalId: p.approvalId,
             toolName: p.toolName,
+            selection: 0,
             preview: makeApprovalPreview(p.input, 80, {
               border: colors.border,
               warning: colors.warning,
@@ -784,6 +843,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       model.focus === "editor",
       {
         border: colors.border,
+        borderFocused: colors.accent,
         accent: colors.accent,
         text: colors.text,
         placeholder: colors.placeholder,
@@ -889,6 +949,13 @@ const approvalDecision = (
     if (ch === "y") return { decision: "once" };
     if (ch === "a") return { decision: "always" };
     if (ch === "n") return { decision: "reject" };
+    // digit shortcuts pick the Nth option directly (1-indexed)
+    if (ch >= "1" && ch <= String(APPROVAL_OPTIONS.length)) {
+      const idx = ch.charCodeAt(0) - "1".charCodeAt(0);
+      return {
+        decision: APPROVAL_OPTIONS[idx].decision as ApprovalDecision,
+      };
+    }
   }
   return null;
 };

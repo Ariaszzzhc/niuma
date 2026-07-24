@@ -81,6 +81,34 @@ const blankLine = (width: number): StyledLine => ({
   spans: [{ text: " ".repeat(width), style: {} }],
 });
 
+// ---------------------------------------------------------------------------
+// Gutter layout
+// ---------------------------------------------------------------------------
+//
+// The transcript uses a gutter-anchored layout (the user's `❯` is the only
+// full-width anchor; everything the assistant produces is indented under it):
+//
+//   ❯ user question                         <- flush left, accent prompt
+//     assistant markdown body               <- GUTTER_INDENT cells in
+//     ● tool_call  src/main.ts  120ms       <- bar + indent (tool_call.ts)
+//     ⋮ dim italic thinking                 <- GUTTER_INDENT cells in
+//
+// Assistant/tool content is rendered at `width - GUTTER_INDENT - RIGHT_MARGIN`
+// and each row is prefixed with a GUTTER_INDENT-wide blank span. The trailing
+// RIGHT_MARGIN keeps text off the right screen edge, so lines never touch
+// either border of the terminal.
+
+/** Left indent (cells) for assistant + tool content. */
+export const GUTTER_INDENT = 2;
+/** Right margin (cells) kept clear for every content row. */
+export const RIGHT_MARGIN = 2;
+
+/** Prefix every row with a GUTTER_INDENT-wide blank span (left indent). */
+const indentLines = (lines: readonly StyledLine[]): StyledLine[] =>
+  lines.map((line) => ({
+    spans: [{ text: " ".repeat(GUTTER_INDENT), style: {} }, ...line.spans],
+  }));
+
 /** Render a user message: "❯ " prompt (accent) + hanging-indent wrapped text. */
 const renderUserMessage = (
   text: string,
@@ -217,6 +245,9 @@ export const renderTranscriptContent = (
   const safeWidth = Math.max(1, width);
   const spinnerFrame = opts.spinnerFrame ?? 0;
   const streaming = opts.streaming ?? false;
+  // Assistant + tool rows render narrower and get re-indented; user rows own
+  // the full width (their "❯ " prefix is the gutter anchor).
+  const contentW = Math.max(1, safeWidth - GUTTER_INDENT - RIGHT_MARGIN);
   const out: StyledLine[] = [];
 
   for (let m = 0; m < state.messages.length; m++) {
@@ -228,19 +259,27 @@ export const renderTranscriptContent = (
         break;
       case "assistant":
         if (msg.thinking && msg.thinking.length > 0) {
-          out.push(...renderThinking(msg.thinking, safeWidth, theme));
+          out.push(
+            ...indentLines(renderThinking(msg.thinking, contentW, theme)),
+          );
         }
         out.push(
-          ...renderMarkdown(msg.text, {
-            width: safeWidth,
-            // Only the trailing assistant message can still be streaming.
-            streaming: streaming && isLast,
-            theme,
-          }),
+          ...indentLines(
+            renderMarkdown(msg.text, {
+              width: contentW,
+              // Only the trailing assistant message can still be streaming.
+              streaming: streaming && isLast,
+              theme,
+            }),
+          ),
         );
         break;
       case "tool":
-        out.push(...renderToolCall(msg.call, safeWidth, theme, spinnerFrame));
+        out.push(
+          ...indentLines(
+            renderToolCall(msg.call, contentW, theme, spinnerFrame),
+          ),
+        );
         break;
     }
     // One blank row between top-level messages for breathing room.

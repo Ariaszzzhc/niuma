@@ -143,6 +143,22 @@ describe("editor: enter / submit", () => {
     const { submit } = feed([text("yo"), text("m", { ctrl: true })]);
     assertStrictEquals(submit, "yo");
   });
+
+  it("ctrl+j inserts a newline instead of submitting", () => {
+    const { state, submit } = feed([
+      text("a"),
+      text("j", { ctrl: true }),
+      text("b"),
+    ]);
+    assertStrictEquals(submit, null);
+    assertStrictEquals(editorText(state), "a\nb");
+  });
+
+  it("legacy ctrl+j (raw byte 0x0a) inserts a newline", () => {
+    const { state, submit } = feed([text("a"), text("\x0a"), text("b")]);
+    assertStrictEquals(submit, null);
+    assertStrictEquals(editorText(state), "a\nb");
+  });
 });
 
 describe("editor: word jumps", () => {
@@ -205,6 +221,78 @@ describe("editor: kill ring (readline-style)", () => {
   });
 });
 
+describe("editor: undo", () => {
+  it("ctrl+- restores the buffer before the last edit", () => {
+    const { state } = feed([
+      text("hello"),
+      text("-", { ctrl: true }),
+    ]);
+    assertStrictEquals(editorText(state), "");
+  });
+
+  it("legacy ctrl+- (raw byte 0x1f) also undoes", () => {
+    const { state } = feed([text("abc"), text("\x1f")]);
+    assertStrictEquals(editorText(state), "");
+  });
+
+  it("ctrl+z undoes as well", () => {
+    const { state } = feed([text("abc"), text("z", { ctrl: true })]);
+    assertStrictEquals(editorText(state), "");
+  });
+
+  it("each typed character is its own undo step", () => {
+    const { state } = feed([
+      text("a"),
+      text("b"),
+      text("c"),
+      text("-", { ctrl: true }),
+      text("-", { ctrl: true }),
+    ]);
+    assertStrictEquals(editorText(state), "a");
+  });
+
+  it("undo restores the cursor position too", () => {
+    const { state } = feed([
+      text("abc"),
+      key("left"),
+      text("X"),
+      text("-", { ctrl: true }),
+    ]);
+    assertStrictEquals(editorText(state), "abc");
+    assertStrictEquals(state.cursor.col, 2);
+  });
+
+  it("undo covers kills and paste", () => {
+    const { state: s1 } = feed([text("hello world"), text("\x17")]); // ctrl+w
+    assertStrictEquals(editorText(s1), "hello ");
+    const { state: s2 } = feed([text("-", { ctrl: true })], s1);
+    assertStrictEquals(editorText(s2), "hello world");
+
+    const { state: s3 } = feed([paste("a\nb"), text("-", { ctrl: true })]);
+    assertStrictEquals(editorText(s3), "");
+  });
+
+  it("undo on an empty stack is a no-op", () => {
+    const { state } = feed([text("-", { ctrl: true })]);
+    assertStrictEquals(editorText(state), "");
+  });
+
+  it("submit clears the undo stack", () => {
+    const r = feed([text("abc"), key("enter")]);
+    const { state } = feed([text("-", { ctrl: true })], r.state);
+    assertStrictEquals(editorText(state), "");
+  });
+
+  it("edits after undo push a fresh snapshot", () => {
+    const r1 = feed([text("abc"), text("-", { ctrl: true }), text("xy")]);
+    assertStrictEquals(editorText(r1.state), "xy");
+    // the new edit's checkpoint equals the post-undo (empty) buffer — one
+    // undo drains "xy" entirely instead of resurrecting "abc".
+    const { state } = feed([text("-", { ctrl: true })], r1.state);
+    assertStrictEquals(editorText(state), "");
+  });
+});
+
 describe("editor: history", () => {
   it("up/down recall previously submitted prompts", () => {
     let state = createEditorState();
@@ -260,6 +348,7 @@ describe("editor: render", () => {
     const state = feed([text("hi")]).state;
     const lines = renderEditor(state, 30, true, {
       border: { rgb: [1, 1, 1] },
+      borderFocused: { rgb: [5, 5, 5] },
       accent: { rgb: [2, 2, 2] },
       text: { rgb: [3, 3, 3] },
       placeholder: { rgb: [4, 4, 4] },
@@ -276,12 +365,34 @@ describe("editor: render", () => {
     const state = createEditorState("type here");
     const lines = renderEditor(state, 30, true, {
       border: "default",
+      borderFocused: "default",
       accent: "default",
       text: "default",
       placeholder: { rgb: [9, 9, 9] },
     });
     const content = lines[1].spans.map((s) => s.text).join("");
     assert(content.includes("type here"));
+  });
+
+  it("paints the border with borderFocused when focused, border otherwise", () => {
+    const state = feed([text("hi")]).state;
+    const theme = {
+      border: { rgb: [1, 1, 1] } as const,
+      borderFocused: { rgb: [9, 9, 9] } as const,
+      accent: { rgb: [2, 2, 2] } as const,
+      text: { rgb: [3, 3, 3] } as const,
+      placeholder: { rgb: [4, 4, 4] } as const,
+    };
+    const focused = renderEditor(state, 30, true, theme);
+    const unfocused = renderEditor(state, 30, false, theme);
+    assertStrictEquals(
+      JSON.stringify(focused[0].spans[0].style.fg),
+      JSON.stringify(theme.borderFocused),
+    );
+    assertStrictEquals(
+      JSON.stringify(unfocused[0].spans[0].style.fg),
+      JSON.stringify(theme.border),
+    );
   });
 });
 
@@ -348,6 +459,7 @@ describe("editor: grapheme cursor", () => {
     const [onEmoji] = editorReducer(atEmoji, key("left")); // 2 -> 1
     const lines = renderEditor(onEmoji, 30, true, {
       border: "default",
+      borderFocused: "default",
       accent: "default",
       text: "default",
       placeholder: "default",

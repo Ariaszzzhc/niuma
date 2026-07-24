@@ -86,9 +86,10 @@ Deno.test("transcript: followTail pins to the bottom", () => {
   const lines = renderTranscript(state, 40, 3, THEME);
   assertEquals(lines.length, 3);
   const texts = lines.map(lineText);
-  assertEquals(texts.includes("f"), true); // last 3 are f,g,h
-  assertEquals(texts.includes("h"), true);
-  assertEquals(texts.includes("a"), false);
+  // assistant rows are gutter-indented ("  x")
+  assertEquals(texts.includes("  f"), true); // last 3 are f,g,h
+  assertEquals(texts.includes("  h"), true);
+  assertEquals(texts.includes("  a"), false);
 });
 
 Deno.test("transcript: content shorter than viewport is blank-padded", () => {
@@ -99,9 +100,9 @@ Deno.test("transcript: content shorter than viewport is blank-padded", () => {
   };
   const lines = renderTranscript(state, 40, 5, THEME);
   assertEquals(lines.length, 5);
-  // first two rows carry content, the rest are blank (only spaces).
-  assertEquals(lineText(lines[0]), "a");
-  assertEquals(lineText(lines[1]), "b");
+  // first two rows carry content (gutter-indented), the rest are blank.
+  assertEquals(lineText(lines[0]), "  a");
+  assertEquals(lineText(lines[1]), "  b");
   assertEquals(lineText(lines[2]).trim().length, 0);
   assertEquals(lineText(lines[4]).trim().length, 0);
 });
@@ -119,12 +120,12 @@ Deno.test("transcript: thinking renders with a ⋮ gutter, dim + italic", () => 
     followTail: true,
   };
   const lines = renderTranscriptContent(state, 40, THEME);
-  // thinking line sits above the markdown body.
+  // thinking line sits above the markdown body, indented by the 2-cell gutter.
   assertEquals(lines.length >= 2, true);
   const thinkLine = lines[0];
-  assertEquals(lineText(thinkLine).startsWith("⋮ "), true);
+  assertEquals(lineText(thinkLine).startsWith("  ⋮ "), true);
   assertEquals(lineText(thinkLine).includes("let me think about this"), true);
-  const textSpan = thinkLine.spans[1];
+  const textSpan = thinkLine.spans[2]; // [indent, gutter, text]
   assertEquals(textSpan.style.italic, true);
   assertEquals(textSpan.style.dim, true);
   assertEquals(colorEq(textSpan.style.fg, THEME.textDim), true);
@@ -139,9 +140,10 @@ Deno.test("transcript: thinking wraps with a hanging indent", () => {
   };
   const lines = renderTranscriptContent(state, 24, THEME);
   assertEquals(lines.length > 1, true);
-  // First line carries the gutter, continuations are indented under the text.
-  assertEquals(lineText(lines[0]).startsWith("⋮ "), true);
-  assertEquals(lineText(lines[1]).startsWith("  "), true);
+  // First line carries the gutter (after the 2-cell indent), continuations
+  // hang under the text.
+  assertEquals(lineText(lines[0]).startsWith("  ⋮ "), true);
+  assertEquals(lineText(lines[1]).startsWith("    "), true);
   // No line exceeds the width.
   for (const l of lines) assertGreaterOrEqual(24, lineWidth(l));
 });
@@ -158,8 +160,8 @@ Deno.test("transcript: scroll up breaks follow and moves the window up", () => {
   assertEquals(s2.scrollOffset, 4); // maxOffset(5) - 1
   const lines = renderTranscript(s2, 40, 3, THEME);
   const texts = lines.map(lineText);
-  assertEquals(texts.includes("e"), true); // rows 4,5,6 -> e,f,g
-  assertEquals(texts.includes("h"), false);
+  assertEquals(texts.includes("  e"), true); // rows 4,5,6 -> e,f,g
+  assertEquals(texts.includes("  h"), false);
 });
 
 Deno.test("transcript: scroll down to the bottom re-enables follow", () => {
@@ -213,9 +215,9 @@ Deno.test("transcript: NewContent keeps follow (render re-pins)", () => {
   const ctx = { contentLines: 8, viewportHeight: 3 };
   const s2 = transcriptReducer(state, { type: "NewContent" }, ctx);
   assertEquals(s2.followTail, true);
-  // window still pinned to the bottom
+  // window still pinned to the bottom (gutter-indented rows)
   const texts = renderTranscript(s2, 40, 3, THEME).map(lineText);
-  assertEquals(texts.includes("h"), true);
+  assertEquals(texts.includes("  h"), true);
 });
 
 Deno.test("transcript: user message renders an accent prompt", () => {
@@ -265,21 +267,35 @@ Deno.test("tool_call: running shows a braille spinner at the given frame", () =>
   const lines = renderToolCall(baseCall({ status: "running" }), 40, THEME, 2);
   assertEquals(lines.length, 1);
   const text = lineText(lines[0]);
-  assertEquals(text.startsWith("⠹"), true); // SPINNER_FRAMES[2]
+  assertEquals(text.startsWith("│ ⠹"), true); // bar + SPINNER_FRAMES[2]
   assertEquals(text.includes("read_file"), true);
   assertEquals(text.includes("src/main.ts"), true);
 });
 
 Deno.test("tool_call: done shows ● in the success colour", () => {
   const lines = renderToolCall(baseCall({ status: "done" }), 40, THEME);
-  assertEquals(lineText(lines[0]).startsWith("●"), true);
+  assertEquals(lineText(lines[0]).startsWith("│ ●"), true);
   assertEquals(hasFg(lines, THEME.success), true);
 });
 
 Deno.test("tool_call: error shows ✗ in the error colour", () => {
   const lines = renderToolCall(baseCall({ status: "error" }), 40, THEME);
-  assertEquals(lineText(lines[0]).startsWith("✗"), true);
+  assertEquals(lineText(lines[0]).startsWith("│ ✗"), true);
   assertEquals(hasFg(lines, THEME.error), true);
+});
+
+Deno.test("tool_call: every row is framed by the dim left bar", () => {
+  const lines = renderToolCall(
+    baseCall({ status: "done", resultLines: ["one"], expanded: true }),
+    40,
+    THEME,
+  );
+  for (const l of lines) {
+    assertEquals(lineText(l).startsWith("│ "), true);
+  }
+  const barSpan = lines[0].spans[0];
+  assertEquals(barSpan.style.dim, true);
+  assertEquals(colorEq(barSpan.style.fg, THEME.border), true);
 });
 
 Deno.test("tool_call: collapsed hides result lines", () => {
@@ -304,11 +320,11 @@ Deno.test("tool_call: expanded tree-indents results (⎿ first, rest)", () => {
   );
   // header + 3 result rows
   assertEquals(lines.length, 4);
-  assertEquals(lineText(lines[1]).startsWith("⎿"), true);
+  assertEquals(lineText(lines[1]).startsWith("│ ⎿"), true);
   assertEquals(lineText(lines[1]).includes("one"), true);
-  assertEquals(lineText(lines[2]).startsWith("  "), true);
-  assertFalse(lineText(lines[2]).startsWith("⎿"));
-  assertEquals(lineText(lines[3]).startsWith("  "), true);
+  assertEquals(lineText(lines[2]).startsWith("│   "), true);
+  assertFalse(lineText(lines[2]).startsWith("│ ⎿"));
+  assertEquals(lineText(lines[3]).startsWith("│   "), true);
 });
 
 Deno.test("tool_call: expanded caps at 8 lines with a +N footer", () => {
@@ -528,7 +544,12 @@ Deno.test("approval: header row never exceeds the box width (narrow screen, long
   // Repro from the issue: screenW 30 < minBoxW 40, and a long tool name. The
   // top-border label used to overflow boxW; it must now equal the border width.
   const overlay = renderApprovalOverlay(
-    { approvalId: "a", toolName: "a_very_long_tool_name_here", preview: [] },
+    {
+      approvalId: "a",
+      toolName: "a_very_long_tool_name_here",
+      preview: [],
+      selection: 0,
+    },
     30,
     10,
     approvalTheme,
@@ -549,6 +570,7 @@ Deno.test("approval: header fits the border at several narrow widths", () => {
         approvalId: "a",
         toolName: "Write_Tools_Read_Files_ExecBash",
         preview: [],
+        selection: 0,
       },
       w,
       12,
@@ -562,7 +584,7 @@ Deno.test("approval: header fits the border at several narrow widths", () => {
 
 Deno.test("approval: short name on a wide screen keeps the full label", () => {
   const overlay = renderApprovalOverlay(
-    { approvalId: "a", toolName: "bash", preview: [] },
+    { approvalId: "a", toolName: "bash", preview: [], selection: 0 },
     80,
     12,
     approvalTheme,

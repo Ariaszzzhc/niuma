@@ -221,7 +221,12 @@ Deno.test("app priority: y reaches the approval even when the palette is also op
   assertEquals(model.palette.open, true);
   model = {
     ...model,
-    approval: { approvalId: "ap1", toolName: "bash", preview: [] },
+    approval: {
+      approvalId: "ap1",
+      toolName: "bash",
+      preview: [],
+      selection: 0,
+    },
   };
 
   const res = update(model, textMsg("y"));
@@ -244,7 +249,12 @@ Deno.test("app priority: a non-decision key is swallowed while the approval moda
   let model = program.init()[0];
   model = {
     ...model,
-    approval: { approvalId: "ap1", toolName: "bash", preview: [] },
+    approval: {
+      approvalId: "ap1",
+      toolName: "bash",
+      preview: [],
+      selection: 0,
+    },
     // stash some editor text to prove a typed letter is NOT inserted
     editor: { ...model.editor, lines: ["x"], cursor: { row: 0, col: 1 } },
   };
@@ -257,4 +267,111 @@ Deno.test("app priority: a non-decision key is swallowed while the approval moda
     ["x"],
     "non-decision key did not reach the editor",
   );
+});
+
+// ---------------------------------------------------------------------------
+// approval navigation (arrows / enter / digits)
+// ---------------------------------------------------------------------------
+
+const withApproval = (model: Model): Model => ({
+  ...model,
+  approval: { approvalId: "ap1", toolName: "bash", preview: [], selection: 0 },
+});
+
+Deno.test("approval nav: down/up move the selection, enter confirms it", () => {
+  const program = newProgram();
+  const update = program.update;
+  let model = withApproval(program.init()[0]);
+
+  model = update(model, keyMsg(key("down")))[0];
+  assertEquals(model.approval?.selection, 1);
+  model = update(model, keyMsg(key("down")))[0];
+  assertEquals(model.approval?.selection, 2);
+  // wrap-around past the last option
+  model = update(model, keyMsg(key("down")))[0];
+  assertEquals(model.approval?.selection, 0);
+  model = update(model, keyMsg(key("up")))[0];
+  assertEquals(model.approval?.selection, 2, "up from 0 wraps to the last");
+
+  // enter confirms the highlighted option ("reject" at index 2) and dispatches
+  const res = update(model, keyMsg(key("enter")));
+  assertEquals(res[0].approval, null);
+  assertEquals(res.length > 1, true, "the approve command was dispatched");
+});
+
+Deno.test("approval nav: digit 1 picks the first option directly", () => {
+  const program = newProgram();
+  const update = program.update;
+  let model = withApproval(program.init()[0]);
+  model = update(model, keyMsg(key("down")))[0]; // selection = 1
+  const res = update(model, textMsg("1"));
+  assertEquals(res[0].approval, null, "digit resolves the modal");
+  assertEquals(res.length > 1, true);
+});
+
+// ---------------------------------------------------------------------------
+// esc interrupt / ctrl+d quit
+// ---------------------------------------------------------------------------
+
+Deno.test("esc interrupts an active turn instead of resetting scroll", () => {
+  const program = newProgram();
+  const update = program.update;
+  let model = program.init()[0];
+  model = update(model, sse("turn.started"))[0];
+  assertEquals(model.state.turnActive, true);
+
+  const res = update(model, keyMsg({ kind: "esc" }));
+  assertEquals(
+    res.length > 1,
+    true,
+    "esc dispatched the interrupt command while a turn is active",
+  );
+  // followTail untouched (the esc-scroll-reset path was NOT taken)
+  assertEquals(res[0].followTail, true);
+});
+
+Deno.test("esc without an active turn keeps the scroll-reset behavior", () => {
+  const program = newProgram();
+  const update = program.update;
+  let model = program.init()[0];
+  model = {
+    ...model,
+    followTail: false,
+    transcriptScroll: 5,
+    focus: "transcript",
+  };
+  const res = update(model, keyMsg({ kind: "esc" }));
+  assertEquals(res.length, 1, "no command dispatched");
+  assertEquals(res[0].followTail, true);
+  assertEquals(res[0].focus, "editor");
+});
+
+Deno.test("ctrl+d with an empty editor quits on the second press", () => {
+  const program = newProgram();
+  const update = program.update;
+  const model = program.init()[0];
+
+  const first = update(model, textMsg("d", { ctrl: true }))[0];
+  assertEquals(first.quitting, false, "first press only warns");
+  assertEquals(
+    first.state.notices.some((n) => n.text.includes("ctrl+d")),
+    true,
+    "the warning notice was posted",
+  );
+
+  const second = update(first, textMsg("d", { ctrl: true }))[0];
+  assertEquals(second.quitting, true, "second press quits");
+});
+
+Deno.test("ctrl+d with text in the editor does not quit", () => {
+  const program = newProgram();
+  const update = program.update;
+  let model = program.init()[0];
+  model = {
+    ...model,
+    editor: { ...model.editor, lines: ["x"], cursor: { row: 0, col: 1 } },
+  };
+  const res = update(model, textMsg("d", { ctrl: true }));
+  assertEquals(res[0].quitting, false);
+  assertEquals(res[0].state.notices.length, 0, "no quit warning posted");
 });

@@ -23,6 +23,10 @@
 //     caret between rows once the buffer is multi-line.
 //   - `ctrl+a/e/u/k/w` readline-style kills (no persistent kill ring yet — the
 //     killed text is dropped; the hook is named so a ring can be added later).
+//   - `ctrl+j` inserts a newline (legacy-terminal counterpart of shift+enter).
+//   - `ctrl+-` / `ctrl+z` undo: buffer-mutating events checkpoint the buffer
+//     first (coalescing when unchanged since the last checkpoint, so typing
+//     after an undo never resurrects the undone text). Recall/submit don't.
 //
 // Block cursor: the cell under the caret is drawn in reverse video (rather
 // than driving the terminal's hardware cursor, which the loop hides). This
@@ -63,13 +67,36 @@ export interface EditorState {
   readonly historyCursor: number | null;
   /** Draft captured when history browsing began; restored on `down` past newest. */
   readonly savedDraft: string;
+  /**
+   * Undo snapshots (oldest first). The reducer calls {@link checkpoint}
+   * BEFORE any buffer-mutating event: when the buffer has changed since the
+   * last checkpoint it is pushed onto the stack, otherwise (repeated
+   * checkpoints with no edit between them, e.g. right after an undo restore)
+   * the snapshot is left alone. That second clause is what makes "undo, then
+   * type" behave like a real undo system — the new edit's checkpoint equals
+   * the restored state instead of resurrecting the undone text. Bounded to
+   * {@link MAX_UNDO}; history recall / submit intentionally do NOT push
+   * (they are navigation, not edits).
+   */
+  readonly undoStack: readonly EditorSnapshot[];
 }
+
+/** A restorable buffer state (the units undo swaps back in). */
+export interface EditorSnapshot {
+  readonly lines: readonly string[];
+  readonly cursor: EditorCursor;
+}
+
+/** Cap on retained undo snapshots (memory is trivial; bound anyway). */
+const MAX_UNDO = 100;
 
 export type EditorAction = { readonly type: "submit"; readonly text: string };
 
 /** Colors the editor needs. Decoupled from the A-side `Theme`. */
 export interface EditorTheme {
   readonly border: Color;
+  /** Border colour while the editor owns keyboard focus. */
+  readonly borderFocused: Color;
   readonly accent: Color;
   readonly text: Color;
   readonly placeholder: Color;
@@ -88,6 +115,7 @@ export const createEditorState = (
   history: [],
   historyCursor: null,
   savedDraft: "",
+  undoStack: [],
 });
 
 /** Whether the editor currently holds any non-newline text. */
@@ -366,6 +394,43 @@ const moveLineEnd = (state: EditorState): EditorState => ({
   },
 });
 
+// -- undo --------------------------------------------------------------------
+
+/**
+ * Checkpoint the buffer before a mutation: push the current lines+cursor
+ * onto the undo stack UNLESS the buffer is unchanged since the newest
+ * snapshot. The unchanged case arises right after an undo restore (the
+ * restore pops the stack but leaves the buffer equal to what the next
+ * checkpoint would push) — pushing then would resurrect the undone text on
+ * the following undo. Pure; returns a new state.
+ */
+const checkpoint = (state: EditorState): EditorState => {
+  const top = state.undoStack[state.undoStack.length - 1];
+  if (top !== undefined && top.lines.join("\n") === state.lines.join("\n")) {
+    return state;
+  }
+  return {
+    ...state,
+    undoStack: [
+      ...state.undoStack.slice(-(MAX_UNDO - 1)),
+      { lines: state.lines, cursor: state.cursor },
+    ],
+  };
+};
+
+/** Pop the newest undo snapshot; no-op when the stack is empty. */
+const undo = (state: EditorState): EditorState => {
+  const stack = state.undoStack;
+  if (stack.length === 0) return state;
+  const snap = stack[stack.length - 1];
+  return {
+    ...state,
+    lines: snap.lines,
+    cursor: snap.cursor,
+    undoStack: stack.slice(0, -1),
+  };
+};
+
 // -- history ----------------------------------------------------------------
 
 const recall = (state: EditorState, idx: number): EditorState => {
@@ -418,6 +483,8 @@ const submit = (state: EditorState): [EditorState, EditorAction] => {
       history,
       historyCursor: null,
       savedDraft: "",
+      // A fresh prompt starts a fresh undo lineage.
+      undoStack: [],
     },
     { type: "submit", text },
   ];
@@ -439,9 +506,12 @@ export const editorReducer = (
   if (ev.kind === "paste") {
     const lineCount = ev.text.split("\n").length;
     if (lineCount > 5) {
-      return [insertText(state, `[pasted ${lineCount} lines]`), undefined];
+      return [
+        insertText(checkpoint(state), `[pasted ${lineCount} lines]`),
+        undefined,
+      ];
     }
-    return [insertText(state, ev.text), undefined];
+    return [insertText(checkpoint(state), ev.text), undefined];
   }
 
   if (ev.kind === "esc") return [state, undefined];
@@ -452,28 +522,51 @@ export const editorReducer = (
     // control byte ("\x01" etc.), so the bindings work in any terminal.
     if (matchesKey(ev, "ctrl+a")) return [moveLineStart(state), undefined];
     if (matchesKey(ev, "ctrl+e")) return [moveLineEnd(state), undefined];
-    if (matchesKey(ev, "ctrl+u")) return [killToLineStart(state), undefined];
-    if (matchesKey(ev, "ctrl+k")) return [killToLineEnd(state), undefined];
-    if (matchesKey(ev, "ctrl+w")) return [killWordBack(state), undefined];
+    if (matchesKey(ev, "ctrl+u")) {
+      return [killToLineStart(checkpoint(state)), undefined];
+    }
+    if (matchesKey(ev, "ctrl+k")) {
+      return [killToLineEnd(checkpoint(state)), undefined];
+    }
+    if (matchesKey(ev, "ctrl+w")) {
+      return [killWordBack(checkpoint(state)), undefined];
+    }
+    // ctrl+- / ctrl+z undo the last buffer mutation. Legacy terminals send
+    // ctrl+- as the raw byte 0x1f with no modifier flags; "-" is not a
+    // letter, so matchesKey's control-byte path does not cover it and the
+    // byte needs an explicit check alongside the kitty form.
+    if (
+      matchesKey(ev, "ctrl+z") || matchesKey(ev, "ctrl+-") ||
+      (ev.text === "\x1f" && !ev.mods.ctrl && !ev.mods.alt && !ev.mods.shift)
+    ) {
+      return [undo(state), undefined];
+    }
+    // ctrl+j inserts a newline (the legacy-terminals counterpart of
+    // shift+enter — kitty delivers it as "j"+ctrl, legacy as raw 0x0a).
+    if (matchesKey(ev, "ctrl+j")) {
+      return [insertText(checkpoint(state), "\n"), undefined];
+    }
     // ctrl+enter and ctrl+m submit too (handy when shift+enter is unavailable).
     if (matchesKey(ev, "ctrl+m")) return submit(state);
     // Remaining ctrl/alt-prefixed text events are shortcut prefixes — swallow
     // so e.g. raw ctrl+c bytes don't get typed into the buffer (the app owns
     // ctrl+c anyway, but be defensive).
     if (ev.mods.ctrl || ev.mods.alt) return [state, undefined];
-    return [insertText(state, ev.text), undefined];
+    return [insertText(checkpoint(state), ev.text), undefined];
   }
 
   // -- named keys -----------------------------------------------------------
   switch (ev.key) {
     case "enter":
       // shift+enter inserts a newline; plain enter submits.
-      if (ev.mods.shift) return [insertText(state, "\n"), undefined];
+      if (ev.mods.shift) {
+        return [insertText(checkpoint(state), "\n"), undefined];
+      }
       return submit(state);
     case "backspace":
-      return [deleteBackward(state), undefined];
+      return [deleteBackward(checkpoint(state)), undefined];
     case "delete":
-      return [deleteForward(state), undefined];
+      return [deleteForward(checkpoint(state)), undefined];
     case "left":
       return [ev.mods.alt ? moveWordLeft(state) : moveLeft(state), undefined];
     case "right":
@@ -534,7 +627,9 @@ export const renderEditor = (
 ): StyledLine[] => {
   const boxW = Math.max(4, width);
   const innerW = Math.max(0, boxW - 4); // "│ " + content + " │"
-  const borderFg = focused ? theme.accent : theme.border;
+  // Focus feedback: the border switches to the dedicated focused colour so
+  // Tab-ing focus between editor and transcript is visible at a glance.
+  const borderFg = focused ? theme.borderFocused : theme.border;
   const lines = state.lines.length > 0 ? state.lines : [""];
   const out: StyledLine[] = [];
 

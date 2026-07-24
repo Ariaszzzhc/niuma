@@ -1,16 +1,14 @@
 // ===========================================================================
 // @niuma/tui — tool_call transcript card (collapsed + expanded views)
 // ---------------------------------------------------------------------------
-// Renders one tool call as it appears in the transcript. Collapsed form is a
-// single row: a status glyph, the tool name, an input summary, and (when
-// known) the elapsed time. Expanded form appends the result lines tree-
-// indented under a "⎿ " branch, capped at 8 lines with a "+N lines" footer.
+// Renders one tool call as it appears in the transcript, framed by a dim
+// vertical bar on the left so the call reads as one block:
 //
-//   collapsed:   ⠙ read_file  src/main.ts
-//   expanded:    ● read_file  src/main.ts   120ms
-//                ⎿ line one
-//                  line two
-//                  +3 lines
+//   collapsed:   │ ⠙ read_file  src/main.ts
+//   expanded:    │ ● read_file  src/main.ts   120ms
+//                │ ⎿ line one
+//                │   line two
+//                │   +3 lines
 //
 // Status glyphs: a braille spinner (animated by the caller via `spinnerFrame`)
 // while running, ● in the success colour when done, ✗ in the error colour on
@@ -113,6 +111,17 @@ export const renderToolCall = (
   const safeWidth = Math.max(1, width);
   const out: StyledLine[] = [];
 
+  // -- left bar --------------------------------------------------------------
+  // Every row (header + results) is prefixed with "│ " in the border colour,
+  // framing the whole call as one block under the transcript's gutter.
+  const barText = "│ ";
+  const barW = stringWidth(barText);
+  const innerWidth = Math.max(1, safeWidth - barW);
+  const bar = (): StyledSpan => ({
+    text: barText,
+    style: { fg: theme.border, dim: true },
+  });
+
   // -- header row ----------------------------------------------------------
   const glyph = statusGlyph(call, spinnerFrame, theme);
   const nameSpan: StyledSpan = {
@@ -141,7 +150,7 @@ export const renderToolCall = (
   const gapW = stringWidth(gap);
   // Budget for the summary: width - used - gap - (duration + its gap) - right pad.
   const reserved = usedW + gapW + (durW > 0 ? gapW + durW : 0);
-  const summaryBudget = Math.max(0, safeWidth - reserved);
+  const summaryBudget = Math.max(0, innerWidth - reserved);
 
   const summaryText = call.inputSummary.length > 0
     ? truncateToWidth(call.inputSummary, summaryBudget, summaryBudget > 0)
@@ -151,8 +160,8 @@ export const renderToolCall = (
     style: { fg: theme.muted },
   };
 
-  // Lay out: [headerLeft] [gap][summary] ... pad ... [gap][duration]
-  const headerSpans: StyledSpan[] = [...headerLeft];
+  // Lay out: [bar] [headerLeft] [gap][summary] ... pad ... [gap][duration]
+  const headerSpans: StyledSpan[] = [bar(), ...headerLeft];
   if (summaryText.length > 0) {
     headerSpans.push({ text: gap, style: {} }, summarySpan);
   }
@@ -175,15 +184,20 @@ export const renderToolCall = (
         text: branch,
         style: { fg: theme.border },
       };
-      const innerW = Math.max(1, safeWidth - stringWidth(branch));
+      const innerW = Math.max(1, innerWidth - stringWidth(branch));
       const clipped = truncateToWidth(line, innerW, false);
       out.push({
-        spans: [branchSpan, { text: clipped, style: { fg: theme.textDim } }],
+        spans: [
+          bar(),
+          branchSpan,
+          { text: clipped, style: { fg: theme.textDim } },
+        ],
       });
     });
     if (hidden > 0) {
       out.push({
         spans: [
+          bar(),
           { text: "  ", style: {} },
           {
             text: `+${hidden} line${hidden === 1 ? "" : "s"}`,
