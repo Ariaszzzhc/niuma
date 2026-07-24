@@ -5,14 +5,15 @@
 //   niuma tui [options]                   interactive TUI (explicit form)
 //   niuma -p <prompt> [options]           one-shot mode
 //   niuma serve [--port <port>] [--host]  TCP server mode
+//   niuma auth login|logout|status [...]  credential management
 //   niuma --version | -V                  print version
 //   niuma --help | -h                     print help
 //
-// The first positional token selects a subcommand: `serve` -> serve, `tui` ->
-// interactive. Anything else is parsed as flags: with `-p/--prompt` it is a
-// one-shot; without `-p` (and a TTY on stdin) it defaults to the interactive
-// TUI. parseArgs from @std/cli handles the long/short flag aliases and `=`/
-// space value forms.
+// The first positional token selects a subcommand: `serve`, `tui`, or `auth`
+// are the named subcommands; anything else is parsed as flags: with
+// `-p/--prompt` it is a one-shot; without `-p` (and a TTY on stdin) it
+// defaults to the interactive TUI. parseArgs from @std/cli handles the
+// long/short flag aliases and `=`/space value forms.
 //
 // Pipe protection: a non-TTY stdin (e.g. `echo foo | niuma`) cannot host a
 // fullscreen TUI, so both bare `niuma` and the explicit `niuma tui` form print
@@ -23,7 +24,7 @@ import { parseArgs } from "@std/cli";
 import { resolve } from "@std/path";
 import { VERSION } from "@niuma/config";
 
-export type Subcommand = "oneshot" | "serve" | "interactive";
+export type Subcommand = "oneshot" | "serve" | "interactive" | "auth";
 
 export interface OneShotArgs {
   readonly subcommand: "oneshot";
@@ -51,7 +52,30 @@ export interface ServeArgs {
   readonly host: string;
 }
 
-export type ParsedArgs = OneShotArgs | ServeArgs | InteractiveArgs;
+/** `niuma auth` — credential management over ~/.niuma/auth.json.
+ *
+ * action: "login" obtains credentials; "logout" drops them; "status" prints
+ *   the entry's type (+ expiry for OAuth), never the token material. "list"
+ *   is accepted at the CLI as an alias for "status".
+ * providerId: positional, defaults to "openai". Any id is accepted — the
+ *   OAuth flow is provider-id-agnostic, so the resulting entry is stored under
+ *   whatever id is passed (e.g. "openai" or "chatgpt"), paired with a
+ *   type="responses" provider table. The manual API-key path works for any
+ *   provider.
+ * deviceCode: --device-code selects the headless device-code flow, skipping
+ *   the interactive method picker. */
+export interface AuthArgs {
+  readonly subcommand: "auth";
+  readonly action: "login" | "logout" | "status";
+  readonly providerId: string;
+  readonly deviceCode: boolean;
+}
+
+export type ParsedArgs =
+  | OneShotArgs
+  | ServeArgs
+  | InteractiveArgs
+  | AuthArgs;
 
 export type ParseResult =
   | { readonly ok: true; readonly args: ParsedArgs }
@@ -69,14 +93,17 @@ const DEFAULT_PORT = 4096;
 const DEFAULT_HOST = "127.0.0.1";
 
 export const parseCliArgs = (argv: string[]): ParseResult => {
-  // Subcommand dispatch on the first non-flag positional. `serve` and `tui`
-  // are the named subcommands; anything else is parsed as a flag sequence
-  // (one-shot with -p, or default-to-interactive without).
+  // Subcommand dispatch on the first non-flag positional. `serve`, `tui`, and
+  // `auth` are the named subcommands; anything else is parsed as a flag
+  // sequence (one-shot with -p, or default-to-interactive without).
   if (argv.length > 0 && argv[0] === "serve") {
     return parseServeArgs(argv.slice(1));
   }
   if (argv.length > 0 && argv[0] === "tui") {
     return parseInteractiveArgs(argv.slice(1));
+  }
+  if (argv.length > 0 && argv[0] === "auth") {
+    return parseAuthArgs(argv.slice(1));
   }
 
   const parsed = parseArgs(argv, {
@@ -239,6 +266,64 @@ const parseServeArgs = (argv: string[]): ParseResult => {
   };
 };
 
+const parseAuthArgs = (argv: string[]): ParseResult => {
+  const parsed = parseArgs(argv, {
+    boolean: ["help", "device-code"],
+    alias: { h: "help" },
+    unknown: (name) => {
+      if (name.startsWith("-")) {
+        console.error(`niuma auth: unknown option: ${name}`);
+        console.error("Try `niuma auth --help` for usage.");
+        Deno.exit(1);
+      }
+      return true;
+    },
+  });
+
+  if (parsed.help) {
+    printAuthHelp();
+    return { ok: false, exitCode: 0 };
+  }
+
+  // positionals: [action, provider?]. `list` is accepted as an alias for
+  // `status` (the binding contract's action name).
+  const positionals = parsed._.map(String);
+  const actionRaw = positionals[0];
+
+  let action: AuthArgs["action"];
+  switch (actionRaw) {
+    case "login":
+      action = "login";
+      break;
+    case "logout":
+      action = "logout";
+      break;
+    case "status":
+    case "list":
+      action = "status";
+      break;
+    case undefined:
+      // Bare `niuma auth` — print usage, like `niuma --help`.
+      printAuthHelp();
+      return { ok: false, exitCode: 0 };
+    default:
+      console.error(`niuma auth: unknown action '${actionRaw}'.`);
+      console.error("Try `niuma auth --help` for usage.");
+      return { ok: false, exitCode: 1 };
+  }
+
+  const providerId = positionals[1] ?? "openai";
+  return {
+    ok: true,
+    args: {
+      subcommand: "auth",
+      action,
+      providerId,
+      deviceCode: parsed["device-code"] === true,
+    },
+  };
+};
+
 export const printHelp = (): void => {
   const text = `niuma ${VERSION} — minimal server-first AI coding agent
 
@@ -247,6 +332,7 @@ USAGE
   niuma tui [options]                  Interactive TUI (same as bare \`niuma\`).
   niuma -p <prompt> [options]          One-shot: run a prompt, print the answer.
   niuma serve [--port <port>]          Start a local HTTP + SSE server.
+  niuma auth login|logout|status       Manage credentials (see \`niuma auth --help\`).
   niuma --version                      Print version and exit.
   niuma --help                         Show this help.
 
@@ -277,8 +363,18 @@ CONFIGURATION
                                         [provider.deepseek.models.deepseek-chat]
                                         context_window = 128000
                                         max_output = 8192
+                                      For the ChatGPT Responses flavour (use with
+                                      \`niuma auth login openai\`):
+                                        [provider.openai]
+                                        type = "responses"
+                                        [provider.openai.models.gpt-5]
+                                        context_window = 400000
+                                        max_output = 128000
   ~/.niuma/auth.json                   API credentials keyed by provider id (0600):
                                         { "deepseek": { "type": "api", "key": "sk-..." } }
+                                      \`niuma auth login openai\` writes a ChatGPT OAuth entry:
+                                        { "openai": { "type": "oauth", "refresh": "...",
+                                                      "access": "...", "expires": 1730000000000 } }
   ~/.niuma/log/                        Per-process JSON-lines logs.
   ./.niuma/config.toml                 Project-level config, discovered walking up
                                       from the workspace to $HOME (every dir's
@@ -311,6 +407,39 @@ OPTIONS
 
 The server exposes the REST + SSE API on the bound address. See \`niuma --help\`
 for configuration (config.toml + auth.json).
+`;
+  console.log(text);
+};
+
+export const printAuthHelp = (): void => {
+  const text = `niuma ${VERSION} auth — manage credentials in ~/.niuma/auth.json
+
+USAGE
+  niuma auth login [provider] [--device-code]
+  niuma auth logout [provider]
+  niuma auth status [provider]            (\`list\` is accepted as an alias)
+  niuma auth --help
+
+ACTIONS
+  login   Obtain credentials for a provider (default: openai). Without
+          --device-code, it prompts for a sign-in method:
+            1. ChatGPT Pro/Plus (browser)      PKCE + loopback on port 1455.
+            2. ChatGPT Pro/Plus (device code)  for headless machines.
+            3. Manually enter API Key          paste an sk-… key.
+          --device-code skips the prompt and runs the headless device flow.
+          niuma never opens a browser for you: it prints the URL to visit.
+  logout  Drop the provider's entry from auth.json.
+  status  Print the provider's credential type (+ expiry for OAuth).
+          Never prints token material.
+
+NOTES
+  The provider argument defaults to 'openai'. Any provider id is accepted for
+  login: the OAuth flow is provider-id-agnostic and stores the entry under the
+  given id (e.g. 'openai' or 'chatgpt'), which must then be paired with a
+  type="responses" provider table in config.toml. Credentials are stored in
+  auth.json (mode 0600), e.g.
+    { "openai": { "type": "oauth", "refresh": "...",
+                  "access": "...", "expires": 1730000000000 } }
 `;
   console.log(text);
 };

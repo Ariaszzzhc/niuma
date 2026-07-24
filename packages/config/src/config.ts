@@ -172,13 +172,20 @@ const optThinkingKeep = (
 /** Wire-protocol flavours a provider can speak. niuma core only knows how to
  * dispatch on this label; the legal values themselves are config-level
  * vocabulary (mirrors how `thinking_effort` is a free string). */
-export const PROVIDER_TYPES = ["openai", "anthropic"] as const;
+export const PROVIDER_TYPES = ["openai", "anthropic", "responses"] as const;
 export type ProviderType = (typeof PROVIDER_TYPES)[number];
 
 /** Canonical endpoint for the anthropic flavour when the provider table
  * leaves base_url unset. Lives next to the type vocabulary so config and
  * bootstrap share one default. */
 export const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
+
+/** Canonical endpoint for the responses flavour (OpenAI Responses API) when
+ * the provider table leaves base_url unset. The OAuth rewrite target
+ * (chatgpt.com/backend-api/codex/responses) is wire-protocol knowledge and
+ * lives in the provider package, NOT here — config only knows the api.openai.com
+ * default, mirroring ANTHROPIC_DEFAULT_BASE_URL. */
+export const RESPONSES_DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
 const optProviderType = (
   obj: Record<string, unknown>,
@@ -466,11 +473,16 @@ export const resolveModelRef = (
         (known.length > 0 ? ` (configured: ${known.join(", ")})` : ""),
     );
   }
-  // base_url is required for the default openai flavour; anthropic providers
-  // may omit it and fall back to the protocol's canonical host (the bootstrap
-  // substitutes https://api.anthropic.com when the table leaves it unset).
-  const baseUrl = provider.baseUrl ??
-    (provider.type === "anthropic" ? ANTHROPIC_DEFAULT_BASE_URL : undefined);
+  // base_url is required for the default openai flavour; anthropic and
+  // responses providers may omit it and fall back to the protocol's canonical
+  // host (the bootstrap substitutes ANTHROPIC_DEFAULT_BASE_URL or
+  // RESPONSES_DEFAULT_BASE_URL when the table leaves it unset).
+  const defaultBase = provider.type === "anthropic"
+    ? ANTHROPIC_DEFAULT_BASE_URL
+    : provider.type === "responses"
+    ? RESPONSES_DEFAULT_BASE_URL
+    : undefined;
+  const baseUrl = provider.baseUrl ?? defaultBase;
   if (!baseUrl) {
     throw new ConfigError(
       `config: provider "${providerId}" has no base_url. Add one to its ` +

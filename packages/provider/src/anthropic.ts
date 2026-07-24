@@ -3,16 +3,17 @@ import { niumaFetch } from "./http.ts";
 import { Provider, type ProviderAdapter } from "./contract.ts";
 import type { ChatRequest, Message, ModelRef, ToolDef } from "./domain.ts";
 import {
-  AuthFailed,
-  ContextOverflow,
   InvalidResponse,
   Network,
-  Overloaded,
-  RateLimited,
   type ProviderError,
 } from "./errors.ts";
 import { withRetry } from "./retry.ts";
 import { parseAnthropicSSE } from "./anthropic_sse.ts";
+// Shared with openai.ts / responses.ts: the HTTP -> ProviderError ladder is
+// extracted once so every fetch-based adapter classifies identically.
+// Anthropic's 529 "overloaded" status falls in the >= 500 band the shared
+// ladder already treats as transient overload.
+import { classifyResponse } from "./classify.ts";
 
 export interface AnthropicProviderConfig {
   readonly baseUrl: string;
@@ -271,47 +272,6 @@ const buildBody = (
   // tool_choice defaults to `auto` on Anthropic's side; we don't send it.
   return JSON.stringify(payload);
 };
-
-// =============================================================================
-// Error classification
-// =============================================================================
-const classifyResponse = (
-  res: Response,
-): Effect.Effect<Response, ProviderError> =>
-  Effect.gen(function* () {
-    if (res.ok) return res;
-    const text = yield* Effect.promise(() => res.text().catch(() => ""));
-    const msg = text || res.statusText;
-    const status = res.status;
-    if (status === 401 || status === 403) {
-      return yield* Effect.fail(new AuthFailed({ message: msg }));
-    }
-    if (status === 429) {
-      const ra = res.headers.get("retry-after");
-      let retryAfterMs: number | undefined;
-      if (ra) {
-        const secs = Number(ra);
-        if (Number.isFinite(secs)) retryAfterMs = secs * 1000;
-      }
-      return yield* Effect.fail(
-        retryAfterMs !== undefined
-          ? new RateLimited({ retryAfterMs })
-          : new RateLimited({}),
-      );
-    }
-    // 529 is Anthropic's dedicated "overloaded" status; treat the whole 5xx
-    // band as transient overload (retryable), matching the OpenAI adapter's
-    // policy.
-    if (status >= 500) {
-      return yield* Effect.fail(new Overloaded({ message: msg }));
-    }
-    if (status === 400 && /context|too long|maximum|token/i.test(msg)) {
-      return yield* Effect.fail(new ContextOverflow({ message: msg }));
-    }
-    return yield* Effect.fail(
-      new InvalidResponse({ message: `HTTP ${status}: ${msg}` }),
-    );
-  });
 
 const fetchCompletion = (
   config: AnthropicProviderConfig,

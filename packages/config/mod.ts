@@ -18,6 +18,7 @@ export {
   PROJECT_DIR_BASENAME,
   projectConfigDirs,
   PROVIDER_TYPES,
+  RESPONSES_DEFAULT_BASE_URL,
   resolveModelRef,
   substituteEnv,
 } from "./src/config.ts";
@@ -55,4 +56,30 @@ export {
   setAuth,
   writeAuthFile,
 } from "./src/auth.ts";
-export type { ApiAuth, AuthInfo, AuthMap } from "./src/auth.ts";
+export type { ApiAuth, AuthInfo, AuthMap, OAuthAuth } from "./src/auth.ts";
+
+export {
+  buildAuthorizeUrl,
+  exchangeCode,
+  extractAccountId,
+  generatePkce,
+  OAUTH_CLIENT_ID,
+  OAUTH_EXPIRY_SKEW_MS,
+  OAUTH_ISSUER,
+  OAUTH_PORT,
+  OAUTH_REDIRECT_URI,
+  OAuthError,
+  parseJwtClaims,
+  pollDeviceAuth,
+  randomState,
+  refreshTokens,
+  requestDeviceCode,
+  toOAuthAuth,
+} from "./src/oauth.ts";
+export type {
+  DeviceCodeResponse,
+  ExchangeCodeOptions,
+  IdTokenClaims,
+  PkceCodes,
+  TokenResponse,
+} from "./src/oauth.ts";

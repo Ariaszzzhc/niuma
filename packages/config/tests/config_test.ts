@@ -8,6 +8,7 @@ import {
   parseConfig,
   parseModelRef,
   resolveModelRef,
+  RESPONSES_DEFAULT_BASE_URL,
   substituteEnv,
 } from "../mod.ts";
 import { ConfigError } from "../src/config.ts";
@@ -74,6 +75,25 @@ type = "anthropic"
   );
 });
 
+Deno.test("resolveModelRef: responses provider without base_url falls back to api.openai.com/v1", () => {
+  const c = parseConfig(`
+[provider.openai]
+type = "responses"
+`);
+  const r = resolveModelRef(c, "openai/gpt-5");
+  assertEquals(r.provider.baseUrl, RESPONSES_DEFAULT_BASE_URL);
+  // An explicit base_url still wins over the default.
+  const overridden = parseConfig(`
+[provider.openai]
+type = "responses"
+base_url = "https://staging.example.com/v1"
+`);
+  assertEquals(
+    resolveModelRef(overridden, "openai/gpt-5").provider.baseUrl,
+    "https://staging.example.com/v1",
+  );
+});
+
 Deno.test("parseConfig: wrong field types are rejected", () => {
   assertThrows(
     () =>
@@ -94,7 +114,7 @@ context_window = "128k"
   assertThrows(() => parseConfig(`model = 3`), ConfigError, "string");
 });
 
-Deno.test("parseConfig: provider.type defaults to undefined, accepts openai/anthropic", () => {
+Deno.test("parseConfig: provider.type defaults to undefined, accepts openai/anthropic/responses", () => {
   // Absent → undefined (the consumer, not config, picks the default protocol).
   const c0 = parseConfig(`
 [provider.x]
@@ -113,6 +133,11 @@ type = "openai"
 base_url = "https://api.openai.com/v1"
 `);
   assertEquals(c2.providers.openai!.type, "openai");
+  const c3 = parseConfig(`
+[provider.chatgpt]
+type = "responses"
+`);
+  assertEquals(c3.providers.chatgpt!.type, "responses");
 });
 
 Deno.test("parseConfig: invalid provider.type is rejected", () => {
@@ -124,7 +149,7 @@ type = "cohere"
 base_url = "https://x"
 `),
     ConfigError,
-    "provider.x.type must be one of openai|anthropic",
+    "provider.x.type must be one of openai|anthropic|responses",
   );
   // Non-string also rejected — keeps the surface honest about the union.
   assertThrows(
@@ -135,7 +160,7 @@ type = 1
 base_url = "https://x"
 `),
     ConfigError,
-    "provider.x.type must be one of openai|anthropic",
+    "provider.x.type must be one of openai|anthropic|responses",
   );
 });
 
