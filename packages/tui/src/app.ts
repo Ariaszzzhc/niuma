@@ -24,6 +24,7 @@ import {
   type Color,
   type LoopMsg,
   matchesKey,
+  MOUSE_BUTTON,
   type Program,
   type StyledLine,
   type StyledSpan,
@@ -554,10 +555,34 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       }];
     }
 
-    // 6) scroll keys when the transcript is focused — routed through the pure
-    //    transcriptReducer (given the live content + viewport height) so offsets
-    //    clamp and scrolling back to the bottom re-engages followTail. home/end
-    //    jump to the absolute top / bottom.
+    // 6) page up/down + mouse wheel scroll the transcript regardless of
+    //    focus — PgUp/PgDn and the wheel are viewport controls, not editor
+    //    input, so they never move focus away from what the user is typing.
+    if (event.kind === "key") {
+      if (event.key === "pageUp") {
+        return [applyTranscriptScroll(model, { type: "PageUp" })];
+      }
+      if (event.key === "pageDown") {
+        return [applyTranscriptScroll(model, { type: "PageDown" })];
+      }
+    }
+    if (event.kind === "mouse") {
+      if (event.button === MOUSE_BUTTON.wheelUp) {
+        return [applyTranscriptScroll(model, { type: "ScrollUp" })];
+      }
+      if (event.button === MOUSE_BUTTON.wheelDown) {
+        return [applyTranscriptScroll(model, { type: "ScrollDown" })];
+      }
+      // Other mouse events (button presses over the editor, releases) are
+      // swallowed — nothing consumes them yet, and they must not fall
+      // through to the editor.
+      return [model];
+    }
+
+    // 6b) line scroll keys when the transcript is focused — routed through
+    //    the pure transcriptReducer (given the live content + viewport
+    //    height) so offsets clamp and scrolling back to the bottom re-engages
+    //    followTail. home/end jump to the absolute top / bottom.
     if (model.focus === "transcript" && event.kind === "key") {
       if (event.key === "home") {
         return [{ ...model, transcriptScroll: 0, followTail: false }];

@@ -160,6 +160,9 @@ export const paletteReducer = (
     return [appendToQuery(state, ev.text), undefined];
   }
 
+  // mouse events mean nothing to the palette — leave the state alone.
+  if (ev.kind === "mouse") return [state, undefined];
+
   // named keys
   switch (ev.key) {
     case "enter": {

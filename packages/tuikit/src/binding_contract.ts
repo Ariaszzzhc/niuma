@@ -240,8 +240,19 @@ export const KEY_KIND = {
   key: 0,
   paste: 1,
   esc: 2,
+  mouse: 3,
 } as const;
 export type KeyKind = (typeof KEY_KIND)[keyof typeof KEY_KIND];
+
+// -- Mouse button codes (KeyEventRec.key_code for KEY_KIND.mouse) ------------
+export const MOUSE_BUTTON = {
+  left: 0,
+  middle: 1,
+  right: 2,
+  wheelUp: 64,
+  wheelDown: 65,
+} as const;
+export type MouseButton = (typeof MOUSE_BUTTON)[keyof typeof MOUSE_BUTTON];
 
 // -- Key event types (Kitty press/repeat/release; 0 = legacy) ----------------
 // KEY_EVENT_TYPE mirrors the ABI *byte* values (0..3) used in the binary
@@ -420,8 +431,22 @@ export interface PasteEvent {
   readonly text: string;
 }
 
+/**
+ * SGR mouse report. `button` is one of MOUSE_BUTTON (wheel events are
+ * always "press"; button presses also produce a matching "release").
+ * `x`/`y` are 1-based terminal cells.
+ */
+export interface MouseEvent {
+  readonly kind: "mouse";
+  readonly button: MouseButton;
+  readonly eventType: KeyEventType;
+  readonly mods: KeyMods;
+  readonly x: number;
+  readonly y: number;
+}
+
 /** Anything keys.ts can hand to the app. */
-export type InputEvent = KeyEvent | PasteEvent;
+export type InputEvent = KeyEvent | PasteEvent | MouseEvent;
 
 // ===========================================================================
 // 5. Decode mapping: binary records -> TS types

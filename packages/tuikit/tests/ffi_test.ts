@@ -212,6 +212,64 @@ Deno.test("keys: legacy CSI up-arrow survives a split feed", () => {
   }
 });
 
+Deno.test("keys: SGR mouse wheel + button decode to mouse events", () => {
+  if (!requireLib("keys mouse")) return;
+  const p = KeyParser.create();
+  try {
+    // wheel up at (10,5)
+    const up = p.feed(enc("\x1b[<64;10;5M"))[0];
+    assertEquals(up.kind, "mouse");
+    if (up.kind === "mouse") {
+      assertEquals(up.button, 64);
+      assertEquals(up.eventType, "press");
+      assertEquals(up.x, 10);
+      assertEquals(up.y, 5);
+    }
+    // wheel down
+    const down = p.feed(enc("\x1b[<65;1;1M"))[0];
+    assertEquals(down.kind, "mouse");
+    if (down.kind === "mouse") assertEquals(down.button, 65);
+    // left-button press + release pair
+    const press = p.feed(enc("\x1b[<0;3;2M"))[0];
+    assertEquals(press.kind, "mouse");
+    if (press.kind === "mouse") {
+      assertEquals(press.button, 0);
+      assertEquals(press.eventType, "press");
+      assertEquals([press.x, press.y], [3, 2]);
+    }
+    const release = p.feed(enc("\x1b[<0;3;2m"))[0];
+    assertEquals(release.kind, "mouse");
+    if (release.kind === "mouse") {
+      assertEquals(release.eventType, "release");
+    }
+    // motion reports are dropped entirely
+    assertEquals(p.feed(enc("\x1b[<35;7;7M")), []);
+    // shift+ctrl+wheel-up carries the modifier bits
+    const modded = p.feed(enc("\x1b[<84;1;1M"))[0];
+    if (modded.kind === "mouse") {
+      assertEquals(modded.mods.shift, true);
+      assertEquals(modded.mods.ctrl, true);
+    }
+  } finally {
+    p.dispose();
+  }
+});
+
+Deno.test("keys: SGR mouse survives a split feed", () => {
+  if (!requireLib("keys mouse split")) return;
+  const p = KeyParser.create();
+  try {
+    assertEquals(p.feed(enc("\x1b[<6")), []);
+    const evs = p.feed(enc("4;10;5M"));
+    assertEquals(evs.length, 1);
+    const ev = evs[0];
+    assertEquals(ev.kind, "mouse");
+    if (ev.kind === "mouse") assertEquals(ev.button, 64);
+  } finally {
+    p.dispose();
+  }
+});
+
 Deno.test("keys: bracketed paste becomes one paste event", () => {
   if (!requireLib("keys paste")) return;
   const p = KeyParser.create();

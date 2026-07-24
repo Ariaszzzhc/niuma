@@ -134,7 +134,22 @@ pub const KEY_KIND_PASTE: u8 = 1;
 /// `KeyEventRec.kind`: bare ESC key (escape seen, no following bytes within
 /// the parser's timeout-free "end of current chunk" rule).
 pub const KEY_KIND_ESC: u8 = 2;
-// kind values 3..255 reserved.
+/// `KeyEventRec.kind`: SGR mouse report (`ESC[<b;x;yM/m`). The button id is in
+/// `key_code` (64 = wheel up, 65 = wheel down, 0..2 = left/mid/right press),
+/// the position is packed into the payload arena as 4 LE bytes `[x, y]`
+/// (1-based terminal cells), and `mods` carries the modifier bits from the
+/// report. `event_type` is PRESS for `M` (down/wheel) and RELEASE for `m`.
+pub const KEY_KIND_MOUSE: u8 = 3;
+// kind values 4..255 reserved.
+
+/// `KeyEventRec.key_code` values for KEY_KIND_MOUSE events. Codes 0..2 are
+/// button presses (left/middle/right); the wheel codes mirror the SGR button
+/// number's low bits so TS can pass the raw button id through verbatim.
+pub const MOUSE_BUTTON_LEFT: u16 = 0;
+pub const MOUSE_BUTTON_MIDDLE: u16 = 1;
+pub const MOUSE_BUTTON_RIGHT: u16 = 2;
+pub const MOUSE_WHEEL_UP: u16 = 64;
+pub const MOUSE_WHEEL_DOWN: u16 = 65;
 
 /// `KeyEventRec.event_type` (Kitty CSI u third-param event types).
 pub const KEY_EVENT_PRESS: u8 = 1;

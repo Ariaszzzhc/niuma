@@ -38,6 +38,11 @@ const SHOW_CURSOR = enc("\x1b[?25h");
 /** Bracketed paste. */
 const PASTE_ON = enc("\x1b[?2004h");
 const PASTE_OFF = enc("\x1b[?2004l");
+/** SGR mouse reporting: button events (1002) + SGR encoding (1006). We use
+ * 1002 (not 1003 any-motion) so the stream only carries presses + wheel
+ * ticks, not hover noise. */
+const MOUSE_ON = enc("\x1b[?1002h\x1b[?1006h");
+const MOUSE_OFF = enc("\x1b[?1006l\x1b[?1002l");
 /** Kitty keyboard protocol: push flags (disambiguate=bit1) / pop one level. */
 const KITTY_PUSH = enc("\x1b[>1u");
 const KITTY_POP = enc("\x1b[<u");
@@ -179,6 +184,7 @@ export class Terminal {
   /** Tracks what we enabled so dispose restores exactly that. */
   #pushedKitty = false;
   #enabledPaste = false;
+  #enabledMouse = false;
   #enteredAlt = false;
   #rawSet = false;
 
@@ -245,6 +251,9 @@ export class Terminal {
       Deno.stdout.writeSync(PASTE_ON);
       this.#enabledPaste = true;
     }
+    // SGR mouse (button + wheel reports; no any-motion)
+    Deno.stdout.writeSync(MOUSE_ON);
+    this.#enabledMouse = true;
     // kitty keyboard
     if (this.#caps.kittyKeyboard) {
       Deno.stdout.writeSync(KITTY_PUSH);
@@ -316,6 +325,7 @@ export class Terminal {
 
     // restore escape state (order matters: alt-screen leave LAST)
     if (this.#pushedKitty) Deno.stdout.writeSync(KITTY_POP);
+    if (this.#enabledMouse) Deno.stdout.writeSync(MOUSE_OFF);
     if (this.#enabledPaste) Deno.stdout.writeSync(PASTE_OFF);
     Deno.stdout.writeSync(SHOW_CURSOR);
     if (this.#enteredAlt) Deno.stdout.writeSync(LEAVE_ALT);

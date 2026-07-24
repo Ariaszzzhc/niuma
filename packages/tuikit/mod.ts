@@ -23,6 +23,8 @@ export type {
   KeyEventType,
   KeyKind,
   KeyMods,
+  MouseButton,
+  MouseEvent,
   NamedKey,
   PasteEvent,
   Style,
@@ -39,6 +41,7 @@ export {
   KEY_EVENT_TYPE,
   KEY_KIND,
   MOD,
+  MOUSE_BUTTON,
 } from "./src/binding_contract.ts";
 
 // -- implemented primitives --------------------------------------------------

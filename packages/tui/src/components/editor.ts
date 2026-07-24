@@ -516,6 +516,9 @@ export const editorReducer = (
 
   if (ev.kind === "esc") return [state, undefined];
 
+  // mouse events mean nothing to the editor — leave the state alone.
+  if (ev.kind === "mouse") return [state, undefined];
+
   // -- printable text + ctrl-letter commands (kitty + legacy forms) --------
   if (ev.kind === "text") {
     // matchesKey accepts both the kitty "a"+ctrl form and the legacy raw

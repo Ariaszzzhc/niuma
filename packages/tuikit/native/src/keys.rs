@@ -23,7 +23,9 @@ use crate::abi::{
     KEY_CODE_F6, KEY_CODE_F7, KEY_CODE_F8, KEY_CODE_F9, KEY_CODE_F10, KEY_CODE_F11,
     KEY_CODE_F12, KEY_CODE_HOME, KEY_CODE_INSERT, KEY_CODE_LEFT, KEY_CODE_PAGE_DOWN,
     KEY_CODE_PAGE_UP, KEY_CODE_RIGHT, KEY_CODE_TAB, KEY_CODE_UP, KEY_EVENT_LEGACY,
-    KEY_EVENT_PRESS, KEY_KIND_ESC, KEY_KIND_KEY, KEY_KIND_PASTE, MOD_ALT, MOD_CTRL, MOD_SHIFT, MOD_SUPER,
+    KEY_EVENT_PRESS, KEY_EVENT_RELEASE, KEY_KIND_ESC, KEY_KIND_KEY, KEY_KIND_MOUSE,
+    KEY_KIND_PASTE, MOD_ALT, MOD_CTRL, MOD_SHIFT, MOD_SUPER, MOUSE_WHEEL_DOWN,
+    MOUSE_WHEEL_UP,
 };
 
 // ---------------------------------------------------------------------------
@@ -51,6 +53,14 @@ impl Event {
     }
     fn paste(body: Vec<u8>) -> Self {
         Event { kind: KEY_KIND_PASTE, event_type: KEY_EVENT_LEGACY, key_code: 0, mods: 0, payload: body }
+    }
+    /// SGR mouse report. `pos` is packed into the payload as 4 LE bytes
+    /// `[x, y]` (1-based cells) — see `KEY_KIND_MOUSE` in abi.rs.
+    fn mouse(button: u16, event_type: u8, mods: u8, x: u16, y: u16) -> Self {
+        let mut payload = Vec::with_capacity(4);
+        payload.extend_from_slice(&x.to_le_bytes());
+        payload.extend_from_slice(&y.to_le_bytes());
+        Event { kind: KEY_KIND_MOUSE, event_type, key_code: button, mods, payload }
     }
 }
 
@@ -346,8 +356,7 @@ impl KeyParser {
     fn dispatch_csi(&mut self, body: &[u8], finalb: u8, events: &mut Vec<Event>) {
         // Default next state is Ground; the paste starter overrides it.
         self.state = St::Ground;
-        let (priv_marker, params) = parse_params(body);
-        let _ = priv_marker;
+        let (priv_byte, params) = parse_params(body);
         match finalb {
             b'A' => events.push(Event::key(KEY_CODE_UP, mods_csi(&params))),
             b'B' => events.push(Event::key(KEY_CODE_DOWN, mods_csi(&params))),
@@ -358,9 +367,44 @@ impl KeyParser {
             b'Z' => events.push(Event::key(KEY_CODE_TAB, MOD_SHIFT)),
             b'~' => self.dispatch_tilde(&params, events),
             b'u' => self.dispatch_kitty(body, &params, events),
-            // Mouse (M/m) and unknown finals: consume silently.
+            // SGR mouse: ESC[<b;x;yM (press/wheel) / m (release).
+            b'M' | b'm' if priv_byte == Some(b'<') => {
+                self.dispatch_mouse(&params, finalb, events)
+            }
+            // Other mouse forms and unknown finals: consume silently.
             _ => {}
         }
+    }
+
+    /// SGR mouse report: params = [button, x, y], final M = press/wheel,
+    /// m = release. The button word's low 2 bits are the button id, bit 2
+    /// (4) is motion (dropped), bits 3..5 are shift/alt/ctrl, bit 6 (64) is
+    /// the wheel flag. Motion-with-no-button (35) is ignored entirely.
+    fn dispatch_mouse(&mut self, params: &[u32], finalb: u8, events: &mut Vec<Event>) {
+        let b = params.first().copied().unwrap_or(0);
+        let x = params.get(1).copied().unwrap_or(0) as u16;
+        let y = params.get(2).copied().unwrap_or(0) as u16;
+        let wheel = b & 64 != 0;
+        let motion = b & 32 != 0; // SGR motion bit (also set on drag)
+        if motion {
+            return; // hover/drag reports carry no app value yet
+        }
+        let button: u16 = if wheel {
+            if b & 1 == 0 { MOUSE_WHEEL_UP } else { MOUSE_WHEEL_DOWN }
+        } else {
+            (b & 3) as u16
+        };
+        let mut mods = 0u8;
+        if b & 4 != 0 { mods |= MOD_SHIFT; }
+        if b & 8 != 0 { mods |= MOD_ALT; }
+        if b & 16 != 0 { mods |= MOD_CTRL; }
+        // Wheel events are instantaneous (arrive only as M); button presses
+        // distinguish press (M) from release (m).
+        let event_type = if finalb == b'm' { KEY_EVENT_RELEASE } else { KEY_EVENT_PRESS };
+        if wheel && finalb == b'm' {
+            return; // wheel "release" is not a real event
+        }
+        events.push(Event::mouse(button, event_type, mods, x, y));
     }
 
     fn dispatch_tilde(&mut self, params: &[u32], events: &mut Vec<Event>) {
@@ -531,11 +575,13 @@ fn utf8_lead_len(lead: u8) -> u8 {
     }
 }
 
-/// Parse CSI params: returns (had_private_marker, values). Empty fields → 0.
-fn parse_params(body: &[u8]) -> (bool, Vec<u32>) {
+/// Parse CSI params: returns (private marker byte, values). Empty fields → 0.
+fn parse_params(body: &[u8]) -> (Option<u8>, Vec<u32>) {
     let mut start = 0;
+    let mut priv_byte = None;
     if let Some(&first) = body.first() {
         if matches!(first, b'?' | b'>' | b'<' | b'=' | b'!') {
+            priv_byte = Some(first);
             start = 1;
         }
     }
@@ -544,7 +590,7 @@ fn parse_params(body: &[u8]) -> (bool, Vec<u32>) {
     for field in rest.split(|&c| c == b';') {
         out.push(parse_u32_opt(field).unwrap_or(0));
     }
-    (start == 1, out)
+    (priv_byte, out)
 }
 
 fn parse_u32_opt(bytes: &[u8]) -> Option<u32> {
@@ -716,8 +762,8 @@ mod tests {
     use super::*;
     use crate::abi::{
         tuikit_keys_create, tuikit_keys_feed, tuikit_keys_free, KEY_EVENT_PRESS,
-        KEY_EVENT_RELEASE, KEY_KIND_ESC, KEY_KIND_KEY, KEY_KIND_PASTE, KEY_CODE_ENTER, MOD_ALT,
-        MOD_CTRL, MOD_SHIFT,
+        KEY_EVENT_RELEASE, KEY_KIND_ESC, KEY_KIND_KEY, KEY_KIND_MOUSE, KEY_KIND_PASTE,
+        KEY_CODE_ENTER, MOD_ALT, MOD_CTRL, MOD_SHIFT, MOUSE_WHEEL_DOWN, MOUSE_WHEEL_UP,
     };
 
     /// Feed bytes through a fresh parser; return decoded events.
@@ -994,6 +1040,71 @@ mod tests {
         assert_eq!(ev[0].payload, b"a");
         assert_eq!(ev[1].key_code, KEY_CODE_UP);
         assert_eq!(ev[2].payload, b"b");
+    }
+
+    #[test]
+    fn sgr_mouse_wheel_up_down() {
+        // ESC[<64;10;5M = wheel up at (10,5); 65 = wheel down.
+        let ev = run(b"\x1b[<64;10;5M");
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].kind, KEY_KIND_MOUSE);
+        assert_eq!(ev[0].key_code, MOUSE_WHEEL_UP);
+        assert_eq!(ev[0].event_type, KEY_EVENT_PRESS);
+        assert_eq!(ev[0].payload, [10u16, 5u16].map(|v| v.to_le_bytes()).concat());
+
+        let ev = run(b"\x1b[<65;1;1M");
+        assert_eq!(ev[0].key_code, MOUSE_WHEEL_DOWN);
+    }
+
+    #[test]
+    fn sgr_mouse_wheel_release_is_ignored() {
+        // Terminals only send wheel as M; a stray m form yields nothing.
+        let ev = run(b"\x1b[<64;10;5m");
+        assert!(ev.is_empty());
+    }
+
+    #[test]
+    fn sgr_mouse_button_press_and_release() {
+        // Left button (0) press at (3,2), then release.
+        let ev = run(b"\x1b[<0;3;2M");
+        assert_eq!(ev[0].kind, KEY_KIND_MOUSE);
+        assert_eq!(ev[0].key_code, 0);
+        assert_eq!(ev[0].event_type, KEY_EVENT_PRESS);
+        let ev = run(b"\x1b[<0;3;2m");
+        assert_eq!(ev[0].event_type, KEY_EVENT_RELEASE);
+    }
+
+    #[test]
+    fn sgr_mouse_modifiers() {
+        // shift(4)+ctrl(16) + wheel up: button = 64+4+16 = 84.
+        let ev = run(b"\x1b[<84;1;1M");
+        assert_eq!(ev[0].key_code, MOUSE_WHEEL_UP);
+        assert_eq!(ev[0].mods, MOD_SHIFT | MOD_CTRL);
+    }
+
+    #[test]
+    fn sgr_mouse_motion_is_dropped() {
+        // Motion bit (32) set — hover/drag noise carries no app value.
+        let ev = run(b"\x1b[<35;7;7M");
+        assert!(ev.is_empty(), "motion report leaked: {:?}", ev);
+        let ev = run(b"\x1b[<32;7;7M"); // drag with no button
+        assert!(ev.is_empty());
+    }
+
+    #[test]
+    fn sgr_mouse_split_across_feeds() {
+        let ev = run_split(b"\x1b[<64;10;5M");
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].kind, KEY_KIND_MOUSE);
+        assert_eq!(ev[0].key_code, MOUSE_WHEEL_UP);
+    }
+
+    #[test]
+    fn sgr_mouse_then_typing_survives() {
+        let ev = run(b"\x1b[<64;1;1Ma");
+        assert_eq!(ev.len(), 2);
+        assert_eq!(ev[0].kind, KEY_KIND_MOUSE);
+        assert_eq!(ev[1].payload, b"a");
     }
 
     // -- FFI round-trip -------------------------------------------------------

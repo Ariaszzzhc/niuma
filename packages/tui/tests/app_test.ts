@@ -310,6 +310,63 @@ Deno.test("approval nav: digit 1 picks the first option directly", () => {
 });
 
 // ---------------------------------------------------------------------------
+// global page scroll (PgUp/PgDn + mouse wheel work from ANY focus)
+// ---------------------------------------------------------------------------
+
+const mouseMsg = (button: number): Msg =>
+  keyMsg({
+    kind: "mouse",
+    button: button as never,
+    eventType: "press",
+    mods: noMods,
+    x: 1,
+    y: 1,
+  });
+
+Deno.test("page scroll: pageUp/pageDown scroll even while the editor is focused", () => {
+  const program = newProgram();
+  const u = step(program.update);
+  let model = program.init()[0];
+  model = fill(u, model);
+  assertEquals(model.focus, "editor");
+  assertEquals(model.followTail, true);
+
+  // PgUp scrolls a full page and breaks follow WITHOUT moving focus.
+  model = u(model, keyMsg(key("pageUp")));
+  assertEquals(model.followTail, false, "pageUp breaks follow");
+  assertEquals(model.focus, "editor", "focus stays in the editor");
+
+  // PgDn back to the bottom re-engages follow.
+  for (let i = 0; i < 10 && !model.followTail; i++) {
+    model = u(model, keyMsg(key("pageDown")));
+  }
+  assertEquals(model.followTail, true, "pageDown back to bottom re-follows");
+});
+
+Deno.test("page scroll: mouse wheel scrolls from any focus, other buttons swallowed", () => {
+  const program = newProgram();
+  const u = step(program.update);
+  let model = program.init()[0];
+  model = fill(u, model);
+
+  // wheel up breaks follow (and does not type into the editor)
+  model = u(model, mouseMsg(64));
+  assertEquals(model.followTail, false, "wheel up breaks follow");
+  assertEquals(model.editor.lines, [""], "wheel never reaches the editor");
+
+  // wheel back down to the bottom re-engages
+  for (let i = 0; i < 20 && !model.followTail; i++) {
+    model = u(model, mouseMsg(65));
+  }
+  assertEquals(model.followTail, true, "wheel down re-engages follow");
+
+  // a left-button press is swallowed (no crash, no state change, no editor input)
+  const before = model;
+  model = u(model, mouseMsg(0));
+  assertEquals(model, before);
+});
+
+// ---------------------------------------------------------------------------
 // esc interrupt / ctrl+d quit
 // ---------------------------------------------------------------------------
 

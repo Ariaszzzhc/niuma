@@ -35,6 +35,7 @@ import {
   type KeyMods,
   KEYS_OUT_HEADER_SIZE,
   MOD,
+  type MouseEvent,
   type NamedKey,
   type PasteEvent,
   SPAN_REC_OFF,
@@ -363,6 +364,22 @@ export const decodeKeyEvents = (
     }
     if (kind === KEY_KIND.esc) {
       events.push({ kind: "esc" });
+      continue;
+    }
+    if (kind === KEY_KIND.mouse) {
+      // Payload is 4 LE bytes [x, y] (1-based cells) — decode as raw words,
+      // not text.
+      if (end - ofs >= 4) {
+        const ev: MouseEvent = {
+          kind: "mouse",
+          button: keyCode as MouseEvent["button"],
+          eventType: et,
+          mods,
+          x: dv.getUint16(ofs, true),
+          y: dv.getUint16(ofs + 2, true),
+        };
+        events.push(ev);
+      }
       continue;
     }
     // KEY_KIND.key
