@@ -3,17 +3,17 @@ import { niumaFetch } from "./http.ts";
 import { Provider, type ProviderAdapter } from "./contract.ts";
 import type { ChatRequest, ModelRef } from "./domain.ts";
 import {
-  AuthFailed,
-  ContextOverflow,
   InvalidResponse,
   Network,
-  Overloaded,
   type ProviderError,
-  RateLimited,
 } from "./errors.ts";
 import { withRetry } from "./retry.ts";
 import { messagesToOpenAI, toolsToOpenAI } from "./convert.ts";
 import { parseOpenAISSE } from "./sse.ts";
+// Shared with responses.ts: the HTTP -> ProviderError ladder is the contract
+// surface withRetry and the agent loop branch on, so both fetch-based adapters
+// classify identically (extracted verbatim into its own module).
+import { classifyResponse } from "./classify.ts";
 
 export interface OpenAIProviderConfig {
   readonly baseUrl: string;
@@ -67,41 +67,6 @@ const buildBody = (config: OpenAIProviderConfig, req: ChatRequest): string => {
   }
   return JSON.stringify(payload);
 };
-
-const classifyResponse = (
-  res: Response,
-): Effect.Effect<Response, ProviderError> =>
-  Effect.gen(function* () {
-    if (res.ok) return res;
-    const text = yield* Effect.promise(() => res.text().catch(() => ""));
-    const msg = text || res.statusText;
-    const status = res.status;
-    if (status === 401 || status === 403) {
-      return yield* Effect.fail(new AuthFailed({ message: msg }));
-    }
-    if (status === 429) {
-      const ra = res.headers.get("retry-after");
-      let retryAfterMs: number | undefined;
-      if (ra) {
-        const secs = Number(ra);
-        if (Number.isFinite(secs)) retryAfterMs = secs * 1000;
-      }
-      return yield* Effect.fail(
-        retryAfterMs !== undefined
-          ? new RateLimited({ retryAfterMs })
-          : new RateLimited({}),
-      );
-    }
-    if (status >= 500) {
-      return yield* Effect.fail(new Overloaded({ message: msg }));
-    }
-    if (status === 400 && /context|too long|maximum|token/i.test(msg)) {
-      return yield* Effect.fail(new ContextOverflow({ message: msg }));
-    }
-    return yield* Effect.fail(
-      new InvalidResponse({ message: `HTTP ${status}: ${msg}` }),
-    );
-  });
 
 const fetchCompletion = (
   config: OpenAIProviderConfig,

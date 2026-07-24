@@ -13,6 +13,7 @@ import { type DataPaths, dataPaths } from "./paths.ts";
 import {
   makeAnthropicAdapter,
   makeOpenAIAdapter,
+  makeResponsesAdapter,
   type ProviderAdapter,
   type ThinkingConfig,
 } from "@niuma/provider";
@@ -41,6 +42,7 @@ import {
   kernelEventLog,
   makeToolPipeline,
 } from "./agent_deps.ts";
+import { makeOAuthTokenSource } from "./oauth_source.ts";
 
 export interface BootstrapDeps {
   readonly paths?: DataPaths;
@@ -351,20 +353,31 @@ const thinkingFromModel = (
  * Build the provider adapter from config.toml + auth.json.
  *
  * The adapter is bound to the provider named by `ref` (defaults to the
- * config's top-level `model` reference). Credential lookup order:
- *   1. auth.json[<providerId>]      (the canonical credential store)
- *   2. provider api_key with {env:VAR} substitution (explicit escape hatch)
+ * config's top-level `model` reference). Credential lookup is three-way:
+ *   1. auth.json[<providerId>] of type "oauth" → Responses adapter with an
+ *      injected OAuthTokenSource (oauth credentials only apply to
+ *      type="responses" providers; any other type is a ConfigError).
+ *   2. auth.json[<providerId>] of type "api" → the api key.
+ *   3. provider api_key with {env:VAR} substitution (explicit escape hatch).
  * Missing credentials fail at boot with a pointer to both locations.
  *
  * Dispatch is driven by `provider.type` (default "openai"). Anthropic's
  * wire protocol has its own host — https://api.anthropic.com — independent
  * of the OpenAI-compatible defaults, so we substitute it whenever the
  * provider's table leaves baseUrl unset. Once the dispatch reaches the
- * adapter factory, the protocol- specific concerns (header shape, payload
+ * adapter factory, the protocol-specific concerns (header shape, payload
  * schema, streaming) are the adapter's business; this file only knows the
- * two labels and their default endpoints.
+ * labels and their default endpoints.
+ *
+ * `buildProvider` takes the auth path explicitly so tests do not need to
+ * manipulate NIUMA_DATA_DIR; the exported `makeProviderFromConfig` fixes it to
+ * niumaPaths().authFile (the public signature is unchanged).
  */
-const makeProviderFromConfig = async (config: NiumaConfig, ref?: string) => {
+const buildProvider = async (
+  config: NiumaConfig,
+  authPath: string,
+  ref?: string,
+): Promise<ProviderAdapter> => {
   const modelRef = ref ?? config.model;
   if (!modelRef) {
     throw new ConfigError(
@@ -373,8 +386,38 @@ const makeProviderFromConfig = async (config: NiumaConfig, ref?: string) => {
     );
   }
   const resolved = resolveModelRef(config, modelRef);
-  const auth = await readAuthFile(niumaPaths().authFile);
+  const auth = await readAuthFile(authPath);
+  const providerType = resolved.provider.type ?? "openai";
   const entry = auth[resolved.provider.id];
+
+  // OAuth credentials take the responses lane with an injected token source.
+  // They are meaningful ONLY for type="responses" providers — pairing an oauth
+  // entry with a chat-completions or anthropic provider is a configuration
+  // error (those protocols have no ChatGPT-subscription path), caught here so
+  // the user sees a clear message instead of a silently-dropped credential.
+  if (entry?.type === "oauth") {
+    if (providerType !== "responses") {
+      throw new ConfigError(
+        `config: oauth credentials for provider "${resolved.provider.id}" ` +
+          `only apply to type="responses" providers (got type="${providerType}"). ` +
+          `Set [provider.${resolved.provider.id}] type = "responses", or remove ` +
+          `the oauth entry from ${authPath}.`,
+      );
+    }
+    return makeResponsesAdapter({
+      baseUrl: resolved.provider.baseUrl,
+      defaultModel: resolved.modelId,
+      auth: {
+        kind: "oauth",
+        tokenSource: makeOAuthTokenSource({
+          authPath,
+          providerId: resolved.provider.id,
+          entry,
+        }),
+      },
+    });
+  }
+
   const apiKey = entry?.type === "api"
     ? entry.key
     : resolved.provider.apiKey !== undefined
@@ -383,11 +426,13 @@ const makeProviderFromConfig = async (config: NiumaConfig, ref?: string) => {
   if (!apiKey) {
     throw new ConfigError(
       `config: no credentials for provider "${resolved.provider.id}". ` +
-        `Add an entry to ${niumaPaths().authFile}:\n` +
-        `  { "${resolved.provider.id}": { "type": "api", "key": "..." } }`,
+        `Add an entry to ${authPath}:\n` +
+        `  { "${resolved.provider.id}": { "type": "api", "key": "..." } }\n` +
+        `(or for ChatGPT OAuth: run \`niuma auth login ${resolved.provider.id}\` ` +
+        `and set [provider.${resolved.provider.id}] type = "responses").`,
     );
   }
-  switch (resolved.provider.type ?? "openai") {
+  switch (providerType) {
     case "anthropic":
       // resolveModelRef already substitutes ANTHROPIC_DEFAULT_BASE_URL for a
       // base-url-less anthropic table; the ?? here is belt-and-braces for any
@@ -403,8 +448,33 @@ const makeProviderFromConfig = async (config: NiumaConfig, ref?: string) => {
         apiKey,
         defaultModel: resolved.modelId,
       });
+    case "responses":
+      return makeResponsesAdapter({
+        baseUrl: resolved.provider.baseUrl,
+        defaultModel: resolved.modelId,
+        auth: { kind: "apiKey", key: apiKey },
+      });
+    default:
+      // Exhaustiveness guard: PROVIDER_TYPES is a closed set, but a future
+      // addition must not silently fall through to undefined — fail loudly so
+      // the dispatch stays total.
+      throw new ConfigError(
+        `config: provider "${resolved.provider.id}" has unsupported type ` +
+          `"${providerType}" (expected one of openai, anthropic, responses).`,
+      );
   }
 };
+
+/**
+ * Build the provider adapter from config.toml + auth.json. Public entry point;
+ * see {@link buildProvider} for the auth-path-injectable core used by tests.
+ */
+export const makeProviderFromConfig = (
+  config: NiumaConfig,
+  ref?: string,
+): Promise<ProviderAdapter> => buildProvider(config, niumaPaths().authFile, ref);
+
+export { buildProvider };
 
 export { Kernel, KernelLive, SessionManager };
 export { ensureSchema, makeProjection } from "./projection.ts";

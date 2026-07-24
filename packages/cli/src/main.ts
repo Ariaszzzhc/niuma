@@ -18,6 +18,7 @@
 import { parseCliArgs } from "./args.ts";
 import { runOneshot } from "./run.ts";
 import { runServe } from "./serve.ts";
+import { runAuth } from "./auth_cmd.ts";
 import { spawnServerWorker } from "./worker.ts";
 import { runInteractive } from "./interactive.ts";
 import { niumaPaths, loadMergedConfig, resolveModelRef } from "@niuma/config";
@@ -42,6 +43,10 @@ const main = async (): Promise<number> => {
 
   if (parsed.args.subcommand === "interactive") {
     return await runInteractive(parsed.args);
+  }
+
+  if (parsed.args.subcommand === "auth") {
+    return await runAuth(parsed.args);
   }
 
   // One-shot mode.

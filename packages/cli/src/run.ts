@@ -15,6 +15,7 @@
 // so stdout contains exactly the final assistant text.
 
 import { parseSseStream } from "./sse.ts";
+import { readStdinLine } from "./stdin.ts";
 
 // Fake host used by the tunnel — Hono routes on the path; the host is
 // arbitrary. Re-using the same constant the smoke tests use keeps things
@@ -311,49 +312,6 @@ const formatInputPreview = (input: unknown): string => {
     ? `${text.slice(0, MAX)}… (+${text.length - MAX} more chars)`
     : text;
   return truncated;
-};
-
-// ---------------------------------------------------------------------------
-// stdin line reader (TTY- and pipe-friendly, byte-wise)
-// ---------------------------------------------------------------------------
-
-const readStdinLine = async (): Promise<string | null> => {
-  // Byte-wise read keeps the rest of stdin's buffer intact. Deno.stdin.read
-  // returns at most N bytes per call, so a 1-byte request drains exactly one
-  // byte at a time. We stop at newline (cooked-mode TTY submits on Enter)
-  // or EOF (Ctrl+D / closed pipe).
-  const decoder = new TextDecoder();
-  const buf = new Uint8Array(1);
-  let line = "";
-
-  while (true) {
-    let n: number | null;
-    try {
-      n = await Deno.stdin.read(buf);
-    } catch {
-      return line.length > 0 ? line : null;
-    }
-    if (n === null || n === 0) {
-      return line.length > 0 ? line : null;
-    }
-    const ch = decoder.decode(buf.subarray(0, n));
-    if (ch === "\n") {
-      return line.endsWith("\r") ? line.slice(0, -1) : line;
-    }
-    if (ch === "\r") {
-      // Swallow; wait for \n.
-      continue;
-    }
-    // Ignore other control bytes (e.g. the user's Ctrl+D is signalled by
-    // EOF via n === 0, not by a control char).
-    if (ch >= " ") {
-      line += ch;
-      // Safety cap so a runaway stdin cannot OOM us.
-      if (line.length > 4096) {
-        return line;
-      }
-    }
-  }
 };
 
 // ---------------------------------------------------------------------------

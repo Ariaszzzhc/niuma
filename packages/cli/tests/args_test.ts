@@ -40,3 +40,67 @@ Deno.test("args: `niuma tui` with a TTY launches interactive (structural)", () =
     "interactive",
   );
 });
+
+// ===========================================================================
+// `niuma auth` subcommand parsing
+// ---------------------------------------------------------------------------
+// These cover the pure parser only (no OAuth/network), so they run under the
+// deno-test harness regardless of the oauth lane landing. runAuth behaviour is
+// exercised separately.
+// ===========================================================================
+
+type AuthParsed = {
+  subcommand: "auth";
+  action: "login" | "logout" | "status";
+  providerId: string;
+  deviceCode: boolean;
+};
+
+const asAuth = (r: ReturnType<typeof parseCliArgs>): AuthParsed => {
+  if (!r.ok) throw new Error("expected ok parse");
+  return r.args as AuthParsed;
+};
+
+Deno.test("args: `niuma auth login` defaults provider to openai, no device-code", () => {
+  const a = asAuth(parseCliArgs(["auth", "login"]));
+  assertEquals(a.subcommand, "auth");
+  assertEquals(a.action, "login");
+  assertEquals(a.providerId, "openai");
+  assertEquals(a.deviceCode, false);
+});
+
+Deno.test("args: `niuma auth login openai --device-code` parses the flag + provider", () => {
+  const a = asAuth(parseCliArgs(["auth", "login", "openai", "--device-code"]));
+  assertEquals(a.action, "login");
+  assertEquals(a.providerId, "openai");
+  assertEquals(a.deviceCode, true);
+});
+
+Deno.test("args: `niuma auth logout deepseek` carries an explicit provider", () => {
+  const a = asAuth(parseCliArgs(["auth", "logout", "deepseek"]));
+  assertEquals(a.action, "logout");
+  assertEquals(a.providerId, "deepseek");
+});
+
+Deno.test("args: `niuma auth list` is accepted as an alias for `status`", () => {
+  const a = asAuth(parseCliArgs(["auth", "list"]));
+  assertEquals(a.action, "status");
+});
+
+Deno.test("args: `niuma auth status` defaults provider to openai", () => {
+  const a = asAuth(parseCliArgs(["auth", "status"]));
+  assertEquals(a.action, "status");
+  assertEquals(a.providerId, "openai");
+});
+
+Deno.test("args: `niuma auth bogus` is an unknown action -> exit 1", () => {
+  const r = parseCliArgs(["auth", "bogus"]);
+  assertEquals(r.ok, false);
+  assertEquals((r as { exitCode: number }).exitCode, 1);
+});
+
+Deno.test("args: `niuma auth` with no action prints help -> exit 0", () => {
+  const r = parseCliArgs(["auth"]);
+  assertEquals(r.ok, false);
+  assertEquals((r as { exitCode: number }).exitCode, 0);
+});

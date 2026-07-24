@@ -72,4 +72,19 @@ export type {
   AnthropicTool,
 } from "./src/anthropic.ts";
 
+// Responses API adapter. Only the factory + config + the OAuth token-source
+// interface + the codex rewrite target are public; the Responses wire
+// vocabulary (responses_convert.ts / responses_sse.ts internals) stays
+// package-private (design rule 1: vendor types live in the provider package
+// only and never cross the boundary).
+export {
+  CODEX_BACKEND_URL,
+  makeResponsesAdapter,
+  ResponsesProviderLive,
+} from "./src/responses.ts";
+export type {
+  OAuthTokenSource,
+  ResponsesAdapterConfig,
+} from "./src/responses.ts";
+
 export { makeMockProvider } from "./src/mock.ts";
