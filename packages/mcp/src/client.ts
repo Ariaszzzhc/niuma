@@ -57,7 +57,11 @@ const connectServer = async (
   const seen = new Set<string>();
   const adapted: Tool[] = [];
   for (const t of tools) {
-    const tool = mcpToolToNiumaTool(t, { serverId: server.id, client, accesses });
+    const tool = mcpToolToNiumaTool(t, {
+      serverId: server.id,
+      client,
+      accesses,
+    });
     if (seen.has(tool.name)) {
       logger.warn(
         "mcp: duplicate tool name {name} from server {id}; skipping",

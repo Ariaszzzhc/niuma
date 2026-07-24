@@ -14,7 +14,12 @@
 //   6. terminate the worker, return runTui's exit code.
 
 import { runTui } from "@niuma/tui";
-import { loadMergedConfig, resolveModelRef, niumaPaths, VERSION } from "@niuma/config";
+import {
+  niumaPaths,
+  loadMergedConfig,
+  resolveModelRef,
+  VERSION,
+} from "@niuma/config";
 import { fromFileUrl } from "@std/path";
 import { spawnServerWorker } from "./worker.ts";
 import type { InteractiveArgs } from "./args.ts";

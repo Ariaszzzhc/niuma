@@ -1,4 +1,8 @@
-import { isSensitivePath, normalizePath, normalizePattern } from "../src/sensitive.ts";
+import {
+  isSensitivePath,
+  normalizePath,
+  normalizePattern,
+} from "../src/sensitive.ts";
 import { resolve } from "@std/path";
 
 function assertEquals<T>(actual: T, expected: T, msg?: string): void {
@@ -31,7 +35,10 @@ Deno.test("normalizePath: collapses . and .. segments", () => {
   assertEquals(normalizePath("a/./b", "/work"), R("/work/a/b"));
   assertEquals(normalizePath("a/b/../c", "/work"), R("/work/a/c"));
   assertEquals(normalizePath("../a", "/work"), R("/a"));
-  assertEquals(normalizePath("/work/.git/config", "/work"), R("/work/.git/config"));
+  assertEquals(
+    normalizePath("/work/.git/config", "/work"),
+    R("/work/.git/config"),
+  );
 });
 
 Deno.test("normalizePath: empty string passes through", () => {
@@ -40,7 +47,10 @@ Deno.test("normalizePath: empty string passes through", () => {
 
 Deno.test("normalizePath: ~ expands to HOME", () => {
   if (HOME.length === 0) return;
-  assertEquals(normalizePath("~/.ssh/id_rsa", "/work"), S(HOME) + "/.ssh/id_rsa");
+  assertEquals(
+    normalizePath("~/.ssh/id_rsa", "/work"),
+    S(HOME) + "/.ssh/id_rsa",
+  );
 });
 
 Deno.test("normalizePattern: expands ~ at start", () => {
@@ -52,7 +62,10 @@ Deno.test("normalizePattern: expands ~ at start", () => {
 Deno.test("isSensitivePath: Windows backslash paths are normalised before matching", () => {
   // Regression: pre-normalisation a `C:\...` target never matched the
   // `/`-separated sensitive globs, silently disabling the guard on Windows.
-  assertEquals(isSensitivePath("C:\\Users\\foo\\.ssh\\id_rsa", "C:\\work"), true);
+  assertEquals(
+    isSensitivePath("C:\\Users\\foo\\.ssh\\id_rsa", "C:\\work"),
+    true,
+  );
   assertEquals(isSensitivePath("D:\\work\\.env", "D:\\work"), true);
 });
 

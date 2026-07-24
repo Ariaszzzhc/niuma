@@ -84,14 +84,17 @@ export class McpConfigError extends Error {
 export const expandEnvVars = (value: string): string =>
   value.replace(
     /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g,
-    (_whole, name: string, fallback?: string) =>
-      envGet(name) ?? fallback ?? "",
+    (_whole, name: string, fallback?: string) => envGet(name) ?? fallback ?? "",
   );
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-const typeErr = (path: string, expected: string, got: unknown): McpConfigError =>
+const typeErr = (
+  path: string,
+  expected: string,
+  got: unknown,
+): McpConfigError =>
   new McpConfigError(
     `mcp config: ${path} must be ${expected}, got ${
       Array.isArray(got) ? "array" : typeof got
@@ -164,9 +167,9 @@ const parseServer = (id: string, raw: unknown): McpServerConfig => {
   const type = (typeRaw ?? "stdio") as McpServerConfig["type"];
   if (!(SERVER_TYPES as readonly string[]).includes(type)) {
     throw new McpConfigError(
-      `mcp config: ${path}.type must be one of ${SERVER_TYPES.join("|")}, got "${
-        String(typeRaw)
-      }"`,
+      `mcp config: ${path}.type must be one of ${
+        SERVER_TYPES.join("|")
+      }, got "${String(typeRaw)}"`,
     );
   }
 

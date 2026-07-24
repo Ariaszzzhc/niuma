@@ -16,10 +16,10 @@ import {
   ConfigError,
   loadMergedConfig,
   loadMergedMcpConfig,
+  type McpConfig,
   readAuthFile,
   resolveModelRef,
   substituteEnv,
-  type McpConfig,
 } from "@niuma/config";
 import { connectMcpServers, type McpServerHandle } from "@niuma/mcp";
 import {
@@ -121,12 +121,10 @@ export const bootstrap = async (
   // registry shared by the parent session and subagents. Best-effort: a
   // server that won't connect is skipped with a warning, not fatal.
   const mcpConfig = deps.mcpConfig ??
-    (deps.config !== undefined
-      ? {}
-      : await loadMergedMcpConfig({
-        globalConfigDir: niumaPaths().config,
-        workspace,
-      }));
+    (deps.config !== undefined ? {} : await loadMergedMcpConfig({
+      globalConfigDir: niumaPaths().config,
+      workspace,
+    }));
   const mcpServers = await connectMcpServers(mcpConfig);
   for (const handle of mcpServers) {
     for (const tool of handle.tools) registry.register(tool.name, tool);

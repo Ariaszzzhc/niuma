@@ -3,8 +3,8 @@ import { join } from "@std/path";
 import {
   expandEnvVars,
   loadMergedMcpConfig,
-  mergeMcpConfigs,
   McpConfigError,
+  mergeMcpConfigs,
   parseMcpConfig,
 } from "../mod.ts";
 
@@ -101,7 +101,9 @@ Deno.test("parseMcpConfig: wrong field types are rejected", () => {
   );
   assertThrows(
     () =>
-      parseMcpConfig(`{"mcpServers": {"a": {"command": "x", "enabled": "no"}}}`),
+      parseMcpConfig(
+        `{"mcpServers": {"a": {"command": "x", "enabled": "no"}}}`,
+      ),
     McpConfigError,
     "a boolean",
   );
