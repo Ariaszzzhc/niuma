@@ -53,4 +53,21 @@ export {
 } from "./src/openai.ts";
 export type { OpenAIProviderConfig } from "./src/openai.ts";
 
+export {
+  makeAnthropicAdapter,
+  messagesToAnthropic,
+  toolsToAnthropic,
+  AnthropicProviderLive,
+} from "./src/anthropic.ts";
+export type {
+  AnthropicProviderConfig,
+  AnthropicMessage,
+  AnthropicContentBlock,
+  AnthropicTextBlock,
+  AnthropicThinkingBlock,
+  AnthropicToolUseBlock,
+  AnthropicToolResultBlock,
+  AnthropicTool,
+} from "./src/anthropic.ts";
+
 export { makeMockProvider } from "./src/mock.ts";

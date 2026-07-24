@@ -169,7 +169,7 @@ Deno.test("runTurn: plain answer, no tools", async () => {
 Deno.test("runTurn: streams and persists thinking before text", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider: scriptedProvider([[
       { _tag: "ThinkingDelta", text: "reason " },
       { _tag: "ThinkingDelta", text: "carefully" },
@@ -198,7 +198,7 @@ Deno.test("runTurn: streams and persists thinking before text", async () => {
 Deno.test("runTurn: encrypted thinking closes its block", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider: scriptedProvider([[
       { _tag: "ThinkingDelta", text: "first", encrypted: "first-opaque" },
       { _tag: "TextDelta", text: "answer" },
@@ -231,7 +231,7 @@ Deno.test("runTurn: passes default thinking config to provider", async () => {
     events: [{ _tag: "Finish", reason: "stop" }],
   }]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -323,7 +323,7 @@ Deno.test("runTurn: multi-block ThinkingDelta (text-only + encrypted) → 2-bloc
     },
   ]);
   const infra: AgentInfra = {
-    eventLog: log,
+    event_log: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
