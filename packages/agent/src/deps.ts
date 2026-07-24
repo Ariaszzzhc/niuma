@@ -7,6 +7,7 @@ import type {
 } from "@niuma/schema";
 import type {
   ProviderAdapter,
+  ThinkingConfig,
   ToolDef as ProviderToolDef,
 } from "@niuma/provider";
 
@@ -121,6 +122,9 @@ export interface RunTurnDeps {
   readonly contextWindow?: number;
   readonly maxTokens?: number;
   readonly temperature?: number;
+  // Thinking/reasoning request config; `keep` also gates reasoningContent
+  // projection in the context layer (see context.ts projectEvent).
+  readonly thinking?: ThinkingConfig;
   readonly signal?: AbortSignal;
   // Live-only sink (SSE). Never persisted; server routes to the frontend.
   readonly emitLive?: (event: LiveEvent) => void;

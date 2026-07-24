@@ -5,6 +5,7 @@ export type {
   ModelRef,
   Role,
   StreamEvent,
+  ThinkingConfig,
   ToolCall,
   ToolDef,
   Usage,

@@ -188,6 +188,9 @@ export const makeSessionManager = (
           ...(infra.defaultMaxTokens !== undefined
             ? { maxTokens: infra.defaultMaxTokens }
             : {}),
+          ...(infra.defaultThinking !== undefined
+            ? { thinking: infra.defaultThinking }
+            : {}),
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.gen(function* () {

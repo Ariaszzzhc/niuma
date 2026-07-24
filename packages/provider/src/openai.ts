@@ -57,6 +57,13 @@ const buildBody = (config: OpenAIProviderConfig, req: ChatRequest): string => {
   if (tools.length > 0) payload.tools = tools;
   if (req.maxTokens !== undefined) payload.max_tokens = req.maxTokens;
   if (req.temperature !== undefined) payload.temperature = req.temperature;
+  // Pass effort through verbatim as the top-level OpenAI reasoning_effort. The
+  // legal档位 (none/minimal/low/medium/high/xhigh/max) are an OpenAI protocol
+  // concern; niuma does no mapping, and invalid values are surfaced as a 400 by
+  // classifyResponse above.
+  if (req.thinking?.effort !== undefined) {
+    payload.reasoning_effort = req.thinking.effort;
+  }
   return JSON.stringify(payload);
 };
 

@@ -30,6 +30,8 @@ export interface TuiMessage {
   readonly id: string;
   readonly role: TuiRole;
   readonly text: string;
+  /** Assistant thinking/reasoning (concatenated `thinking` parts), if any. */
+  readonly thinking?: string;
 }
 
 export type ToolCallStatus = "running" | "done" | "denied";
@@ -54,6 +56,8 @@ export interface TuiToolCall {
 export interface StreamingText {
   readonly id: string;
   readonly text: string;
+  /** Accumulated thinking/reasoning (from thinking.delta), shown dimmed. */
+  readonly thinking: string;
 }
 
 export type NoticeKind = "compaction" | "error" | "abort" | "info";
@@ -155,6 +159,24 @@ const joinTextParts = (parts: unknown): string => {
   return out.join("");
 };
 
+/**
+ * Join the `text` of the `thinking` parts of a message `parts` array. The
+ * `encrypted` field on a thinking part is an opaque provider re-submit
+ * credential with no display text, so it is skipped — only the human-readable
+ * reasoning text is surfaced.
+ */
+const joinThinkingParts = (parts: unknown): string => {
+  if (!Array.isArray(parts)) return "";
+  const out: string[] = [];
+  for (const p of parts) {
+    if (p !== null && typeof p === "object" && (p as { type?: unknown }).type === "thinking") {
+      const t = (p as { text?: unknown }).text;
+      if (typeof t === "string") out.push(t);
+    }
+  }
+  return out.join("");
+};
+
 /** tool.result `content` is `string | Array<{type:"text", text}>`. */
 const extractResultLines = (content: unknown): string[] => {
   if (typeof content === "string") return content.split("\n");
@@ -194,14 +216,20 @@ const updateToolCall = (
 
 /** Flush any in-flight streaming text as a finalized assistant message. */
 const flushStreaming = (model: TuiModelState): TuiModelState => {
-  if (model.streaming === null || model.streaming.text.length === 0) {
+  const s = model.streaming;
+  if (s === null || (s.text.length === 0 && s.thinking.length === 0)) {
     return { ...model, streaming: null };
   }
   return {
     ...model,
     messages: [
       ...model.messages,
-      { id: model.streaming.id, role: "assistant", text: model.streaming.text },
+      {
+        id: s.id,
+        role: "assistant",
+        text: s.text,
+        thinking: s.thinking.length > 0 ? s.thinking : undefined,
+      },
     ],
     streaming: null,
   };
@@ -246,6 +274,18 @@ export const reduceEvent = (
       };
     }
 
+    case "thinking.delta": {
+      const delta = asString(d["delta"]) ?? "";
+      if (delta === "") return model;
+      const prev = model.streaming;
+      return {
+        ...model,
+        streaming: prev === null
+          ? { id: nextId("a"), text: "", thinking: delta }
+          : { id: prev.id, text: prev.text, thinking: prev.thinking + delta },
+      };
+    }
+
     case "text.delta": {
       const delta = asString(d["delta"]) ?? "";
       if (delta === "") return model;
@@ -253,27 +293,39 @@ export const reduceEvent = (
       return {
         ...model,
         streaming: prev === null
-          ? { id: nextId("a"), text: delta }
-          : { id: prev.id, text: prev.text + delta },
+          ? { id: nextId("a"), text: delta, thinking: "" }
+          : { id: prev.id, text: prev.text + delta, thinking: prev.thinking },
       };
     }
 
     case "text.reset":
-      // Live signal before a re-sample: drop the partial buffer.
+      // Live signal before a re-sample: drop the partial buffer (text AND
+      // thinking — the whole in-flight sample is discarded).
       return { ...model, streaming: null };
 
     case "assistant.message": {
       const streamingText = model.streaming?.text ?? "";
-      const finalized = streamingText.length > 0
+      const finalizedText = streamingText.length > 0
         ? streamingText
         : joinTextParts(d["parts"]);
-      if (finalized.length === 0) return { ...model, streaming: null };
+      const streamingThinking = model.streaming?.thinking ?? "";
+      const thinking = streamingThinking.length > 0
+        ? streamingThinking
+        : joinThinkingParts(d["parts"]);
+      if (finalizedText.length === 0 && thinking.length === 0) {
+        return { ...model, streaming: null };
+      }
       const id = model.streaming?.id ?? nextId("a");
       return {
         ...model,
         messages: [
           ...model.messages,
-          { id, role: "assistant", text: finalized },
+          {
+            id,
+            role: "assistant",
+            text: finalizedText,
+            thinking: thinking.length > 0 ? thinking : undefined,
+          },
         ],
         streaming: null,
       };

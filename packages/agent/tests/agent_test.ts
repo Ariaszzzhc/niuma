@@ -166,6 +166,118 @@ Deno.test("runTurn: plain answer, no tools", async () => {
   assertEquals(types.includes("turn.completed"), true);
 });
 
+Deno.test("runTurn: streams and persists thinking before text", async () => {
+  const log = makeMemoryLog();
+  const infra: AgentInfra = {
+    eventLog: log,
+    provider: scriptedProvider([[
+      { _tag: "ThinkingDelta", text: "reason " },
+      { _tag: "ThinkingDelta", text: "carefully" },
+      { _tag: "TextDelta", text: "answer" },
+      { _tag: "Finish", reason: "stop" },
+    ]]),
+    tools: noTools,
+    approvals: makeApprovalGateway(log),
+    defaultModel: "test-model",
+  };
+  const mgr = new SessionManager(infra);
+  const session = await Effect.runPromise(
+    mgr.createAndRecord({ workspace: "/tmp/ws" }),
+  );
+  await Effect.runPromise(
+    session.prompt([{ type: "text", text: "hi" }]),
+  );
+
+  const assistant = log.dump(session.id).find(isAssistantMessage);
+  assertEquals(assistant?.data.parts, [
+    { type: "thinking", text: "reason carefully" },
+    { type: "text", text: "answer" },
+  ]);
+});
+
+Deno.test("runTurn: encrypted thinking closes its block", async () => {
+  const log = makeMemoryLog();
+  const infra: AgentInfra = {
+    eventLog: log,
+    provider: scriptedProvider([[
+      { _tag: "ThinkingDelta", text: "first", encrypted: "first-opaque" },
+      { _tag: "TextDelta", text: "answer" },
+      { _tag: "ThinkingDelta", text: "second", encrypted: "opaque" },
+      { _tag: "Finish", reason: "stop" },
+    ]]),
+    tools: noTools,
+    approvals: makeApprovalGateway(log),
+    defaultModel: "test-model",
+  };
+  const mgr = new SessionManager(infra);
+  const session = await Effect.runPromise(
+    mgr.createAndRecord({ workspace: "/tmp/ws" }),
+  );
+  await Effect.runPromise(
+    session.prompt([{ type: "text", text: "hi" }]),
+  );
+
+  const assistant = log.dump(session.id).find(isAssistantMessage);
+  assertEquals(assistant?.data.parts, [
+    { type: "thinking", text: "first", encrypted: "first-opaque" },
+    { type: "thinking", text: "second", encrypted: "opaque" },
+    { type: "text", text: "answer" },
+  ]);
+});
+
+Deno.test("runTurn: passes default thinking config to provider", async () => {
+  const log = makeMemoryLog();
+  const provider = flakyProvider([{
+    events: [{ _tag: "Finish", reason: "stop" }],
+  }]);
+  const infra: AgentInfra = {
+    eventLog: log,
+    provider,
+    tools: noTools,
+    approvals: makeApprovalGateway(log),
+    defaultModel: "test-model",
+    defaultThinking: { effort: "high", keep: "none" },
+  };
+  const mgr = new SessionManager(infra);
+  const session = await Effect.runPromise(
+    mgr.createAndRecord({ workspace: "/tmp/ws" }),
+  );
+  await Effect.runPromise(
+    session.prompt([{ type: "text", text: "hi" }]),
+  );
+
+  assertEquals(provider.requests()[0].thinking, {
+    effort: "high",
+    keep: "none",
+  });
+});
+
+Deno.test("eventsToMessages projects thinking unless keep is none", () => {
+  const base = { seq: 0, ts: 0, sessionId: "s" };
+  const events: RecordedEvent[] = [{
+    ...base,
+    type: "assistant.message",
+    data: {
+      parts: [
+        { type: "thinking", text: "one" },
+        { type: "thinking", text: " two", encrypted: "opaque" },
+        { type: "text", text: "answer" },
+      ],
+      usage: { inputTokens: 1, outputTokens: 1 },
+    },
+  }];
+
+  assertEquals(eventsToMessages(events), [{
+    role: "assistant",
+    content: "answer",
+    reasoningContent: "one two",
+  }]);
+  assertEquals(eventsToMessages(events, { keepThinking: "none" }), [{
+    role: "assistant",
+    content: "answer",
+  }]);
+});
+
 Deno.test("runTurn: one tool round-trip then answer", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {

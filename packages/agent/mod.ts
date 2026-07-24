@@ -15,6 +15,7 @@ export {
   projectEvent,
   resultContentToString,
 } from "./src/context.ts";
+export type { ProjectOptions } from "./src/context.ts";
 export {
   buildSummary,
   compactMessages,

@@ -4,7 +4,7 @@ import type {
   LiveEvent,
   RecordedEvent,
 } from "@niuma/schema";
-import type { ProviderAdapter } from "@niuma/provider";
+import type { ProviderAdapter, ThinkingConfig } from "@niuma/provider";
 import type {
   PermissionEngine,
   SubagentResult,
@@ -173,4 +173,8 @@ export interface AgentInfra {
    * loop falls back to its own defaults when unset. */
   readonly defaultContextWindow?: number;
   readonly defaultMaxTokens?: number;
+  /** Per-model thinking/reasoning config from config.toml
+   * (thinking_effort/thinking_keep), projected verbatim into every
+   * runTurn call. Mirrors @niuma/agent's AgentInfra.defaultThinking. */
+  readonly defaultThinking?: ThinkingConfig;
 }

@@ -15,6 +15,7 @@ import {
   StopReason,
   StreamEvent,
   stringifyEventLine,
+  ThinkingPart,
   ToolDef,
   ToolParameters,
   ToolResultContent,
@@ -349,6 +350,145 @@ Deno.test("parseEventLine: rejects unknown event type (closed RecordedEventType 
     data: {},
   });
   assertRejectsSync(() => parseEventLine(bogus));
+});
+
+// ============================================================================
+// Thinking / reasoning support — plans §3, §8, §9.
+// ThinkingPart + thinking.delta live event are the schema's surface for the
+// provider-neutral reasoning abstraction (text + opaque `encrypted` credential
+// the client must never surface as text). `encrypted` is OPTIONAL so JSONL
+// written before the thinking feature round-trips unchanged.
+// ============================================================================
+
+Deno.test("ThinkingPart: decodes with the opaque encrypted credential", () => {
+  // `encrypted` is opaque to niuma — providers (Anthropic signature,
+  // Responses encrypted_content, …) stash their re-submit credential here.
+  // The schema just keeps the string opaque; nothing decodes its content.
+  const wire: Schema.Schema.Type<typeof ThinkingPart> = {
+    type: "thinking",
+    text: "let me reason",
+    encrypted: "sig-abc123",
+  };
+  assertEquals(dec(ThinkingPart)(wire), wire);
+});
+
+Deno.test("ThinkingPart: omits encrypted when not present (pre-thinking JSONL compat)", () => {
+  // Old assistant.message events were written before the thinking feature
+  // shipped: their parts only contain text / tool_call / tool_result. The
+  // schema treats `encrypted` as optional, so a thinking part authored by a
+  // provider that does not emit a credential must decode without it.
+  const wire: Schema.Schema.Type<typeof ThinkingPart> = {
+    type: "thinking",
+    text: "plain reasoning",
+  };
+  assertEquals(dec(ThinkingPart)(wire), wire);
+  // And a re-encode of that decoded value must not invent an `encrypted` key.
+  assertEquals(enc(ThinkingPart)(wire), wire);
+});
+
+Deno.test("Part union: ThinkingPart is selected when type=thinking and decodes through Part", () => {
+  // Locks that adding ThinkingPart to the `Part` union did not shadow the
+  // existing text/tool_call/tool_result arms. Each member still has to round-
+  // trip through the union.
+  const withEnc: Schema.Schema.Type<typeof Part> = {
+    type: "thinking",
+    text: "t",
+    encrypted: "e",
+  };
+  assertEquals(dec(Part)(withEnc), withEnc);
+  const plain: Schema.Schema.Type<typeof Part> = { type: "thinking", text: "t" };
+  assertEquals(dec(Part)(plain), plain);
+  // Bogus `encrypted` (non-string) is still rejected.
+  assertRejectsSync(() =>
+    dec(Part)({ type: "thinking", text: "x", encrypted: 42 })
+  );
+});
+
+Deno.test("thinking.delta live event round-trips through LiveEvent encode/decode", () => {
+  // live envelope shape: { ts, sessionId, type, data }. The data payload is
+  // a single `delta` string — never carries `encrypted` (the live stream
+  // surfaces only the human-readable reasoning; the credential travels in the
+  // final ThinkingPart of the assistant.message, not in delta frames).
+  const frame: Schema.Schema.Type<typeof LiveEvent> = {
+    ts: 1,
+    sessionId: "s",
+    type: "thinking.delta",
+    data: { delta: "thinking…" },
+  };
+  assertEquals(dec(LiveEvent)(frame), frame);
+  assertEquals(enc(LiveEvent)(frame), frame);
+});
+
+Deno.test("LiveEvent: thinking.delta decodes alongside text.delta and text.reset (union intact)", () => {
+  // Sanity: the new arm joined an existing union — none of the previously-
+  // supported arms regressed.
+  assertEquals(dec(LiveEvent)({
+    ts: 1,
+    sessionId: "s",
+    type: "text.delta",
+    data: { delta: "x" },
+  }), { ts: 1, sessionId: "s", type: "text.delta", data: { delta: "x" } });
+  assertEquals(dec(LiveEvent)({
+    ts: 1,
+    sessionId: "s",
+    type: "text.reset",
+    data: {},
+  }), { ts: 1, sessionId: "s", type: "text.reset", data: {} });
+  // A bogus live type is still rejected.
+  assertRejectsSync(() =>
+    dec(LiveEvent)({ ts: 1, sessionId: "s", type: "thinking.bogus", data: { delta: "x" } })
+  );
+});
+
+Deno.test("parseEventLine/stringifyEventLine: assistant.message with a ThinkingPart round-trips", () => {
+  // The recorded assistant.message envelope is how the thinking part reaches
+  // a reconnected client. The full round-trip exercises both the Part union
+  // selection and the JSONL helper. encrypted MUST survive verbatim across
+  // the encode/decode cycle — providers depend on it for re-submission.
+  const withThinking: Schema.Schema.Type<typeof RecordedEvent> = {
+    seq: 100,
+    ts: 1000,
+    sessionId: "s",
+    type: "assistant.message",
+    data: {
+      parts: [
+        { type: "thinking", text: "first ", encrypted: "sig-1" },
+        { type: "text", text: "answer" },
+        { type: "thinking", text: "second" },
+      ],
+      usage: { inputTokens: 1, outputTokens: 2 },
+    },
+  };
+  const line = stringifyEventLine(withThinking);
+  const back = parseEventLine(line);
+  assertEquals(back, withThinking);
+  // Spot-check: pre-thinking JSONL (no thinking parts at all) still parses.
+  const legacy: Schema.Schema.Type<typeof RecordedEvent> = {
+    seq: 1,
+    ts: 1,
+    sessionId: "s",
+    type: "assistant.message",
+    data: {
+      parts: [{ type: "text", text: "hi" }],
+      usage: { inputTokens: 1, outputTokens: 2 },
+    },
+  };
+  assertEquals(parseEventLine(stringifyEventLine(legacy)), legacy);
+});
+
+Deno.test("Message: assistant turn with ThinkingPart round-trips through Message encode/decode", () => {
+  // Locks the provider-neutral schema at the Message granularity too —
+  // agents and context projections consume Message, so a corrupted thinking
+  // arm would silently lose reasoning.
+  const msg: Schema.Schema.Type<typeof Message> = {
+    role: "assistant",
+    parts: [
+      { type: "thinking", text: "reasoning", encrypted: "sig-z" },
+      { type: "text", text: "answer" },
+    ],
+  };
+  const roundtrip = dec(Message)(enc(Message)(msg));
+  assertEquals(roundtrip, msg);
 });
 
 // deno-lint-ignore no-explicit-any

@@ -301,16 +301,17 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     const baseMsgs: ChatMessage[] = model.state.messages.map((m) =>
       m.role === "user"
         ? { role: "user", text: m.text }
-        : { role: "assistant", text: m.text }
+        : { role: "assistant", text: m.text, thinking: m.thinking }
     );
     const toolMsgs: ChatMessage[] = model.state.toolCalls.map(
       (c): ChatMessage => ({ role: "tool", call: toToolCallView(c) }),
     );
     let messages: ChatMessage[] = [...baseMsgs, ...toolMsgs];
-    if (model.state.streaming && model.state.streaming.text.length > 0) {
+    const streaming = model.state.streaming;
+    if (streaming && (streaming.text.length > 0 || streaming.thinking.length > 0)) {
       messages = [
         ...messages,
-        { role: "assistant", text: model.state.streaming.text },
+        { role: "assistant", text: streaming.text, thinking: streaming.thinking },
       ];
     }
     return messages;

@@ -21,6 +21,15 @@ export type StopReason = Schema.Schema.Type<typeof StopReason_>;
 export const StopReason: Schema.Codec<StopReason> = StopReason_;
 
 // deno-lint-ignore no-slow-types
+const ThinkingPart_ = Schema.Struct({
+  type: Schema.Literal("thinking"),
+  text: Schema.String,
+  encrypted: Schema.optional(Schema.String),
+});
+export type ThinkingPart = Schema.Schema.Type<typeof ThinkingPart_>;
+export const ThinkingPart: Schema.Codec<ThinkingPart> = ThinkingPart_;
+
+// deno-lint-ignore no-slow-types
 const TextPart_ = Schema.Struct({
   type: Schema.Literal("text"),
   text: Schema.String,
@@ -68,7 +77,12 @@ export type ToolResultPart = Schema.Schema.Type<typeof ToolResultPart_>;
 export const ToolResultPart: Schema.Codec<ToolResultPart> = ToolResultPart_;
 
 // deno-lint-ignore no-slow-types
-const Part_ = Schema.Union([TextPart, ToolCallPart, ToolResultPart]);
+const Part_ = Schema.Union([
+  ThinkingPart,
+  TextPart,
+  ToolCallPart,
+  ToolResultPart,
+]);
 export type Part = Schema.Schema.Type<typeof Part_>;
 export const Part: Schema.Codec<Part> = Part_;
 

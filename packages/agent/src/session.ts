@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { LiveEvent, Part, RecordedEvent } from "@niuma/schema";
-import type { ProviderAdapter } from "@niuma/provider";
+import type { ProviderAdapter, ThinkingConfig } from "@niuma/provider";
 import type {
   ApprovalGateway,
   EventLog,
@@ -19,6 +19,7 @@ export interface AgentInfra {
   readonly defaultContextWindow?: number;
   readonly defaultMaxTokens?: number;
   readonly defaultTemperature?: number;
+  readonly defaultThinking?: ThinkingConfig;
   // Server-provided live sink (SSE). Events already carry sessionId.
   readonly emitLive?: (event: LiveEvent) => void;
 }
@@ -96,6 +97,9 @@ export class AgentSession {
         : {}),
       ...(this.infra.defaultTemperature !== undefined
         ? { temperature: this.infra.defaultTemperature }
+        : {}),
+      ...(this.infra.defaultThinking !== undefined
+        ? { thinking: this.infra.defaultThinking }
         : {}),
       signal: this.#abort.signal,
       ...(this.infra.emitLive ? { emitLive: this.infra.emitLive } : {}),

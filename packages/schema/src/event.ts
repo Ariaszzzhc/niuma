@@ -348,6 +348,24 @@ const liveBase = {
 };
 
 // deno-lint-ignore no-slow-types
+const ThinkingDeltaData_ = Schema.Struct({
+  delta: Schema.String,
+});
+export type ThinkingDeltaData = Schema.Schema.Type<typeof ThinkingDeltaData_>;
+export const ThinkingDeltaData: Schema.Codec<ThinkingDeltaData> =
+  ThinkingDeltaData_;
+
+// deno-lint-ignore no-slow-types
+const ThinkingDeltaLive_ = Schema.Struct({
+  ...liveBase,
+  type: Schema.Literal("thinking.delta"),
+  data: ThinkingDeltaData,
+});
+export type ThinkingDeltaLive = Schema.Schema.Type<typeof ThinkingDeltaLive_>;
+export const ThinkingDeltaLive: Schema.Codec<ThinkingDeltaLive> =
+  ThinkingDeltaLive_;
+
+// deno-lint-ignore no-slow-types
 const TextDeltaData_ = Schema.Struct({
   delta: Schema.String,
 });
@@ -396,6 +414,7 @@ export const TextResetLive: Schema.Codec<TextResetLive> = TextResetLive_;
 
 // deno-lint-ignore no-slow-types
 const LiveEvent_ = Schema.Union([
+  ThinkingDeltaLive,
   TextDeltaLive,
   ToolProgressLive,
   TextResetLive,
@@ -405,6 +424,7 @@ export const LiveEvent: Schema.Codec<LiveEvent> = LiveEvent_;
 
 // deno-lint-ignore no-slow-types
 const LiveEventType_ = Schema.Literals([
+  "thinking.delta",
   "text.delta",
   "tool.progress",
   "text.reset",

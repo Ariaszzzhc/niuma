@@ -9,7 +9,11 @@ import {
   SessionManagerLive,
 } from "./session.ts";
 import { type DataPaths, dataPaths } from "./paths.ts";
-import { makeOpenAIAdapter, type ProviderAdapter } from "@niuma/provider";
+import {
+  makeOpenAIAdapter,
+  type ProviderAdapter,
+  type ThinkingConfig,
+} from "@niuma/provider";
 import {
   type NiumaConfig,
   niumaPaths,
@@ -152,11 +156,13 @@ export const bootstrap = async (
   let defaultModel = deps.infra?.defaultModel ?? "";
   let defaultContextWindow = deps.infra?.defaultContextWindow;
   let defaultMaxTokens = deps.infra?.defaultMaxTokens;
+  let defaultThinking = deps.infra?.defaultThinking;
   if (defaultRef && !deps.infra?.defaultModel) {
     const resolved = resolveModelRef(config, defaultRef);
     defaultModel = resolved.modelId;
     defaultContextWindow = resolved.model.contextWindow;
     defaultMaxTokens = resolved.model.maxOutput;
+    defaultThinking = thinkingFromModel(resolved.model);
   }
 
   const provider = deps.infra?.provider !== undefined
@@ -222,6 +228,9 @@ export const bootstrap = async (
           ...(defaultMaxTokens !== undefined
             ? { maxTokens: defaultMaxTokens }
             : {}),
+          ...(defaultThinking !== undefined
+            ? { thinking: defaultThinking }
+            : {}),
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.sync(() => ({
@@ -257,6 +266,7 @@ export const bootstrap = async (
     defaultWorkspace: workspace,
     ...(defaultContextWindow !== undefined ? { defaultContextWindow } : {}),
     ...(defaultMaxTokens !== undefined ? { defaultMaxTokens } : {}),
+    ...(defaultThinking !== undefined ? { defaultThinking } : {}),
   };
 
   // Wrap the eagerly-built kernel in a Layer so downstream consumers (the
@@ -293,6 +303,29 @@ const withDefaultModel = (
     stream: (req) =>
       adapter.stream({ ...req, model: req.model ?? defaultModel }),
   };
+
+/**
+ * Project a resolved ModelConfig's thinking fields into the provider-level
+ * ThinkingConfig. Returns `undefined` when the model sets neither field, so
+ * the caller's conditional spread omits the key entirely (no `thinking: {}`
+ * no-op leaks into RunTurnDeps). Thinking is request-level, so this only
+ * flows into ChatRequest — makeProviderFromConfig is untouched.
+ */
+const thinkingFromModel = (
+  model: Readonly<{ thinkingEffort?: string; thinkingKeep?: "all" | "none" }>,
+): ThinkingConfig | undefined => {
+  if (
+    model.thinkingEffort === undefined && model.thinkingKeep === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(model.thinkingEffort !== undefined
+      ? { effort: model.thinkingEffort }
+      : {}),
+    ...(model.thinkingKeep !== undefined ? { keep: model.thinkingKeep } : {}),
+  };
+};
 
 /**
  * Build the provider adapter from config.toml + auth.json.

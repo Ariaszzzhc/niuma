@@ -16,6 +16,22 @@ const textOfParts = (parts: ReadonlyArray<Part>): string =>
     .map((p) => p.text)
     .join("");
 
+const thinkingOfParts = (parts: ReadonlyArray<Part>): string =>
+  parts
+    .filter((p): p is Extract<Part, { type: "thinking" }> =>
+      p.type === "thinking"
+    )
+    .map((p) => p.text)
+    .join("");
+
+// Projection options for projectEvent / eventsToMessages. `keepThinking`
+// mirrors ChatRequest.thinking.keep: "all" (default) replays prior reasoning
+// to the provider as Message.reasoningContent; "none" strips it at this layer
+// so the convert layer never sees it.
+export interface ProjectOptions {
+  readonly keepThinking?: "all" | "none";
+}
+
 const toolCallsOfParts = (
   parts: ReadonlyArray<Part>,
 ): ProviderToolCall[] =>
@@ -61,6 +77,7 @@ export const ABORTED_TOOL_OUTPUT = "aborted";
 export const projectEvent = (
   out: ProviderMessage[],
   ev: RecordedEvent,
+  options?: ProjectOptions,
 ): void => {
   switch (ev.type) {
     case "user.message": {
@@ -75,7 +92,18 @@ export const projectEvent = (
         role: "assistant",
         content: textOfParts(ev.data.parts),
       };
-      out.push(calls.length > 0 ? { ...base, toolCalls: calls } : base);
+      // Thinking blocks project to reasoningContent (multi-block texts are
+      // concatenated). `encrypted` is a replay credential for future
+      // credential-protocol providers — it never enters the ProviderMessage;
+      // the convert layer will read parts directly when such a provider
+      // exists. keepThinking === "none" suppresses replay entirely.
+      const thinking = options?.keepThinking === "none"
+        ? ""
+        : thinkingOfParts(ev.data.parts);
+      const withReasoning: ProviderMessage = thinking.length > 0
+        ? { ...base, reasoningContent: thinking }
+        : base;
+      out.push(calls.length > 0 ? { ...withReasoning, toolCalls: calls } : withReasoning);
       break;
     }
     case "tool.result": {
@@ -215,9 +243,10 @@ const closePendingToolCalls = (out: ProviderMessage[]): void => {
 // those too (see projectEvent's pairing contract).
 export function eventsToMessages(
   events: ReadonlyArray<RecordedEvent>,
+  options?: ProjectOptions,
 ): ProviderMessage[] {
   const messages: ProviderMessage[] = [];
-  for (const ev of events) projectEvent(messages, ev);
+  for (const ev of events) projectEvent(messages, ev, options);
   closePendingToolCalls(messages);
   return messages;
 }
@@ -232,6 +261,7 @@ const toolDefsChars = (tools: ReadonlyArray<ProviderToolDef>): number =>
 
 const messageChars = (m: ProviderMessage): number => {
   let n = m.content.length + m.role.length;
+  if (m.reasoningContent) n += m.reasoningContent.length;
   if (m.toolCalls) {
     for (const c of m.toolCalls) n += c.name.length + c.arguments.length;
   }

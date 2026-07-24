@@ -22,6 +22,10 @@ export type OpenAIMessage =
     readonly role: "assistant";
     readonly content: string | null;
     readonly tool_calls?: ReadonlyArray<OpenAIToolCall>;
+    // Prior-turn reasoning replayed back to the provider. Emitted whenever the
+    // source Message carries reasoningContent; `keep` filtering is decided
+    // upstream in the context projection layer, not here.
+    readonly reasoning_content?: string;
   }
   | {
     readonly role: "tool";
@@ -46,6 +50,9 @@ export const messagesToOpenAI = (
         };
       case "assistant": {
         const calls = m.toolCalls;
+        const reasoning = m.reasoningContent !== undefined
+          ? { reasoning_content: m.reasoningContent }
+          : {};
         if (calls && calls.length > 0) {
           return {
             role: "assistant",
@@ -55,9 +62,10 @@ export const messagesToOpenAI = (
               type: "function",
               function: { name: tc.name, arguments: tc.arguments },
             })),
+            ...reasoning,
           };
         }
-        return { role: "assistant", content: m.content };
+        return { role: "assistant", content: m.content, ...reasoning };
       }
     }
   });
@@ -101,6 +109,9 @@ export const openAIToMessages = (
         const base: Message = {
           role: "assistant",
           content: m.content ?? "",
+          ...(m.reasoning_content !== undefined
+            ? { reasoningContent: m.reasoning_content }
+            : {}),
         };
         return toolCalls ? { ...base, toolCalls } : base;
       }

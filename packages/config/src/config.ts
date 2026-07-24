@@ -67,6 +67,15 @@ export const DEFAULT_MAX_OUTPUT = 16_384;
 export interface ModelConfig {
   readonly contextWindow: number;
   readonly maxOutput: number;
+  /** Provider-defined reasoning effort档位 (legal values are part of each
+   * provider's wire protocol). Passed through verbatim — niuma defines no enum.
+   * Absent when the model table sets no `thinking_effort`. */
+  readonly thinkingEffort?: string;
+  /** Whether prior reasoning is replayed back to the provider on follow-up
+   * turns ("all", the default behaviour when unset; "none" strips it at the
+   * context projection layer). Absent when the model table sets no
+   * `thinking_keep`. */
+  readonly thinkingKeep?: "all" | "none";
 }
 
 export interface ProviderConfig {
@@ -136,15 +145,40 @@ const optPositiveInt = (
   return v;
 };
 
+const THINKING_KEEP_VALUES = ["all", "none"] as const;
+const optThinkingKeep = (
+  obj: Record<string, unknown>,
+  key: string,
+  path: string,
+): "all" | "none" | undefined => {
+  const v = obj[key];
+  if (v === undefined) return undefined;
+  if (typeof v !== "string" || !(THINKING_KEEP_VALUES as readonly string[]).includes(v)) {
+    throw new ConfigError(
+      `config: ${path}.${key} must be one of ${
+        THINKING_KEEP_VALUES.join("|")
+      }, got ${typeof v === "string" ? `"${v}"` : typeof v}`,
+    );
+  }
+  return v as "all" | "none";
+};
+
 const parseModelConfig = (
   raw: unknown,
   path: string,
 ): ModelConfig => {
   if (!isRecord(raw)) throw typeErr(path, "a table", raw);
+  // Optional thinking fields are only attached when declared, so the merge
+  // step can inherit them from a shallower config file (mirrors how
+  // name/baseUrl/apiKey are attached at the provider level).
+  const thinkingEffort = optString(raw, "thinking_effort", path);
+  const thinkingKeep = optThinkingKeep(raw, "thinking_keep", path);
   return {
     contextWindow: optPositiveInt(raw, "context_window", path) ??
       DEFAULT_CONTEXT_WINDOW,
     maxOutput: optPositiveInt(raw, "max_output", path) ?? DEFAULT_MAX_OUTPUT,
+    ...(thinkingEffort !== undefined ? { thinkingEffort } : {}),
+    ...(thinkingKeep !== undefined ? { thinkingKeep } : {}),
   };
 };
 
@@ -244,6 +278,12 @@ export const loadConfigFile = async (path: string): Promise<NiumaConfig> => {
  * replaced when the override sets them; providers are merged per id, and
  * per-model limits per model id, so a project file can add one model's
  * limits without restating the provider's base_url.
+ *
+ * Per-model fields merge deeply: an override that declares a model inherits
+ * the base model's optional fields (thinking_effort/thinking_keep) when it
+ * does not itself set them, and replaces only the fields it declares.
+ * Required fields (context_window/max_output) are always present on both
+ * sides after parsing, so the override wins as before.
  */
 export const mergeConfig = (
   base: NiumaConfig,
@@ -262,7 +302,7 @@ export const mergeConfig = (
             k === "id" || (v !== undefined && k !== "models")
           ),
         ),
-        models: { ...existing.models, ...p.models },
+        models: mergeModels(existing.models, p.models),
       }
       : p;
   }
@@ -280,6 +320,21 @@ export const mergeConfig = (
     },
     providers,
   };
+};
+
+/** Per-model deep merge: override fields win, base fields (including the
+ * optional thinking_effort/thinking_keep) are preserved when the override's
+ * model entry leaves them unset. */
+const mergeModels = (
+  base: Readonly<Record<string, ModelConfig>>,
+  override: Readonly<Record<string, ModelConfig>>,
+): Record<string, ModelConfig> => {
+  const out: Record<string, ModelConfig> = { ...base };
+  for (const [modelId, m] of Object.entries(override)) {
+    const b = base[modelId];
+    out[modelId] = b ? { ...b, ...m } : m;
+  }
+  return out;
 };
 
 /** Directories to search for a project .niuma/ dir, leaf-first, stopping at

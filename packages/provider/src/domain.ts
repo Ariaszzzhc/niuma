@@ -12,6 +12,10 @@ export interface Message {
   readonly toolCalls?: ReadonlyArray<ToolCall>;
   readonly toolCallId?: string;
   readonly name?: string;
+  // Provider reasoning/thinking text replayed back to the wire on a follow-up
+  // turn (convert-layer product). `keep` filtering happens upstream in the
+  // context projection layer; this field is the raw material.
+  readonly reasoningContent?: string;
 }
 
 export interface ToolDef {
@@ -24,6 +28,10 @@ export interface Usage {
   readonly promptTokens: number;
   readonly completionTokens: number;
   readonly totalTokens: number;
+  // Reasoning/thinking token consumption, when the provider breaks it out
+  // (OpenAI: completion_tokens_details.reasoning_tokens). Absent when the
+  // provider does not report it.
+  readonly reasoningTokens?: number;
 }
 
 export interface ModelRef {
@@ -40,6 +48,15 @@ export type FinishReason =
 
 export type StreamEvent =
   | { readonly _tag: "TextDelta"; readonly text: string }
+  | {
+    // Incremental reasoning/thinking text. `text` is the cross-provider body;
+    // `encrypted` is an opaque replay credential (e.g. Anthropic signature,
+    // Responses API encrypted_content) delivered as a trailing delta. The
+    // OpenAI Chat Completions family never sets `encrypted`.
+    readonly _tag: "ThinkingDelta";
+    readonly text: string;
+    readonly encrypted?: string;
+  }
   | {
     readonly _tag: "ToolCall";
     readonly id: string;
@@ -59,5 +76,17 @@ export interface ChatRequest {
   readonly tools: ReadonlyArray<ToolDef>;
   readonly maxTokens?: number;
   readonly temperature?: number;
+  readonly thinking?: ThinkingConfig;
   readonly abort?: AbortSignal;
+}
+
+// Thinking/reasoning configuration. `effort` is a provider-defined档位 string
+// (e.g. OpenAI reasoning_effort: minimal/low/medium/high) passed through
+// verbatim — niuma defines no enum and performs no mapping/convergence, since
+// the legal values are part of each provider's wire protocol. `keep` controls
+// whether prior reasoning is replayed back to the provider on follow-up turns
+// (default "all"; "none" strips it at the context projection layer).
+export interface ThinkingConfig {
+  readonly effort?: string;
+  readonly keep?: "all" | "none";
 }

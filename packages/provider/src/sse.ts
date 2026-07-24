@@ -19,6 +19,7 @@ interface OpenAIToolCallDelta {
 interface OpenAIDelta {
   role?: string;
   content?: string;
+  reasoning_content?: string;
   tool_calls?: OpenAIToolCallDelta[];
 }
 
@@ -34,6 +35,9 @@ interface OpenAIStreamChunk {
     prompt_tokens?: number;
     completion_tokens?: number;
     total_tokens?: number;
+    completion_tokens_details?: {
+      reasoning_tokens?: number;
+    };
   };
 }
 
@@ -56,6 +60,8 @@ const toUsage = (u: NonNullable<OpenAIStreamChunk["usage"]>): Usage => ({
   promptTokens: u.prompt_tokens ?? 0,
   completionTokens: u.completion_tokens ?? 0,
   totalTokens: u.total_tokens ?? 0,
+  // Left undefined when the provider doesn't break out reasoning tokens.
+  reasoningTokens: u.completion_tokens_details?.reasoning_tokens,
 });
 
 export async function* parseOpenAISSE(
@@ -142,6 +148,14 @@ export async function* parseOpenAISSE(
         const delta = choice.delta;
         if (delta?.content) {
           yield { _tag: "TextDelta" as const, text: delta.content };
+        }
+        // Chat Completions family streams thinking as reasoning_content deltas;
+        // these carry no replay credential, so encrypted is never set here.
+        if (delta?.reasoning_content) {
+          yield {
+            _tag: "ThinkingDelta" as const,
+            text: delta.reasoning_content,
+          };
         }
         if (delta?.tool_calls) {
           for (const tc of delta.tool_calls) {

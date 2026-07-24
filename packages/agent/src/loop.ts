@@ -92,6 +92,14 @@ const parseInput = (args: string): unknown => {
 
 interface SampleResult {
   readonly text: string;
+  // Thinking blocks in arrival order. A block closes when a delta carrying
+  // `encrypted` lands (credential marks block end) or when a TextDelta /
+  // ToolCall interrupts the thinking run; a block that already carries
+  // `encrypted` never merges with later deltas (kimi mergeInPlace rule).
+  readonly thinking: ReadonlyArray<{
+    readonly text: string;
+    readonly encrypted?: string;
+  }>;
   readonly toolCalls: ReadonlyArray<{
     readonly id: string;
     readonly name: string;
@@ -136,6 +144,7 @@ const runStreamOnce = (
   req: ChatRequest,
   acc: {
     text: string;
+    thinking: { text: string; encrypted?: string }[];
     toolCalls: SampleResult["toolCalls"][number][];
     stopReason: { v: StopReason };
     usage: { v: Usage };
@@ -155,6 +164,33 @@ const runStreamOnce = (
               sessionId,
               data: { delta: ev.text },
             });
+            break;
+          }
+          case "ThinkingDelta": {
+            // Merge into the open block; a block carrying `encrypted` is
+            // sealed, so a later delta starts a fresh one. An `encrypted`
+            // credential closes the block it lands on.
+            const open = acc.thinking[acc.thinking.length - 1];
+            const block = open && open.encrypted === undefined
+              ? open
+              : (() => {
+                const b: { text: string; encrypted?: string } = { text: "" };
+                acc.thinking.push(b);
+                return b;
+              })();
+            block.text += ev.text;
+            if (ev.encrypted !== undefined) block.encrypted = ev.encrypted;
+            acc.emittedAny.v = true;
+            // Live stream carries text only; a pure-credential delta (empty
+            // text) is persisted but not pushed (nothing new to render).
+            if (ev.text.length > 0) {
+              deps.emitLive?.({
+                type: "thinking.delta",
+                ts: Date.now(),
+                sessionId,
+                data: { delta: ev.text },
+              });
+            }
             break;
           }
           case "ToolCall": {
@@ -203,6 +239,7 @@ const sample = (
       // Per-attempt locals — discarded on retry so nothing partial commits.
       const acc = {
         text: "",
+        thinking: [] as { text: string; encrypted?: string }[],
         toolCalls: [] as SampleResult["toolCalls"][number][],
         stopReason: { v: "stop" as StopReason },
         usage: { v: zeroUsage() },
@@ -216,6 +253,7 @@ const sample = (
       if (Result.isSuccess(outcome)) {
         return {
           text: acc.text,
+          thinking: acc.thinking,
           toolCalls: acc.toolCalls,
           stopReason: acc.stopReason.v,
           usage: acc.usage.v,
@@ -227,6 +265,7 @@ const sample = (
       if (aborted()) {
         return {
           text: "",
+          thinking: [],
           toolCalls: [],
           stopReason: "abort",
           usage: zeroUsage(),
@@ -299,8 +338,18 @@ export function runTurn(
     // (see header invariant). Within a turn only this loop appends message-
     // relevant events, so the local mirror stays an exact projection.
     const replayed = yield* deps.event_log.replay(sessionId);
-    const historyEvents: RecordedEvent[] = [...replayed];
-    let messages: ProviderMessage[] = eventsToMessages(historyEvents);
+    let historyEvents: RecordedEvent[] = [...replayed];
+    // keepThinking gates reasoningContent projection (context.ts); driven by
+    // the same ThinkingConfig that goes on the wire.
+    const projectOptions = {
+      ...(deps.thinking?.keep !== undefined
+        ? { keepThinking: deps.thinking.keep }
+        : {}),
+    };
+    let messages: ProviderMessage[] = eventsToMessages(
+      historyEvents,
+      projectOptions,
+    );
 
     // Append + mirror: every event the loop records is folded into the local
     // projection so neither `messages` nor `historyEvents` need re-deriving
@@ -313,7 +362,7 @@ export function runTurn(
       Effect.gen(function* () {
         const ev = yield* deps.event_log.append(sessionId, input);
         historyEvents.push(ev);
-        projectEvent(messages, ev);
+        projectEvent(messages, ev, projectOptions);
         return ev;
       });
 
@@ -405,6 +454,7 @@ export function runTurn(
         ...(deps.temperature !== undefined
           ? { temperature: deps.temperature }
           : {}),
+        ...(deps.thinking !== undefined ? { thinking: deps.thinking } : {}),
         ...(deps.signal ? { abort: deps.signal } : {}),
       };
 
@@ -482,8 +532,18 @@ export function runTurn(
         return { stopReason: "abort", usage: turnUsage, text: finalText };
       }
 
-      // Record the assistant message (text + tool_call parts) with usage.
+      // Record the assistant message (thinking + text + tool_call parts) with
+      // usage. Thinking blocks go first, in arrival order; a block with
+      // `encrypted` keeps the credential for future credential-aware convert
+      // layers (niuma only stores/forwards it opaquely).
       const parts: Part[] = [];
+      for (const t of result.thinking) {
+        parts.push({
+          type: "thinking",
+          text: t.text,
+          ...(t.encrypted !== undefined ? { encrypted: t.encrypted } : {}),
+        });
+      }
       if (result.text.length > 0) {
         parts.push({ type: "text", text: result.text });
       }

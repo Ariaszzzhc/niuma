@@ -88,6 +88,99 @@ describe("reduce_event: streaming text accumulation", () => {
   });
 });
 
+describe("reduce_event: streaming thinking accumulation", () => {
+  it("thinking.delta appends into a streaming buffer (independent of text)", () => {
+    const m = reduceEventSequence([
+      ev("thinking.delta", { delta: "Let me " }),
+      ev("thinking.delta", { delta: "think…" }),
+      ev("text.delta", { delta: "answer" }),
+    ]);
+    assert(m.streaming !== null);
+    assertStrictEquals(m.streaming!.thinking, "Let me think…");
+    assertStrictEquals(m.streaming!.text, "answer");
+    assertStrictEquals(m.messages.length, 0);
+  });
+
+  it("thinking.delta alone seeds the streaming buffer (empty text + non-empty thinking)", () => {
+    // Mirrors the text.delta-only behavior: a lone thinking.delta still
+    // opens a streaming slot, and the subsequent assistant.message finalizes
+    // it. Without this the reducer would drop the reasoning on the floor.
+    const m = reduceEventSequence([
+      ev("thinking.delta", { delta: "reasoning only" }),
+      ev("assistant.message", { parts: [], usage: { inputTokens: 0, outputTokens: 0 } }),
+    ]);
+    assertStrictEquals(m.streaming, null);
+    assertStrictEquals(m.messages.length, 1);
+    assertStrictEquals(m.messages[0].text, "");
+    assertStrictEquals(m.messages[0].thinking, "reasoning only");
+  });
+
+  it("text.reset clears both text and thinking buffers", () => {
+    // Re-sample after a mid-stream failure must drop the partial text AND
+    // the partial reasoning together — `text.reset` is the only signal a
+    // client has for "throw away the whole in-flight sample".
+    const m = reduceEventSequence([
+      ev("thinking.delta", { delta: "partial think" }),
+      ev("text.delta", { delta: "partial text" }),
+      ev("text.reset", {}),
+    ]);
+    assertStrictEquals(m.streaming, null);
+    assertStrictEquals(m.messages.length, 0);
+  });
+
+  it("assistant.message fills TuiMessage.thinking from a ThinkingPart", () => {
+    // Replay path (no live thinking.delta): the persisted parts is the only
+    // source the TUI has. The thinking text must land on the message and the
+    // opaque `encrypted` credential must NOT be surfaced as part of the
+    // human-readable reasoning string.
+    const m = reduceEventSequence([
+      ev("assistant.message", {
+        parts: [
+          { type: "thinking", text: "let me reason", encrypted: "sig-abc123" },
+          { type: "text", text: "the answer" },
+        ],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      }),
+    ]);
+    assertStrictEquals(m.messages.length, 1);
+    assertStrictEquals(m.messages[0].text, "the answer");
+    assertStrictEquals(m.messages[0].thinking, "let me reason");
+    assert(m.messages[0].thinking!.includes("sig-abc123") === false, "encrypted credential leaked into thinking text");
+  });
+
+  it("assistant.message joins multiple ThinkingParts in order", () => {
+    // kimi-style: one sample can emit multiple thinking blocks separated by
+    // text or tool calls. The TUI must concatenate them in arrival order,
+    // again skipping each block's `encrypted` credential.
+    const m = reduceEventSequence([
+      ev("assistant.message", {
+        parts: [
+          { type: "thinking", text: "first ", encrypted: "sig-1" },
+          { type: "text", text: "bridge " },
+          { type: "thinking", text: "second" },
+        ],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      }),
+    ]);
+    assertStrictEquals(m.messages[0].thinking, "first second");
+  });
+
+  it("assistant.message with only a ThinkingPart produces a message with empty text", () => {
+    // Edge case: a persisted assistant turn whose only content was reasoning
+    // (e.g. a refusal expressed entirely as thinking). Still surfaces as a
+    // message, just with no body text.
+    const m = reduceEventSequence([
+      ev("assistant.message", {
+        parts: [{ type: "thinking", text: "I will not comply", encrypted: "sig-r" }],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      }),
+    ]);
+    assertStrictEquals(m.messages.length, 1);
+    assertStrictEquals(m.messages[0].text, "");
+    assertStrictEquals(m.messages[0].thinking, "I will not comply");
+  });
+});
+
 describe("reduce_event: tool call lifecycle", () => {
   it("requested -> progress -> result", () => {
     const m = reduceEventSequence([

@@ -33,7 +33,12 @@ import { renderToolCall, type ToolCallView } from "./tool_call.ts";
 /** One row of the conversation. */
 export type ChatMessage =
   | { readonly role: "user"; readonly text: string }
-  | { readonly role: "assistant"; readonly text: string }
+  | {
+    readonly role: "assistant";
+    readonly text: string;
+    /** Reasoning/thinking text, rendered dimmed above the body. */
+    readonly thinking?: string;
+  }
   | { readonly role: "tool"; readonly call: ToolCallView };
 
 /** Mutable-by-reduction transcript state. */
@@ -160,6 +165,19 @@ const wrapPlain = (text: string, width: number): string[] => {
 // Full-column render (un-windowed)
 // ---------------------------------------------------------------------------
 
+/**
+ * Render assistant thinking/reasoning as dimmed, italic lines above the body.
+ * Word-wrapped like plain text; visually de-emphasised (textDim + dim + italic)
+ * so it reads as secondary to the answer. Both finalized and still-streaming
+ * thinking use this — the model is the same shape either way.
+ */
+const renderThinking = (text: string, width: number, theme: Theme): StyledLine[] => {
+  const wrapped = wrapPlain(text, Math.max(1, width));
+  return wrapped.map((line) => ({
+    spans: [{ text: line, style: { fg: theme.textDim, dim: true, italic: true } }],
+  }));
+};
+
 export interface TranscriptRenderOpts {
   /** Spinner frame forwarded to tool_call cards (animates running tools). */
   readonly spinnerFrame?: number;
@@ -191,6 +209,9 @@ export const renderTranscriptContent = (
         out.push(...renderUserMessage(msg.text, safeWidth, theme));
         break;
       case "assistant":
+        if (msg.thinking && msg.thinking.length > 0) {
+          out.push(...renderThinking(msg.thinking, safeWidth, theme));
+        }
         out.push(
           ...renderMarkdown(msg.text, {
             width: safeWidth,
