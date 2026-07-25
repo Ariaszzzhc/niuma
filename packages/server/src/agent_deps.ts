@@ -5,6 +5,7 @@ import type {
   RecordedEvent,
 } from "@niuma/schema";
 import type { ProviderAdapter, ThinkingConfig } from "@niuma/provider";
+import type { NiumaConfig } from "@niuma/config";
 import type {
   PermissionEngine,
   SubagentResult,
@@ -177,4 +178,23 @@ export interface AgentInfra {
    * (thinking_effort/thinking_keep), projected verbatim into every
    * runTurn call. Mirrors @niuma/agent's AgentInfra.defaultThinking. */
   readonly defaultThinking?: ThinkingConfig;
+  /** Global niuma config dir (niumaPaths().config) — level-1 root for custom
+   * slash command discovery (commands/*.md). Absent in injected test infra;
+   * command lookup then just skips the user level. */
+  readonly globalConfigDir?: string;
+  /** Merged niuma config — needed to resolve `provider/model-id` refs at
+   * runtime (SessionManager.setModel). Absent in minimal test infra;
+   * provider-qualified switches then fail fast with a clear error. */
+  readonly config?: NiumaConfig;
+  /** Provider adapter factory for runtime cross-provider switches
+   * (bootstrap wires makeProviderFromConfig; tests inject a fake). Called
+   * only when setModel's ref names a provider different from the session's
+   * current one. */
+  readonly makeProvider?: (
+    config: NiumaConfig,
+    ref: string,
+  ) => Promise<ProviderAdapter>;
+  /** Provider id of the boot adapter (from the resolved default model ref);
+   * the baseline for "did the provider change" on setModel. */
+  readonly defaultProviderId?: string;
 }

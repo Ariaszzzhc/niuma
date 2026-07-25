@@ -46,7 +46,11 @@ export const createServerApp = async (
   const runtime = ManagedRuntime.make(layer);
   const kernel = await runtime.runPromise(Kernel);
   const sessionManager = await runtime.runPromise(SessionManager);
-  const handlers = makeHandlers(runtime);
+  const handlers = makeHandlers(runtime, {
+    ...(boot.infra.globalConfigDir !== undefined
+      ? { globalConfigDir: boot.infra.globalConfigDir }
+      : {}),
+  });
 
   const app = new Hono();
 
@@ -114,6 +118,26 @@ export const createServerApp = async (
     const id = ensureSessionId(c.req.param("id"));
     const out = await handlers.interrupt(id);
     return c.json(out);
+  });
+
+  app.post("/sessions/:id/model", async (c) => {
+    const id = ensureSessionId(c.req.param("id"));
+    const raw = await safeJson(c);
+    const out = await handlers.setModel(id, raw);
+    return c.json(out);
+  });
+
+  app.post("/sessions/:id/effort", async (c) => {
+    const id = ensureSessionId(c.req.param("id"));
+    const raw = await safeJson(c);
+    const out = await handlers.setEffort(id, raw);
+    return c.json(out);
+  });
+
+  app.post("/sessions/:id/compact", async (c) => {
+    const id = ensureSessionId(c.req.param("id"));
+    const out = await handlers.compact(id);
+    return c.json(out, 202);
   });
 
   app.post("/sessions/:id/approvals/:approvalId", async (c) => {

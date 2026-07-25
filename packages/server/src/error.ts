@@ -21,6 +21,7 @@ const statusFor = (code: string): number => {
     case "approval_not_found":
       return 404;
     case "conflict":
+    case "turn_in_flight":
       return 409;
     case "internal":
     default:

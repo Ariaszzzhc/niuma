@@ -162,12 +162,14 @@ export const bootstrap = async (
   let defaultContextWindow = deps.infra?.defaultContextWindow;
   let defaultMaxTokens = deps.infra?.defaultMaxTokens;
   let defaultThinking = deps.infra?.defaultThinking;
+  let defaultProviderId = deps.infra?.defaultProviderId;
   if (defaultRef && !deps.infra?.defaultModel) {
     const resolved = resolveModelRef(config, defaultRef);
     defaultModel = resolved.modelId;
     defaultContextWindow = resolved.model.contextWindow;
     defaultMaxTokens = resolved.model.maxOutput;
     defaultThinking = thinkingFromModel(resolved.model);
+    defaultProviderId = resolved.provider.id;
   }
 
   const provider = deps.infra?.provider !== undefined
@@ -269,6 +271,13 @@ export const bootstrap = async (
     tools,
     defaultModel,
     defaultWorkspace: workspace,
+    globalConfigDir: deps.infra?.globalConfigDir ?? niumaPaths().config,
+    // Runtime model switching (SessionManager.setModel): the merged config
+    // resolves provider/model-id refs, the factory rebuilds the adapter on a
+    // cross-provider switch. Tests may inject both through deps.infra.
+    config: deps.infra?.config ?? config,
+    makeProvider: deps.infra?.makeProvider ?? makeProviderFromConfig,
+    ...(defaultProviderId !== undefined ? { defaultProviderId } : {}),
     ...(defaultContextWindow !== undefined ? { defaultContextWindow } : {}),
     ...(defaultMaxTokens !== undefined ? { defaultMaxTokens } : {}),
     ...(defaultThinking !== undefined ? { defaultThinking } : {}),

@@ -1,18 +1,34 @@
 import {
   ApprovalReplyReq,
+  type CommandInfo,
   CreateSessionReq,
   decode,
   PromptReq,
   type SessionInfo,
+  SetEffortReq,
+  SetModelReq,
 } from "@niuma/schema";
-import { Effect, Exit, type ManagedRuntime, Stream } from "effect";
+import { loadCommands } from "@niuma/config";
+import { Effect, Exit, type ManagedRuntime, Result, Stream } from "effect";
 import { Kernel } from "../kernel.ts";
-import { getSessionEnv, SessionManager } from "../session.ts";
+import {
+  getSessionEnv,
+  SessionManager,
+  type SetEffortResult,
+  type SetModelResult,
+  TurnInFlightError,
+} from "../session.ts";
 import { httpError } from "../error.ts";
 
 // The set of services the handlers need from the runtime.
 type R = Kernel | SessionManager;
 type Rt = ManagedRuntime.ManagedRuntime<R, unknown>;
+
+export interface HandlersOptions {
+  /** Global niuma config dir; level-1 root for command discovery. When
+   * absent (injected test infra) only project-level commands are listed. */
+  readonly globalConfigDir?: string;
+}
 
 export interface Handlers {
   readonly createSession: (raw: unknown) => Promise<{
@@ -23,6 +39,8 @@ export interface Handlers {
     contextWindow?: number;
     /** MCP servers that came up at boot (empty until/without any). */
     mcpServers: ReadonlyArray<{ id: string; toolCount: number }>;
+    /** Custom slash commands visible to this session's workspace. */
+    commands: ReadonlyArray<CommandInfo>;
   }>;
   readonly listSessions: () => Promise<ReadonlyArray<SessionInfo>>;
   readonly getSession: (
@@ -30,6 +48,9 @@ export interface Handlers {
   ) => Promise<{ info: SessionInfo; history: ReadonlyArray<unknown> }>;
   readonly prompt: (id: string, raw: unknown) => Promise<{ accepted: true }>;
   readonly interrupt: (id: string) => Promise<{ ok: true }>;
+  readonly setModel: (id: string, raw: unknown) => Promise<SetModelResult>;
+  readonly setEffort: (id: string, raw: unknown) => Promise<SetEffortResult>;
+  readonly compact: (id: string) => Promise<{ accepted: true }>;
   readonly approval: (
     sessionId: string,
     approvalId: string,
@@ -73,8 +94,33 @@ const collectReplay = (
     }),
   );
 
+// List the custom slash commands a workspace sees (user + project levels).
+// Best-effort: a broken commands dir yields an empty list, never a failed
+// session create.
+const listCommands = async (
+  opts: HandlersOptions,
+  workspace: string,
+): Promise<ReadonlyArray<CommandInfo>> => {
+  try {
+    const table = await loadCommands({
+      ...(opts.globalConfigDir !== undefined
+        ? { globalConfigDir: opts.globalConfigDir }
+        : {}),
+      workspace,
+    });
+    return Array.from(table.values(), (c) => ({
+      name: c.name,
+      ...(c.description !== undefined ? { description: c.description } : {}),
+      ...(c.argumentHint !== undefined ? { argumentHint: c.argumentHint } : {}),
+    })).sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+};
+
 export const makeHandlers = (
   runtime: Rt,
+  opts: HandlersOptions = {},
 ): Handlers => ({
   createSession: (raw) => {
     const req = decode(CreateSessionReq)(raw);
@@ -95,6 +141,9 @@ export const makeHandlers = (
             ? { contextWindow: env.contextWindow }
             : {}),
           mcpServers: env.mcpServers,
+          commands: yield* Effect.promise(() =>
+            listCommands(opts, info.workspace)
+          ),
         };
       }),
       "session_create_failed",
@@ -150,6 +199,89 @@ export const makeHandlers = (
       }),
       "interrupt_failed",
     ),
+
+  // Session-existence is checked up front (same convention as getSession) so
+  // a typo'd id surfaces as session_not_found, not a generic failure code.
+  setModel: async (id, raw) => {
+    const req = decode(SetModelReq)(raw);
+    const info = await runEffect(
+      runtime,
+      Effect.gen(function* () {
+        const sm = yield* SessionManager;
+        return yield* sm.get(id);
+      }),
+      "session_lookup_failed",
+    );
+    if (!info) {
+      throw httpError("session_not_found", `session ${id} not found`);
+    }
+    return await runEffect(
+      runtime,
+      Effect.gen(function* () {
+        const sm = yield* SessionManager;
+        return yield* sm.setModel(id, req.model);
+      }),
+      "set_model_failed",
+    );
+  },
+
+  setEffort: async (id, raw) => {
+    const req = decode(SetEffortReq)(raw);
+    const info = await runEffect(
+      runtime,
+      Effect.gen(function* () {
+        const sm = yield* SessionManager;
+        return yield* sm.get(id);
+      }),
+      "session_lookup_failed",
+    );
+    if (!info) {
+      throw httpError("session_not_found", `session ${id} not found`);
+    }
+    return await runEffect(
+      runtime,
+      Effect.gen(function* () {
+        const sm = yield* SessionManager;
+        return yield* sm.setEffort(id, req.effort);
+      }),
+      "set_effort_failed",
+    );
+  },
+
+  // Session-existence is checked up front (same convention as setModel); the
+  // manager itself refuses with TurnInFlightError while a turn is running,
+  // which surfaces here as a 409 rather than a generic failure code.
+  compact: async (id) => {
+    const info = await runEffect(
+      runtime,
+      Effect.gen(function* () {
+        const sm = yield* SessionManager;
+        return yield* sm.get(id);
+      }),
+      "session_lookup_failed",
+    );
+    if (!info) {
+      throw httpError("session_not_found", `session ${id} not found`);
+    }
+    const result = await runEffect(
+      runtime,
+      Effect.gen(function* () {
+        const sm = yield* SessionManager;
+        return yield* Effect.result(sm.compact(id));
+      }),
+      "compact_failed",
+    );
+    if (Result.isFailure(result)) {
+      if (result.failure instanceof TurnInFlightError) {
+        throw httpError(
+          "turn_in_flight",
+          `session ${id} has a turn in flight; retry when it completes`,
+        );
+      }
+      throw httpError("compact_failed", String(result.failure));
+    }
+    return result.success;
+  },
 
   approval: (sessionId, approvalId, raw) => {
     const req = decode(ApprovalReplyReq)(raw);
