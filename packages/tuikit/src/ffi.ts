@@ -102,6 +102,44 @@ export const openLib = (): TuikitLib => {
 export const symbols = () => openLib().symbols;
 
 // ---------------------------------------------------------------------------
+// Terminal platform setup (Windows console CP / VT mode)
+// ---------------------------------------------------------------------------
+
+/**
+ * Windows-only: switch the console to UTF-8 (CP 65001) and enable VT
+ * processing on stdout, saving the previous state for
+ * {@link terminalPlatformTeardown}. No-op returning 0 on other platforms.
+ *
+ * Never throws — a missing/unloadable native library or a failing Win32
+ * call is reported via the return value (0 ok, nonzero Win32 error code,
+ * -1 native fault/unavailable); the caller treats failure as advisory and
+ * continues (worst case: mojibake / no colors, as before).
+ */
+export const terminalPlatformSetup = (): number => {
+  if (Deno.build.os !== "windows") return 0;
+  try {
+    const r = symbols().tuikit_terminal_setup();
+    return typeof r === "bigint" ? Number(r) : r;
+  } catch {
+    return -1;
+  }
+};
+
+/**
+ * Restore what {@link terminalPlatformSetup} changed. No-op returning 0 on
+ * non-Windows platforms and when setup is not active. Never throws.
+ */
+export const terminalPlatformTeardown = (): number => {
+  if (Deno.build.os !== "windows") return 0;
+  try {
+    const r = symbols().tuikit_terminal_teardown();
+    return typeof r === "bigint" ? Number(r) : r;
+  } catch {
+    return -1;
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Errors + result guards
 // ---------------------------------------------------------------------------
 

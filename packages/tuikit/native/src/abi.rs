@@ -678,12 +678,47 @@ pub extern "C" fn tuikit_gradient(
 }
 
 // ---------------------------------------------------------------------------
-// Implementation delegators — bodies live in width.rs / cellbuf.rs / diff.rs /
-// keys.rs / sgr.rs. Keep this block free of logic so the contract surface
-// above stays the single source of truth.
+// termplat — Windows console code page / VT mode
 // ---------------------------------------------------------------------------
 
-use crate::{cellbuf, diff, keys, sgr, width};
+/// Switch the Windows console to UTF-8 (code page 65001) and enable
+/// `ENABLE_VIRTUAL_TERMINAL_PROCESSING` on stdout, saving the previous code
+/// pages and console modes for [`tuikit_terminal_teardown`]. Without this a
+/// console on a legacy code page (e.g. 936/GBK) renders the UTF-8 output
+/// stream as mojibake, and a console without VT processing ignores SGR
+/// colour sequences entirely.
+///
+/// Idempotent: a second call while active is a no-op returning 0. On
+/// non-Windows targets this is a no-op returning 0 (the symbol exists on
+/// every platform so the TS symbol table always resolves).
+///
+/// Returns 0 on success, otherwise the first failing Win32 error code
+/// (`GetLastError`). Partial failure still leaves the saved state active so
+/// teardown restores whatever was changed; TS treats the return as
+/// advisory and continues either way.
+#[no_mangle]
+pub extern "C" fn tuikit_terminal_setup() -> i64 {
+    catch_unwind(AssertUnwindSafe(termplat::terminal_setup_impl)).unwrap_or(-1)
+}
+
+/// Restore the code pages and console modes saved by
+/// [`tuikit_terminal_setup`]. Idempotent: calling without a matching active
+/// setup is a no-op returning 0. No-op returning 0 on non-Windows targets.
+///
+/// Returns 0 on success, otherwise the first failing Win32 error code, or
+/// -1 on native panic.
+#[no_mangle]
+pub extern "C" fn tuikit_terminal_teardown() -> i64 {
+    catch_unwind(AssertUnwindSafe(termplat::terminal_teardown_impl)).unwrap_or(-1)
+}
+
+// ---------------------------------------------------------------------------
+// Implementation delegators — bodies live in width.rs / cellbuf.rs / diff.rs /
+// keys.rs / sgr.rs / termplat.rs. Keep this block free of logic so the
+// contract surface above stays the single source of truth.
+// ---------------------------------------------------------------------------
+
+use crate::{cellbuf, diff, keys, sgr, termplat, width};
 
 fn width_impl(ptr: *const u8, len: u32) -> i64 {
     width::width_impl(ptr, len)

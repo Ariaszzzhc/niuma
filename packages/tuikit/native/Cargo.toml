@@ -20,7 +20,16 @@ codegen-units = 1
 # and break the FFI panic-safety contract (every extern fn must catch).
 panic = "unwind"
 
-# ZERO external dependencies by design (no serde / unicode-width / crossterm).
-# The EAW table, grapheme rules, diff and key parser are all hand-written so
-# the artifact builds in seconds with no supply-chain surface.
+# No portable external dependencies by design (no serde / unicode-width /
+# crossterm). The EAW table, grapheme rules, diff and key parser are all
+# hand-written so the artifact builds in seconds with no supply-chain
+# surface. The single exception is `windows-sys` (Windows targets only):
+# the console code-page / VT-mode setup in `termplat.rs` must call Win32
+# console APIs, and there is no std-lib route to them.
 [dependencies]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }

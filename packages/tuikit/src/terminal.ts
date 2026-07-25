@@ -10,7 +10,10 @@
 //   - kitty keyboard push/pop (ESC[>1u / ESC[<u)
 //   - CSI 2026 beginSync/endSync byte constants (the loop composes them)
 //   - capability detection (COLORTERM, TERM_PROGRAM incl. Apple_Terminal,
-//     NO_COLOR, TERM contains kitty / 256color)
+//     NO_COLOR, TERM contains kitty / 256color, Windows WT_SESSION /
+//     ConEmuANSI truecolor fallback)
+//   - Windows console setup via FFI (UTF-8 code page + VT processing,
+//     restored on dispose)
 //   - a single stdout writer
 //   - the stdin byte stream exposed as decoded InputEvent[] via KeyParser
 //
@@ -19,6 +22,7 @@
 // ===========================================================================
 
 import type { InputEvent, TerminalCaps } from "./binding_contract.ts";
+import { terminalPlatformSetup, terminalPlatformTeardown } from "./ffi.ts";
 import { KeyParser } from "./keys.ts";
 
 // ---------------------------------------------------------------------------
@@ -68,7 +72,11 @@ const envOr = (key: string): string => {
 /**
  * Detect terminal capabilities from the environment. Heuristics (no IO):
  *   - NO_COLOR set             -> truecolor AND color256 forced off
+ *   - TERM=dumb                -> truecolor AND color256 forced off
  *   - COLORTERM=truecolor/24bit-> truecolor
+ *   - Windows Terminal / ConEmu-> truecolor (WT_SESSION set / ConEmuANSI=ON;
+ *                                 they set neither TERM nor COLORTERM)
+ *   - any Windows console      -> color256 (win10+ consoles support it)
  *   - TERM *256color*          -> color256 (truecolor implies 256)
  *   - kitty keyboard           -> TERM/TERM_PROGRAM matches kitty|wezterm|ghostty
  *   - bracketed paste          -> assumed unless TERM=dumb
@@ -83,10 +91,15 @@ export const detectCaps = (): TerminalCaps => {
   const blob = `${term} ${termProgram}`.toLowerCase();
 
   const isDumb = term === "dumb";
+  const isWindows = Deno.build.os === "windows";
+  // Windows Terminal / ConEmu are truecolor but export no TERM/COLORTERM
+  // (mirrors Node.js getColorDepth).
+  const wtLike = isWindows &&
+    (envOr("WT_SESSION") !== "" || envOr("ConEmuANSI") === "ON");
   const truecolor = !noColor && !isDumb &&
-    (colorterm === "truecolor" || colorterm === "24bit");
+    (colorterm === "truecolor" || colorterm === "24bit" || wtLike);
   const color256 = !noColor && !isDumb &&
-    (truecolor || term.includes("256color"));
+    (truecolor || isWindows || term.includes("256color"));
 
   const kittyKeyboard = /\bkitty\b/.test(blob) || /wezterm/.test(blob) ||
     /ghostty/.test(blob);
@@ -239,6 +252,9 @@ export class Terminal {
   // -- setup / teardown internals -------------------------------------------
 
   #enter(): void {
+    // Windows console: UTF-8 code page + VT processing (no-op elsewhere;
+    // failure is advisory — worst case we render as before).
+    terminalPlatformSetup();
     // raw mode
     Deno.stdin.setRaw(true);
     this.#rawSet = true;
@@ -351,5 +367,8 @@ export class Terminal {
 
     // free parser
     this.#parser.dispose();
+
+    // restore Windows console code page / VT mode (no-op elsewhere)
+    terminalPlatformTeardown();
   };
 }

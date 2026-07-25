@@ -133,6 +133,20 @@ export const SYMBOLS = {
     ],
     result: "i64",
   },
+
+  // -- termplat (Windows console CP / VT mode) -------------------------------
+  /** () -> 0 ok / Win32 error code; saves and sets UTF-8 CP + VT mode.
+   * No-op on non-Windows. Idempotent. */
+  tuikit_terminal_setup: {
+    parameters: [],
+    result: "i64",
+  },
+  /** () -> 0 ok / Win32 error code; restores what setup saved. No-op on
+   * non-Windows and when setup is not active. */
+  tuikit_terminal_teardown: {
+    parameters: [],
+    result: "i64",
+  },
 } as const satisfies Deno.ForeignLibraryInterface;
 
 /** The dlopen'd library handle type, derived from SYMBOLS. */

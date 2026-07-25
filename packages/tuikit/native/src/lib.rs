@@ -30,4 +30,5 @@ pub mod cellbuf;
 pub mod diff;
 pub mod keys;
 pub mod sgr;
+pub mod termplat;
 pub mod width;
