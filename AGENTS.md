@@ -65,6 +65,7 @@ deno task check          # type-check all package mod.ts + CLI entrypoint
 deno task test           # full test suite: deno test --allow-all --unstable-worker-options packages/
 deno task cli -- ...     # run the CLI from source (alias for deno run --allow-all packages/cli/src/main.ts)
 deno task build:native   # cargo build --release of packages/tuikit/native (needed before TUI/FFI use)
+deno task build          # full pipeline: native build + deno compile -> dist/niuma(.exe), then a binary smoke run
 ```
 
 Notes:
@@ -76,8 +77,18 @@ Notes:
 - The native library is loaded lazily at first FFI call, so `deno task check`
   and non-TUI tests pass without building it. The artifact
   (`libniuma_tuikit.{so,dylib}` / `niuma_tuikit.dll`) is gitignored.
-- There is no bundling/compile step in CI and no CI configuration in the repo at
-  present; `deno task check` + `deno task test` are the gates.
+- `deno task build` (`scripts/build.ts`) compiles the CLI with `deno compile`.
+  Two `--include` entries are required: `packages/cli/src/server_worker.ts`
+  (Deno does NOT auto-embed workers spawned via
+  `new Worker(new URL(..., import.meta.url))` — without it the binary fails at
+  runtime with "Module not found") and the native cdylib (`ffi.ts` resolves it
+  relative to `import.meta.url`, which maps onto the embedded VFS, so dlopen
+  keeps working). `--allow-all` and `--unstable-worker-options` are baked in at
+  compile time. `--target <triple>` cross-compiles the JS side, but the cdylib
+  must match the TARGET platform and already sit in
+  `packages/tuikit/native/target/release/`. `dist/` is gitignored.
+- There is no CI configuration in the repo at present; `deno task check` +
+  `deno task test` are the gates.
 
 ## Testing instructions
 
