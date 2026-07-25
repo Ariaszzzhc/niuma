@@ -40,13 +40,13 @@ surface, re-exports only), `src/` (implementation), `tests/` (`*_test.ts`).
 | `packages/store` | Persistence: JSONL `EventLog` (source of truth), SQLite `Projection` (via kysely over a vendored `node:sqlite` dialect in `vendor/`), replay, data-dir paths. |
 | `packages/permission` | Rule-based permission engine: rule parser (`allow`/`deny`/`ask`), glob matching, sensitive-path detection, ordered policy chain, engine with snapshot support. |
 | `packages/tools` | Built-in tools (`bash`, `read`, `write`, `edit`, `glob`, `grep`, `apply_patch`, `question`, `spawn_subagent`, `update_plan`) under `src/tools/`, plus the tool pipeline (authorize → execute), scheduler, output truncation/spill, and path resolution confined to the workspace root. |
-| `packages/agent` | Agent core: `runTurn` loop, `AgentSession`/`SessionManager`, approval gateway, event→message context projection, history compaction/summarization, system-prompt builder. Depends on ports (`deps.ts`), not on concrete server/store. |
-| `packages/server` | HTTP+SSE server (Hono): `Kernel` (append/replay/subscribe), session manager, event bus, bootstrap wiring (Effect Layers), handlers for sessions and events. |
-| `packages/config` | Configuration: `config.toml` parsing and user/project merge, `auth.json` credentials (API keys + OAuth), MCP config, `niumaPaths()` directory layout, `VERSION`. |
+| `packages/agent` | Agent core: `runTurn` loop, `AgentSession`/`SessionManager`, approval gateway, event→message context projection (replay folds `compaction.performed`), history compaction/summarization (`compactSession`), system-prompt builder. Depends on ports (`deps.ts`), not on concrete server/store. |
+| `packages/server` | HTTP+SSE server (Hono): `Kernel` (append/replay/subscribe), session manager (prompt/compact/model/effort), event bus, bootstrap wiring (Effect Layers), handlers for sessions and events. |
+| `packages/config` | Configuration: `config.toml` parsing and user/project merge, `auth.json` credentials (API keys + OAuth), MCP config, custom slash commands (`commands/*.md` discovery + template expansion), `niumaPaths()` directory layout, `VERSION`. |
 | `packages/mcp` | MCP client: connects to configured MCP servers and adapts MCP tools into niuma tools (`@modelcontextprotocol/sdk`). |
 | `packages/cli` | Entrypoint (`src/main.ts`): subcommands `tui` (default), `-p` one-shot, `serve`, `auth`; argument parsing; server-worker spawn + fetch tunnel; stdin approval plumbing. |
 | `packages/tuikit` | Terminal toolkit: TEA-style `run` loop, `Frame`, `KeyParser`, `Terminal`, width/style helpers. Hot paths (width, cell buffer, diff, keys, SGR) live in a Rust cdylib (`native/`) loaded via `Deno.dlopen`; `src/binding_contract.ts` is the authoritative FFI symbol contract. |
-| `packages/tui` | Interactive TUI: `runTui` entrypoint, components (editor, transcript, approval overlay, command palette, statusline, tool-call rendering), theme detection, markdown rendering, SSE client. |
+| `packages/tui` | Interactive TUI: `runTui` entrypoint, built-in slash command dispatch (`src/commands.ts`), components (editor, transcript, approval overlay, command palette, completion menu, statusline, tool-call rendering), theme detection, markdown rendering, multi-session SSE client. |
 | `scripts/smoke.ts` | Network-free end-to-end smoke test (see below). |
 
 Dependency direction: `schema` is the base; `provider`, `store`,
@@ -127,9 +127,39 @@ Notes:
 ## Configuration and environment
 
 - User data root is `~/.niuma` (override with `NIUMA_DATA_DIR`): it holds
-  `config.toml`, `mcp.json`, `auth.json`, `log/`, `sessions/` (JSONL event
-  logs), and `niuma.db`. Project-level `<workspace>/.niuma/config.toml` merges
-  over the user config but never holds data.
+  `config.toml`, `mcp.json`, `auth.json`, `commands/`, `log/`, `sessions/`
+  (JSONL event logs), and `niuma.db`. Project-level
+  `<workspace>/.niuma/config.toml` merges over the user config but never holds
+  data.
+- Custom slash commands are markdown prompt templates: user-level
+  `~/.niuma/commands/*.md` plus project-level `<dir>/.niuma/commands/*.md`
+  (same upward discovery + closest-wins merge as `config.toml`/`mcp.json`).
+  Optional frontmatter: `description`, `argument-hint`. The body supports
+  `$ARGUMENTS` and `$1..$N` placeholders (the highest-numbered one swallows
+  the remaining args). `/name args` is expanded server-side
+  (`packages/server/src/session.ts`) into the user message before the turn;
+  the typed input survives as `sourceText` on the `user.message` event, and
+  an unmatched `/whatever` passes through as plain text. The TUI palette
+  (ctrl+p) lists them and seeds the editor with `/name `.
+- Slash-command completion menu (`packages/tui/src/components/completion.ts`):
+  typing a `/partial` token auto-pops a candidate list above the editor
+  (built-ins + aliases + custom commands, prefix-filtered live via
+  `slashCommandCandidates` in `packages/tui/src/commands.ts`). Tab accepts the
+  selection (`/name `), enter accepts AND submits, esc dismisses (typing
+  re-arms, tab re-opens), up/down + ctrl+p/ctrl+n navigate while it is open —
+  otherwise the arrows stay editor history keys. Keyboard focus never leaves
+  the editor; there is no focus switching.
+- Built-in slash commands (`packages/tui/src/commands.ts` registry) are
+  dispatched TUI-locally on submit and take priority over same-named custom
+  commands: `/help`, `/exit` (alias `/quit`), `/model [ref]` (server
+  `POST /sessions/:id/model`; persists to the projection, rebuilds the
+  provider adapter on cross-provider refs), `/effort [level]` (server
+  `POST /sessions/:id/effort`; per-session thinking override),
+  `/compact` (server `POST /sessions/:id/compact` → `compactSession` in
+  `@niuma/agent`; `compaction.performed` carries the summary so replay folds
+  history across turns), `/clear` (new session), `/resume [id]` (list /
+  re-attach a past session and rebuild from its history), `/mcp` (list MCP
+  servers). Their output renders as `notice` rows in the transcript.
 - Model selection is `provider/model-id` via `--model` or the top-level
   `model` key in `config.toml`; credentials live in `auth.json` (managed by
   `niuma auth login|logout|status`).
