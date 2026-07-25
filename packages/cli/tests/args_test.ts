@@ -52,7 +52,7 @@ Deno.test("args: `niuma tui` with a TTY launches interactive (structural)", () =
 type AuthParsed = {
   subcommand: "auth";
   action: "login" | "logout" | "status";
-  providerId: string;
+  providerId?: string;
   deviceCode: boolean;
 };
 
@@ -61,11 +61,13 @@ const asAuth = (r: ReturnType<typeof parseCliArgs>): AuthParsed => {
   return r.args as AuthParsed;
 };
 
-Deno.test("args: `niuma auth login` defaults provider to openai, no device-code", () => {
+Deno.test("args: `niuma auth login` leaves the provider unset (picker), no device-code", () => {
   const a = asAuth(parseCliArgs(["auth", "login"]));
   assertEquals(a.subcommand, "auth");
   assertEquals(a.action, "login");
-  assertEquals(a.providerId, "openai");
+  // Undefined = runLogin shows the first-level provider picker (kimi /
+  // openai / anthropic / custom); logout/status fall back to "openai".
+  assertEquals(a.providerId, undefined);
   assertEquals(a.deviceCode, false);
 });
 
@@ -87,10 +89,10 @@ Deno.test("args: `niuma auth list` is accepted as an alias for `status`", () => 
   assertEquals(a.action, "status");
 });
 
-Deno.test("args: `niuma auth status` defaults provider to openai", () => {
+Deno.test("args: `niuma auth status` leaves the provider unset (falls back to openai at run time)", () => {
   const a = asAuth(parseCliArgs(["auth", "status"]));
   assertEquals(a.action, "status");
-  assertEquals(a.providerId, "openai");
+  assertEquals(a.providerId, undefined);
 });
 
 Deno.test("args: `niuma auth bogus` is an unknown action -> exit 1", () => {

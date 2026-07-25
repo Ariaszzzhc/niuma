@@ -1,4 +1,4 @@
-import { assertRejects, assertStringIncludes, assertEquals } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { Effect, Stream } from "effect";
 import { ConfigError, parseConfig, setAuth } from "@niuma/config";
@@ -86,14 +86,17 @@ const sseDone = (): Response =>
 // =============================================================================
 
 Deno.test({
-  name: "makeProviderFromConfig: type=responses + api key dispatches to the Responses apiKey lane",
+  name:
+    "makeProviderFromConfig: type=responses + api key dispatches to the Responses apiKey lane",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
     await withTempAuth(async (authPath) => {
       await setAuth(authPath, "openai", { type: "api", key: "test-key" });
-      const { url, auth } = await capturePost(authPath, responsesConfig, () =>
-        Promise.resolve(sseDone())
+      const { url, auth } = await capturePost(
+        authPath,
+        responsesConfig,
+        () => Promise.resolve(sseDone()),
       );
       assertEquals(url, "https://api.openai.com/v1/responses");
       assertEquals(auth, "Bearer test-key");
@@ -106,7 +109,8 @@ Deno.test({
 // =============================================================================
 
 Deno.test({
-  name: "makeProviderFromConfig: type=responses + oauth entry refreshes then posts to the codex backend",
+  name:
+    "makeProviderFromConfig: type=responses + oauth entry refreshes then posts to the codex backend",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
@@ -146,7 +150,11 @@ Deno.test({
         return Promise.resolve(sseDone());
       };
 
-      const { url, auth } = await capturePost(authPath, responsesConfig, fetchImpl);
+      const { url, auth } = await capturePost(
+        authPath,
+        responsesConfig,
+        fetchImpl,
+      );
       // The captured POST is the codex-backend one (the only non-refresh POST).
       assertEquals(url, CODEX_BACKEND_URL);
       assertEquals(codexUrl, CODEX_BACKEND_URL);
@@ -165,7 +173,8 @@ Deno.test({
 // =============================================================================
 
 Deno.test({
-  name: "makeProviderFromConfig: oauth entry paired with a non-responses provider type is a ConfigError",
+  name:
+    "makeProviderFromConfig: oauth entry paired with a non-responses provider type is a ConfigError",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
@@ -194,17 +203,178 @@ Deno.test({
 // =============================================================================
 
 Deno.test({
-  name: "makeProviderFromConfig: type=openai + api key still posts to {baseUrl}/chat/completions (unchanged arm)",
+  name:
+    "makeProviderFromConfig: type=openai + api key still posts to {baseUrl}/chat/completions (unchanged arm)",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
     await withTempAuth(async (authPath) => {
       await setAuth(authPath, "openai", { type: "api", key: "sk-cc" });
-      const { url, auth } = await capturePost(authPath, openaiChatConfig, () =>
-        Promise.resolve(sseDone())
+      const { url, auth } = await capturePost(
+        authPath,
+        openaiChatConfig,
+        () => Promise.resolve(sseDone()),
       );
       assertEquals(url, "https://api.openai.com/v1/chat/completions");
       assertEquals(auth, "Bearer sk-cc");
+    });
+  },
+});
+
+// =============================================================================
+// built-in kimi provider: oauth with ZERO config.toml provider table
+// =============================================================================
+
+Deno.test({
+  name:
+    "makeProviderFromConfig: built-in kimi + oauth refreshes via auth.kimi.com and posts to api.kimi.com",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    await withTempAuth(async (authPath) => {
+      // Login-and-go: a model ref and a credential, but NO [provider.kimi]
+      // table — the built-in supplies type/baseUrl/model metadata.
+      const config = parseConfig(`model = "kimi/kimi-for-coding"`);
+      await setAuth(authPath, "kimi", {
+        type: "oauth",
+        refresh: "rt-old",
+        access: "at-stale",
+        expires: 0, // always-stale → proactive refresh before the first POST
+      });
+
+      let refreshCalls = 0;
+      const fetchImpl: typeof fetch = (input, _init) => {
+        const url = String(input);
+        if (url === "https://auth.kimi.com/api/oauth/token") {
+          refreshCalls++;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                access_token: "at-fresh",
+                refresh_token: "rt-new",
+                expires_in: 3600,
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+        return Promise.resolve(sseDone());
+      };
+
+      const { url, auth } = await capturePost(authPath, config, fetchImpl);
+      assertEquals(url, "https://api.kimi.com/coding/v1/chat/completions");
+      assertEquals(auth, "Bearer at-fresh");
+      assertEquals(refreshCalls, 1);
+    });
+  },
+});
+
+Deno.test({
+  name:
+    "makeProviderFromConfig: built-in kimi + api key posts to the open platform (api.moonshot.cn) with no provider table",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    await withTempAuth(async (authPath) => {
+      const config = parseConfig(`model = "kimi/kimi-k2.7-code"`);
+      await setAuth(authPath, "kimi", { type: "api", key: "sk-kimi" });
+      const { url, auth } = await capturePost(
+        authPath,
+        config,
+        () => Promise.resolve(sseDone()),
+      );
+      // The subscription endpoint is the OAuth lane; an API key goes to the
+      // pay-as-you-go open platform.
+      assertEquals(url, "https://api.moonshot.cn/v1/chat/completions");
+      assertEquals(auth, "Bearer sk-kimi");
+    });
+  },
+});
+
+Deno.test({
+  name:
+    "makeProviderFromConfig: a user [provider.kimi] base_url override beats the open-platform default for the api lane",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    await withTempAuth(async (authPath) => {
+      const config = parseConfig(`
+        model = "kimi/kimi-k2.7-code"
+        [provider.kimi]
+        base_url = "https://proxy.example/v1"
+      `);
+      await setAuth(authPath, "kimi", { type: "api", key: "sk-kimi" });
+      const { url, auth } = await capturePost(
+        authPath,
+        config,
+        () => Promise.resolve(sseDone()),
+      );
+      assertEquals(url, "https://proxy.example/v1/chat/completions");
+      assertEquals(auth, "Bearer sk-kimi");
+    });
+  },
+});
+
+Deno.test({
+  name:
+    "makeProviderFromConfig: config.model unset + kimi api entry falls back to the open-platform default model",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    await withTempAuth(async (authPath) => {
+      const config = parseConfig("");
+      await setAuth(authPath, "kimi", { type: "api", key: "sk-kimi" });
+      const { url, auth } = await capturePost(
+        authPath,
+        config,
+        () => Promise.resolve(sseDone()),
+      );
+      assertEquals(url, "https://api.moonshot.cn/v1/chat/completions");
+      assertEquals(auth, "Bearer sk-kimi");
+    });
+  },
+});
+
+Deno.test({
+  name:
+    "makeProviderFromConfig: config.model unset falls back to the unique logged-in built-in's default model",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    await withTempAuth(async (authPath) => {
+      // No model, no providers — only a kimi credential.
+      const config = parseConfig("");
+      await setAuth(authPath, "kimi", {
+        type: "oauth",
+        refresh: "rt",
+        access: "at-fresh",
+        expires: Date.now() + 3_600_000, // fresh → no refresh POST
+      });
+      const { url, auth } = await capturePost(
+        authPath,
+        config,
+        () => Promise.resolve(sseDone()),
+      );
+      // The built-in kimi default (kimi/kimi-for-coding) was selected and its
+      // chat-completions lane used without any refresh.
+      assertEquals(url, "https://api.kimi.com/coding/v1/chat/completions");
+      assertEquals(auth, "Bearer at-fresh");
+    });
+  },
+});
+
+Deno.test({
+  name:
+    "makeProviderFromConfig: config.model unset with no credentials is still a clear ConfigError",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    await withTempAuth(async (authPath) => {
+      const err = await assertRejects(
+        () => buildProvider(parseConfig(""), authPath),
+        ConfigError,
+      );
+      assertStringIncludes(err.message, "no default model");
     });
   },
 });

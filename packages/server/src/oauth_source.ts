@@ -1,17 +1,18 @@
 import { Effect } from "effect";
 import {
-  type OAuthAuth,
   OAUTH_EXPIRY_SKEW_MS,
-  refreshTokens,
+  type OAuthAuth,
   setAuth,
+  type TokenResponse,
   toOAuthAuth,
 } from "@niuma/config";
 import { AuthFailed, type OAuthTokenSource } from "@niuma/provider";
 
-// Server-side OAuth token source: the ONLY place refreshTokens + setAuth + the
-// in-memory cache meet. The provider package is given an OAuthTokenSource and
-// knows nothing about auth.json or refresh (design rule 4); this module is the
-// seam that satisfies that interface with codex/opencode-style semantics:
+// Server-side OAuth token source: the ONLY place the refresh POST + setAuth +
+// the in-memory cache meet. The provider package is given an OAuthTokenSource
+// and knows nothing about auth.json or refresh (design rule 4); this module
+// is the seam that satisfies that interface with codex/opencode-style
+// semantics:
 //   - proactive refresh: a token expiring within OAUTH_EXPIRY_SKEW_MS is
 //     treated as stale and refreshed before it is handed out;
 //   - single-flight: at most one refresh POST runs per provider id — concurrent
@@ -20,9 +21,11 @@ import { AuthFailed, type OAuthTokenSource } from "@niuma/provider";
 //   - persistence: each successful refresh is written back through setAuth so
 //     the 0600 auth.json stays current (the in-memory cache is authoritative
 //     for this process either way);
-//   - error surface: a refresh failure (OAuthError from refreshTokens, or a
+//   - error surface: a refresh failure (OAuthError from the refresh fn, or a
 //     transport error) maps to AuthFailed so the adapter's retry/recovery
 //     ladder sees a credential error rather than a rejected promise.
+// The refresh POST itself is injected (`deps.refresh`) so the same seam
+// serves every issuer — refreshTokens (ChatGPT) or refreshKimiTokens (Kimi).
 
 export interface OAuthTokenSourceDeps {
   /** Path to auth.json — refreshed tokens are persisted here via setAuth. */
@@ -31,6 +34,9 @@ export interface OAuthTokenSourceDeps {
   readonly providerId: string;
   /** The OAuth entry read from auth.json at boot; seeded into the cache. */
   readonly entry: OAuthAuth;
+  /** Issuer-specific refresh POST (refreshTokens for ChatGPT,
+   * refreshKimiTokens for Kimi). */
+  readonly refresh: (refreshToken: string) => Promise<TokenResponse>;
 }
 
 const toAuthFailed = (cause: unknown): AuthFailed =>
@@ -61,10 +67,10 @@ export const makeOAuthTokenSource = (
     if (refreshing) return refreshing;
     refreshing = (async () => {
       try {
-        // refreshTokens keeps the input refresh token when the issuer does not
-        // rotate it, so cached.refresh remains usable across non-rotating
-        // responses.
-        const tokens = await refreshTokens(cached.refresh);
+        // The injected refresh fn keeps the input refresh token when the
+        // issuer does not rotate it, so cached.refresh remains usable across
+        // non-rotating responses.
+        const tokens = await deps.refresh(cached.refresh);
         const auth = toOAuthAuth(tokens);
         cached = auth;
         // Persist best-effort: the in-memory cache is authoritative for this

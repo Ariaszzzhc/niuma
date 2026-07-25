@@ -18,8 +18,8 @@ export {
   PROJECT_DIR_BASENAME,
   projectConfigDirs,
   PROVIDER_TYPES,
-  RESPONSES_DEFAULT_BASE_URL,
   resolveModelRef,
+  RESPONSES_DEFAULT_BASE_URL,
   substituteEnv,
 } from "./src/config.ts";
 export type {
@@ -95,3 +95,28 @@ export type {
   PkceCodes,
   TokenResponse,
 } from "./src/oauth.ts";
+
+export {
+  BUILTIN_PROVIDERS,
+  builtinBaseUrlFor,
+  defaultModelRef,
+  KIMI_API_BASE_URL,
+  KIMI_OAUTH_CLIENT_ID,
+  KIMI_OAUTH_HOST,
+  KIMI_PLATFORM_BASE_URL,
+  KIMI_PLATFORM_DEFAULT_MODEL,
+  KIMI_PROVIDER_ID,
+  resolveProvider,
+} from "./src/builtin.ts";
+export type { BuiltinProvider } from "./src/builtin.ts";
+
+export {
+  makeKimiDeviceHeaders,
+  pollKimiDeviceAuth,
+  refreshKimiTokens,
+  requestKimiDeviceAuthorization,
+} from "./src/kimi_oauth.ts";
+export type {
+  KimiDeviceAuthorization,
+  KimiOAuthOptions,
+} from "./src/kimi_oauth.ts";

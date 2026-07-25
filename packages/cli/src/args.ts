@@ -57,17 +57,22 @@ export interface ServeArgs {
  * action: "login" obtains credentials; "logout" drops them; "status" prints
  *   the entry's type (+ expiry for OAuth), never the token material. "list"
  *   is accepted at the CLI as an alias for "status".
- * providerId: positional, defaults to "openai". Any id is accepted — the
- *   OAuth flow is provider-id-agnostic, so the resulting entry is stored under
- *   whatever id is passed (e.g. "openai" or "chatgpt"), paired with a
- *   type="responses" provider table. The manual API-key path works for any
- *   provider.
+ * providerId: positional; UNDEFINED when the user passes none. For login that
+ *   means "show the provider picker" (kimi / openai / anthropic / custom,
+ *   with a method sub-menu where a provider offers several); for
+ *   logout/status the command falls back to "openai". Built-in providers
+ *   ("kimi", "openai") need no config.toml table — login-and-go; "kimi"
+ *   offers its device-code flow or a pasted API key, "anthropic" always
+ *   takes a pasted API key. Any other id is accepted: the ChatGPT
+ *   OAuth flow is provider-id-agnostic, so the resulting entry is stored
+ *   under whatever id is passed (e.g. "chatgpt"), paired with a
+ *   type="responses" provider table.
  * deviceCode: --device-code selects the headless device-code flow, skipping
- *   the interactive method picker. */
+ *   the interactive method picker (a no-op for anthropic — API key only). */
 export interface AuthArgs {
   readonly subcommand: "auth";
   readonly action: "login" | "logout" | "status";
-  readonly providerId: string;
+  readonly providerId?: string;
   readonly deviceCode: boolean;
 }
 
@@ -312,13 +317,15 @@ const parseAuthArgs = (argv: string[]): ParseResult => {
       return { ok: false, exitCode: 1 };
   }
 
-  const providerId = positionals[1] ?? "openai";
+  // providerId stays undefined when omitted: login shows the provider
+  // picker; logout/status fall back to "openai" (see auth_cmd.ts).
+  const providerId = positionals[1];
   return {
     ok: true,
     args: {
       subcommand: "auth",
       action,
-      providerId,
+      ...(providerId !== undefined ? { providerId } : {}),
       deviceCode: parsed["device-code"] === true,
     },
   };
@@ -421,21 +428,35 @@ USAGE
   niuma auth --help
 
 ACTIONS
-  login   Obtain credentials for a provider (default: openai). Without
-          --device-code, it prompts for a sign-in method:
-            1. ChatGPT Pro/Plus (browser)      PKCE + loopback on port 1455.
-            2. ChatGPT Pro/Plus (device code)  for headless machines.
-            3. Manually enter API Key          paste an sk-… key.
-          --device-code skips the prompt and runs the headless device flow.
-          niuma never opens a browser for you: it prints the URL to visit.
-  logout  Drop the provider's entry from auth.json.
+  login   Obtain credentials for a provider. Without a provider argument it
+          asks which service to sign in to:
+            1. Kimi                    second-level method picker:
+                 a. Kimi subscription (device code).
+                 b. Manually enter API Key.
+            2. OpenAI / ChatGPT        second-level method picker:
+                 a. ChatGPT Pro/Plus (browser)      PKCE + loopback on :1455.
+                 b. ChatGPT Pro/Plus (device code)  for headless machines.
+                 c. Manually enter API Key          paste an sk-… key.
+            3. Anthropic               paste an API key.
+            4. Custom provider         prompts for the id, then the OpenAI
+                                       method picker above.
+          \`niuma auth login <id>\` skips the first-level picker and goes
+          straight to that provider's flow. --device-code skips the method
+          picker and runs the headless device flow (the default for kimi on
+          a non-TTY stdin). niuma never opens a browser for you: it prints
+          the URL to visit.
+  logout  Drop the provider's entry from auth.json (default: openai).
   status  Print the provider's credential type (+ expiry for OAuth).
-          Never prints token material.
+          Never prints token material (default: openai).
 
 NOTES
-  The provider argument defaults to 'openai'. Any provider id is accepted for
-  login: the OAuth flow is provider-id-agnostic and stores the entry under the
-  given id (e.g. 'openai' or 'chatgpt'), which must then be paired with a
+  Built-in providers (kimi, openai) are login-and-go — no config.toml
+  changes needed; a same-named [provider.<id>] table overlays the built-in
+  (user fields win). The kimi credential kind picks the endpoint: OAuth →
+  the Kimi Code subscription (api.kimi.com/coding/v1); API key → the Kimi
+  open platform (api.moonshot.cn/v1). Any other id is accepted for login:
+  the ChatGPT OAuth flow is provider-id-agnostic and stores the entry under
+  the given id (e.g. 'chatgpt'), which must then be paired with a
   type="responses" provider table in config.toml. Credentials are stored in
   auth.json (mode 0600), e.g.
     { "openai": { "type": "oauth", "refresh": "...",

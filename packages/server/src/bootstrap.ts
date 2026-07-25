@@ -21,11 +21,16 @@ import {
   ANTHROPIC_DEFAULT_BASE_URL,
   type NiumaConfig,
   niumaPaths,
+  builtinBaseUrlFor,
   ConfigError,
+  defaultModelRef,
+  KIMI_PROVIDER_ID,
   loadMergedConfig,
   loadMergedMcpConfig,
   type McpConfig,
   readAuthFile,
+  refreshKimiTokens,
+  refreshTokens,
   resolveModelRef,
   substituteEnv,
 } from "@niuma/config";
@@ -362,10 +367,14 @@ const thinkingFromModel = (
  * Build the provider adapter from config.toml + auth.json.
  *
  * The adapter is bound to the provider named by `ref` (defaults to the
- * config's top-level `model` reference). Credential lookup is three-way:
- *   1. auth.json[<providerId>] of type "oauth" → Responses adapter with an
- *      injected OAuthTokenSource (oauth credentials only apply to
- *      type="responses" providers; any other type is a ConfigError).
+ * config's top-level `model` reference; when neither is set, the unique
+ * logged-in built-in provider's default model is used — that is what makes
+ * `niuma auth login kimi|openai` work with zero config.toml). Credential
+ * lookup is three-way:
+ *   1. auth.json[<providerId>] of type "oauth" → an adapter with an injected
+ *      OAuthTokenSource (oauth credentials apply to type="responses"
+ *      providers — the ChatGPT lane — and to the built-in Kimi provider's
+ *      type="openai" lane; any other pairing is a ConfigError).
  *   2. auth.json[<providerId>] of type "api" → the api key.
  *   3. provider api_key with {env:VAR} substitution (explicit escape hatch).
  * Missing credentials fail at boot with a pointer to both locations.
@@ -387,44 +396,65 @@ const buildProvider = async (
   authPath: string,
   ref?: string,
 ): Promise<ProviderAdapter> => {
-  const modelRef = ref ?? config.model;
+  const auth = await readAuthFile(authPath);
+  // ref → config.model → the unique logged-in built-in provider's default
+  // (defaultModelRef returns undefined when zero or several built-ins have
+  // credentials, which lands on the error below). The built-in default is
+  // credential-kind aware (Kimi OAuth → subscription model; Kimi API key →
+  // open-platform model).
+  const modelRef = ref ?? config.model ??
+    defaultModelRef((id) => auth[id]);
   if (!modelRef) {
     throw new ConfigError(
-      `config: no default model set. Add e.g.\n  model = "myprovider/my-model"` +
+      `config: no default model set. Run \`niuma auth login <provider>\` for a ` +
+        `built-in provider (kimi, openai), or add e.g.\n  model = "myprovider/my-model"` +
         `\nto ${niumaPaths().configFile}`,
     );
   }
   const resolved = resolveModelRef(config, modelRef);
-  const auth = await readAuthFile(authPath);
   const providerType = resolved.provider.type ?? "openai";
   const entry = auth[resolved.provider.id];
 
-  // OAuth credentials take the responses lane with an injected token source.
-  // They are meaningful ONLY for type="responses" providers — pairing an oauth
-  // entry with a chat-completions or anthropic provider is a configuration
-  // error (those protocols have no ChatGPT-subscription path), caught here so
-  // the user sees a clear message instead of a silently-dropped credential.
+  // OAuth credentials take an adapter with an injected token source. Two
+  // lanes are legal:
+  //   - type="responses" (the ChatGPT-subscription path, incl. the built-in
+  //     openai provider): responses adapter + refreshTokens;
+  //   - the built-in Kimi provider with type="openai" (kimi.com coding
+  //     subscription): chat-completions adapter + refreshKimiTokens.
+  // Any other pairing (e.g. oauth + anthropic, or oauth + a custom
+  // chat-completions provider) is a configuration error, caught here so the
+  // user sees a clear message instead of a silently-dropped credential.
   if (entry?.type === "oauth") {
-    if (providerType !== "responses") {
-      throw new ConfigError(
-        `config: oauth credentials for provider "${resolved.provider.id}" ` +
-          `only apply to type="responses" providers (got type="${providerType}"). ` +
-          `Set [provider.${resolved.provider.id}] type = "responses", or remove ` +
-          `the oauth entry from ${authPath}.`,
-      );
+    const tokenSource = (refresh: typeof refreshTokens) =>
+      makeOAuthTokenSource({
+        authPath,
+        providerId: resolved.provider.id,
+        entry,
+        refresh,
+      });
+    if (providerType === "responses") {
+      return makeResponsesAdapter({
+        baseUrl: resolved.provider.baseUrl,
+        defaultModel: resolved.modelId,
+        auth: { kind: "oauth", tokenSource: tokenSource(refreshTokens) },
+      });
     }
-    return makeResponsesAdapter({
-      baseUrl: resolved.provider.baseUrl,
-      defaultModel: resolved.modelId,
-      auth: {
-        kind: "oauth",
-        tokenSource: makeOAuthTokenSource({
-          authPath,
-          providerId: resolved.provider.id,
-          entry,
-        }),
-      },
-    });
+    if (
+      providerType === "openai" && resolved.provider.id === KIMI_PROVIDER_ID
+    ) {
+      return makeOpenAIAdapter({
+        baseUrl: resolved.provider.baseUrl,
+        defaultModel: resolved.modelId,
+        auth: { kind: "oauth", tokenSource: tokenSource(refreshKimiTokens) },
+      });
+    }
+    throw new ConfigError(
+      `config: oauth credentials for provider "${resolved.provider.id}" ` +
+        `only apply to type="responses" providers or the built-in ` +
+        `"${KIMI_PROVIDER_ID}" provider (got type="${providerType}"). ` +
+        `Fix [provider.${resolved.provider.id}] in config.toml, or remove ` +
+        `the oauth entry from ${authPath}.`,
+    );
   }
 
   const apiKey = entry?.type === "api"
@@ -435,10 +465,9 @@ const buildProvider = async (
   if (!apiKey) {
     throw new ConfigError(
       `config: no credentials for provider "${resolved.provider.id}". ` +
-        `Add an entry to ${authPath}:\n` +
-        `  { "${resolved.provider.id}": { "type": "api", "key": "..." } }\n` +
-        `(or for ChatGPT OAuth: run \`niuma auth login ${resolved.provider.id}\` ` +
-        `and set [provider.${resolved.provider.id}] type = "responses").`,
+        `Run \`niuma auth login ${resolved.provider.id}\`, or add an entry to ` +
+        `${authPath}:\n` +
+        `  { "${resolved.provider.id}": { "type": "api", "key": "..." } }`,
     );
   }
   switch (providerType) {
@@ -453,9 +482,19 @@ const buildProvider = async (
       });
     case "openai":
       return makeOpenAIAdapter({
-        baseUrl: resolved.provider.baseUrl,
-        apiKey,
+        // Credential-kind-dependent endpoint for built-ins: a Kimi API key
+        // targets the open platform (api.moonshot.cn); the subscription
+        // endpoint is the OAuth lane. A user [provider.kimi] base_url
+        // override always wins (builtinBaseUrlFor is the identity for every
+        // other provider).
+        baseUrl: builtinBaseUrlFor(
+          resolved.provider.id,
+          "api",
+          resolved.provider.baseUrl,
+          config.providers[resolved.provider.id]?.baseUrl,
+        ),
         defaultModel: resolved.modelId,
+        auth: { kind: "apiKey", key: apiKey },
       });
     case "responses":
       return makeResponsesAdapter({

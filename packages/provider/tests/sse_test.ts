@@ -5,9 +5,12 @@ import type { ChatRequest, StreamEvent } from "../src/domain.ts";
 import { makeOpenAIAdapter } from "../src/openai.ts";
 import { parseOpenAISSE } from "../src/sse.ts";
 
-const sseBody = (...chunks: ReadonlyArray<Record<string, unknown>>): ReadableStream<Uint8Array> => {
+const sseBody = (
+  ...chunks: ReadonlyArray<Record<string, unknown>>
+): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
-  const text = chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n`).join("") +
+  const text =
+    chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n`).join("") +
     "data: [DONE]\n";
   return new ReadableStream({
     start(controller) {
@@ -21,7 +24,12 @@ const collectSSE = async (
   ...chunks: ReadonlyArray<Record<string, unknown>>
 ): Promise<StreamEvent[]> => {
   const events: StreamEvent[] = [];
-  for await (const event of parseOpenAISSE(sseBody(...chunks), new AbortController().signal)) {
+  for await (
+    const event of parseOpenAISSE(
+      sseBody(...chunks),
+      new AbortController().signal,
+    )
+  ) {
     events.push(event);
   }
   return events;
@@ -62,18 +70,21 @@ Deno.test("parseOpenAISSE maps reasoning token usage", async () => {
 });
 
 Deno.test("messagesToOpenAI emits assistant reasoning_content", () => {
-  assertEquals(messagesToOpenAI([{
-    role: "assistant",
-    content: "answer",
-    reasoningContent: [
-      { text: "rea" },
-      { text: "soning", encrypted: "opaque" },
-    ],
-  }]), [{
-    role: "assistant",
-    content: "answer",
-    reasoning_content: "reasoning",
-  }]);
+  assertEquals(
+    messagesToOpenAI([{
+      role: "assistant",
+      content: "answer",
+      reasoningContent: [
+        { text: "rea" },
+        { text: "soning", encrypted: "opaque" },
+      ],
+    }]),
+    [{
+      role: "assistant",
+      content: "answer",
+      reasoning_content: "reasoning",
+    }],
+  );
 });
 
 Deno.test("OpenAI request body includes reasoning_effort", async () => {
@@ -82,10 +93,12 @@ Deno.test("OpenAI request body includes reasoning_effort", async () => {
   globalThis.fetch = (_input, init) => {
     const raw = (init as RequestInit | undefined)?.body;
     body = JSON.parse(String(raw)) as Record<string, unknown>;
-    return Promise.resolve(new Response("data: [DONE]\n", {
-      status: 200,
-      headers: { "content-type": "text/event-stream" },
-    }));
+    return Promise.resolve(
+      new Response("data: [DONE]\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
   };
 
   try {
@@ -97,8 +110,8 @@ Deno.test("OpenAI request body includes reasoning_effort", async () => {
     };
     const adapter = makeOpenAIAdapter({
       baseUrl: "https://example.test/v1",
-      apiKey: "test-key",
       defaultModel: "test-model",
+      auth: { kind: "apiKey", key: "test-key" },
     });
     await Effect.runPromise(Stream.runCollect(adapter.stream(req)));
   } finally {

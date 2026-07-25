@@ -192,7 +192,7 @@ Deno.test("parseModelRef: provider/model-id, model id may contain slashes", () =
   assertThrows(() => parseModelRef("provider/"), ConfigError);
 });
 
-Deno.test("resolveModelRef: unknown provider names the configured ones", () => {
+Deno.test("resolveModelRef: unknown provider names the available ones", () => {
   const c = parseConfig(`
 [provider.a]
 base_url = "https://a"
@@ -200,7 +200,7 @@ base_url = "https://a"
   assertThrows(
     () => resolveModelRef(c, "b/m"),
     ConfigError,
-    'provider "b" is not configured (configured: a)',
+    'provider "b" is not configured (available: kimi, openai, a)',
   );
 });
 

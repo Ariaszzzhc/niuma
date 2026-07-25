@@ -31,6 +31,7 @@
 
 import { parse as parseToml } from "@std/toml";
 import { dirname, join, resolve } from "@std/path";
+import { BUILTIN_PROVIDERS, resolveProvider } from "./builtin.ts";
 
 const envGet = (name: string): string | undefined => {
   try {
@@ -159,7 +160,10 @@ const optThinkingKeep = (
 ): "all" | "none" | undefined => {
   const v = obj[key];
   if (v === undefined) return undefined;
-  if (typeof v !== "string" || !(THINKING_KEEP_VALUES as readonly string[]).includes(v)) {
+  if (
+    typeof v !== "string" ||
+    !(THINKING_KEEP_VALUES as readonly string[]).includes(v)
+  ) {
     throw new ConfigError(
       `config: ${path}.${key} must be one of ${
         THINKING_KEEP_VALUES.join("|")
@@ -194,11 +198,13 @@ const optProviderType = (
 ): ProviderType | undefined => {
   const v = obj[key];
   if (v === undefined) return undefined;
-  if (typeof v !== "string" || !(PROVIDER_TYPES as readonly string[]).includes(v)) {
+  if (
+    typeof v !== "string" || !(PROVIDER_TYPES as readonly string[]).includes(v)
+  ) {
     throw new ConfigError(
-      `config: ${path}.${key} must be one of ${
-        PROVIDER_TYPES.join("|")
-      }, got ${typeof v === "string" ? `"${v}"` : typeof v}`,
+      `config: ${path}.${key} must be one of ${PROVIDER_TYPES.join("|")}, got ${
+        typeof v === "string" ? `"${v}"` : typeof v
+      }`,
     );
   }
   return v as ProviderType;
@@ -457,20 +463,25 @@ export interface ResolvedModel {
 
 /**
  * Resolve a model reference against the config. The provider must be
- * configured; an undeclared model id gets the default window/output limits
- * (declaring it in the file is how you override those).
+ * configured — either declared in a `[provider.*]` table or built in
+ * (resolveProvider merges the two, user fields win); an undeclared model id
+ * gets the default window/output limits (declaring it in the file is how you
+ * override those).
  */
 export const resolveModelRef = (
   config: NiumaConfig,
   ref: string,
 ): ResolvedModel => {
   const { providerId, modelId } = parseModelRef(ref);
-  const provider = config.providers[providerId];
+  const provider = resolveProvider(config, providerId);
   if (!provider) {
-    const known = Object.keys(config.providers);
+    const known = [
+      ...Object.keys(BUILTIN_PROVIDERS),
+      ...Object.keys(config.providers),
+    ];
     throw new ConfigError(
       `config: provider "${providerId}" is not configured` +
-        (known.length > 0 ? ` (configured: ${known.join(", ")})` : ""),
+        (known.length > 0 ? ` (available: ${known.join(", ")})` : ""),
     );
   }
   // base_url is required for the default openai flavour; anthropic and

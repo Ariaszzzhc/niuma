@@ -106,8 +106,9 @@ export class OAuthError extends Error {
  * Defense-in-depth: the issuer is pinned and reached over TLS, but if an error
  * body ever echoed a request parameter (refresh_token, code_verifier) the cap
  * keeps it out of terminal output / logs. 200 chars is enough to preserve the
- * useful `error`/`error_description` fields codex/opencode surface. */
-const capBody = (text: string): string =>
+ * useful `error`/`error_description` fields codex/opencode surface. Exported
+ * for the sibling kimi_oauth.ts, which shares the same error-message policy. */
+export const capBody = (text: string): string =>
   text.length > 200 ? `${text.slice(0, 200)}…` : text;
 
 export interface TokenResponse {
@@ -140,13 +141,20 @@ const readTokenJson = async (resp: Response): Promise<RawTokens> => {
     );
   }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new OAuthError("token endpoint returned a non-object response", resp.status);
+    throw new OAuthError(
+      "token endpoint returned a non-object response",
+      resp.status,
+    );
   }
   const r = raw as Record<string, unknown>;
   const expiresRaw = r.expires_in;
   return {
-    access_token: typeof r.access_token === "string" ? r.access_token : undefined,
-    refresh_token: typeof r.refresh_token === "string" ? r.refresh_token : undefined,
+    access_token: typeof r.access_token === "string"
+      ? r.access_token
+      : undefined,
+    refresh_token: typeof r.refresh_token === "string"
+      ? r.refresh_token
+      : undefined,
     id_token: typeof r.id_token === "string" ? r.id_token : undefined,
     expires_in: typeof expiresRaw === "number" && Number.isFinite(expiresRaw)
       ? expiresRaw
@@ -194,7 +202,9 @@ export const exchangeCode = async (
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new OAuthError(
-      `token exchange failed: status ${resp.status}${text ? `: ${capBody(text)}` : ""}`,
+      `token exchange failed: status ${resp.status}${
+        text ? `: ${capBody(text)}` : ""
+      }`,
       resp.status,
     );
   }
@@ -229,7 +239,9 @@ export const refreshTokens = async (
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new OAuthError(
-      `token refresh failed: status ${resp.status}${text ? `: ${capBody(text)}` : ""}`,
+      `token refresh failed: status ${resp.status}${
+        text ? `: ${capBody(text)}` : ""
+      }`,
       resp.status,
     );
   }
@@ -270,7 +282,9 @@ export const requestDeviceCode = async (
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new OAuthError(
-      `device code request failed: status ${resp.status}${text ? `: ${capBody(text)}` : ""}`,
+      `device code request failed: status ${resp.status}${
+        text ? `: ${capBody(text)}` : ""
+      }`,
       resp.status,
     );
   }
@@ -294,12 +308,16 @@ export const requestDeviceCode = async (
   const userCode = typeof userCodeRaw === "string" ? userCodeRaw : undefined;
   // codex/opencode receive interval as a string; accept either spelling.
   const intervalRaw = r.interval;
-  const interval = typeof intervalRaw === "number" && Number.isFinite(intervalRaw)
-    ? intervalRaw
-    : typeof intervalRaw === "string" && /^\d+$/.test(intervalRaw.trim())
-    ? parseInt(intervalRaw, 10)
-    : undefined;
-  if (deviceAuthId === undefined || userCode === undefined || interval === undefined) {
+  const interval =
+    typeof intervalRaw === "number" && Number.isFinite(intervalRaw)
+      ? intervalRaw
+      : typeof intervalRaw === "string" && /^\d+$/.test(intervalRaw.trim())
+      ? parseInt(intervalRaw, 10)
+      : undefined;
+  if (
+    deviceAuthId === undefined || userCode === undefined ||
+    interval === undefined
+  ) {
     throw new OAuthError(
       "device code response missing device_auth_id/user_code/interval",
       resp.status,
@@ -309,8 +327,9 @@ export const requestDeviceCode = async (
 };
 
 /** Resolve `ms` from now, clamped to `deadline`. Resolves immediately if the
- * signal is already aborted (the caller's next fetch then surfaces the abort). */
-const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+ * signal is already aborted (the caller's next fetch then surfaces the abort).
+ * Exported for the sibling kimi_oauth.ts poll loop. */
+export const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
   new Promise((resolve) => {
     if (signal?.aborted || ms <= 0) return resolve();
     const t = setTimeout(resolve, ms);
@@ -344,7 +363,10 @@ export const pollDeviceAuth = async (
     const resp = await fetchFn(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_auth_id: deviceAuthId, user_code: userCode }),
+      body: JSON.stringify({
+        device_auth_id: deviceAuthId,
+        user_code: userCode,
+      }),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     });
     if (resp.ok) {
@@ -382,14 +404,19 @@ export const pollDeviceAuth = async (
       // Still pending — consume the body so the connection can be reused.
       await resp.text().catch(() => {});
       if (Date.now() >= deadline) {
-        throw new OAuthError("device auth timed out after 15 minutes", resp.status);
+        throw new OAuthError(
+          "device auth timed out after 15 minutes",
+          resp.status,
+        );
       }
       await sleep(Math.min(intervalMs, deadline - Date.now()), opts.signal);
       continue;
     }
     const text = await resp.text().catch(() => "");
     throw new OAuthError(
-      `device auth poll failed: status ${resp.status}${text ? `: ${capBody(text)}` : ""}`,
+      `device auth poll failed: status ${resp.status}${
+        text ? `: ${capBody(text)}` : ""
+      }`,
       resp.status,
     );
   }
@@ -398,7 +425,9 @@ export const pollDeviceAuth = async (
 export interface IdTokenClaims {
   readonly chatgpt_account_id?: string;
   readonly organizations?: ReadonlyArray<{ readonly id: string }>;
-  readonly "https://api.openai.com/auth"?: { readonly chatgpt_account_id?: string };
+  readonly "https://api.openai.com/auth"?: {
+    readonly chatgpt_account_id?: string;
+  };
 }
 
 /** Decode a JWT's payload to a raw record (no signature verification — these
@@ -410,7 +439,8 @@ const decodeJwt = (token: string): Record<string, unknown> | undefined => {
   try {
     const json = new TextDecoder().decode(decodeBase64Url(parts[1]!));
     const parsed: unknown = JSON.parse(json);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    return typeof parsed === "object" && parsed !== null &&
+        !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : undefined;
   } catch {
@@ -456,7 +486,9 @@ const jwtExpMs = (token: string): number | undefined => {
   const raw = decodeJwt(token);
   if (!raw) return undefined;
   const exp = raw.exp;
-  return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 : undefined;
+  return typeof exp === "number" && Number.isFinite(exp)
+    ? exp * 1000
+    : undefined;
 };
 
 /** Account-id precedence within one token's claims: namespaced auth claim
