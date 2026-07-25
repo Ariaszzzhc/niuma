@@ -43,6 +43,17 @@ describe("reduce_event: session + user", () => {
     assertStrictEquals(m.messages[0].role, "user");
     assertStrictEquals(m.messages[0].text, "hello world");
   });
+
+  it("user.message prefers sourceText (slash command) over expanded parts", () => {
+    const m = reduceEventSequence([
+      ev("user.message", {
+        parts: [{ type: "text", text: "Review src/foo.ts carefully." }],
+        sourceText: "/review src/foo.ts",
+      }),
+    ]);
+    assertStrictEquals(m.messages.length, 1);
+    assertStrictEquals(m.messages[0].text, "/review src/foo.ts");
+  });
 });
 
 describe("reduce_event: streaming text accumulation", () => {
@@ -314,6 +325,14 @@ describe("reduce_event: notices + turn state", () => {
     assertStrictEquals(m.compactionCount, 1);
     assertStrictEquals(m.notices.length, 1);
     assertStrictEquals(m.notices[0].kind, "compaction");
+    assertStrictEquals(m.notices[0].text, "context compacted (llm)");
+  });
+
+  it("compaction.performed without a mode stays generic and hides the summary", () => {
+    const m = reduceEventSequence([
+      ev("compaction.performed", { summary: "SECRET SUMMARY" }),
+    ]);
+    assertStrictEquals(m.notices[0].text, "context compacted");
   });
 
   it("error.occurred records the message and a notice", () => {

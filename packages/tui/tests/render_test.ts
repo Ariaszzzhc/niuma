@@ -131,6 +131,27 @@ Deno.test("transcript: thinking renders with a ⋮ gutter, dim + italic", () => 
   assertEquals(colorEq(textSpan.style.fg, THEME.textDim), true);
 });
 
+Deno.test("transcript: notice renders dim with a ─ gutter; error uses error colour", () => {
+  const state: TranscriptState = {
+    messages: [
+      { role: "notice", text: "model: prov/m" },
+      { role: "notice", text: "boom", kind: "error" },
+    ],
+    scrollOffset: 0,
+    followTail: true,
+  };
+  const lines = renderTranscriptContent(state, 40, THEME);
+  // notice line, blank separator, error line
+  assertEquals(lines.length, 3);
+  assertEquals(lineText(lines[0]).includes("─ model: prov/m"), true);
+  const infoText = lines[0].spans[lines[0].spans.length - 1];
+  assertEquals(infoText.style.dim, true);
+  assertEquals(colorEq(infoText.style.fg, THEME.textDim), true);
+  assertEquals(lineText(lines[2]).includes("boom"), true);
+  const errText = lines[2].spans[lines[2].spans.length - 1];
+  assertEquals(colorEq(errText.style.fg, THEME.error), true);
+});
+
 Deno.test("transcript: thinking wraps with a hanging indent", () => {
   const long = Array.from({ length: 30 }, (_, i) => `w${i}`).join(" ");
   const state: TranscriptState = {

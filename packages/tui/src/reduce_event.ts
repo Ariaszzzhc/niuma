@@ -142,6 +142,11 @@ export const initialModelState = (): TuiModelState => ({
 let idCounter = 0;
 const nextId = (prefix: string): string => `${prefix}${++idCounter}`;
 
+/** Shared id source for app.ts's locally-produced notices — using the same
+ * counter as SSE-reduced messages/notices lets the view merge them back into
+ * chronological order by id. */
+export const nextEventId = nextId;
+
 /** Reset the id counter (test helper; not for app use). */
 export const _resetIds = (): void => {
   idCounter = 0;
@@ -315,7 +320,9 @@ export const reduceEvent = (
 
     // -- conversation ------------------------------------------------------
     case "user.message": {
-      const text = joinTextParts(d["parts"]);
+      // A slash-command-expanded message carries the typed input in
+      // sourceText — show that, not the expanded template blob.
+      const text = asString(d["sourceText"]) ?? joinTextParts(d["parts"]);
       return {
         ...model,
         messages: [
@@ -470,15 +477,25 @@ export const reduceEvent = (
       return { ...model, pendingApproval: null };
 
     // -- compaction --------------------------------------------------------
-    case "compaction.performed":
+    case "compaction.performed": {
+      // Surface the mode ("llm" / "template"); data.summary is projection
+      // material, never display text.
+      const mode = asString(d["mode"]);
       return {
         ...model,
         compactionCount: model.compactionCount + 1,
         notices: [
           ...model.notices,
-          { id: nextId("n"), kind: "compaction", text: "context compacted" },
+          {
+            id: nextId("n"),
+            kind: "compaction",
+            text: mode !== null
+              ? `context compacted (${mode})`
+              : "context compacted",
+          },
         ],
       };
+    }
 
     // -- errors / turn end -------------------------------------------------
     case "error.occurred": {

@@ -126,6 +126,26 @@ export const editorIsEmpty = (state: EditorState): boolean =>
 export const editorText = (state: EditorState): string =>
   state.lines.join("\n");
 
+/**
+ * Replace the buffer with `text`, cursor to the very end. Not an edit the
+ * reducer produces — this is for external seeds (the palette filling in a
+ * custom slash command for the user to complete), so it leaves history and
+ * the undo stack alone.
+ */
+export const setEditorText = (
+  state: EditorState,
+  text: string,
+): EditorState => {
+  const lines = text.split("\n");
+  return {
+    ...state,
+    lines,
+    cursor: { row: lines.length - 1, col: lines[lines.length - 1].length },
+    historyCursor: null,
+    savedDraft: "",
+  };
+};
+
 // ---------------------------------------------------------------------------
 // Internal helpers (pure)
 // ---------------------------------------------------------------------------
@@ -630,8 +650,8 @@ export const renderEditor = (
 ): StyledLine[] => {
   const boxW = Math.max(4, width);
   const innerW = Math.max(0, boxW - 4); // "│ " + content + " │"
-  // Focus feedback: the border switches to the dedicated focused colour so
-  // Tab-ing focus between editor and transcript is visible at a glance.
+  // Focus feedback: the border switches to the dedicated focused colour while
+  // the editor owns the keyboard (in the app it always does).
   const borderFg = focused ? theme.borderFocused : theme.border;
   const lines = state.lines.length > 0 ? state.lines : [""];
   const out: StyledLine[] = [];

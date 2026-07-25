@@ -1,10 +1,17 @@
 // ===========================================================================
 // @niuma/tui — command palette overlay (INPUT half)
 // ---------------------------------------------------------------------------
-// ctrl+p opens a centered command palette that fuzzy-filters a small fixed
-// command set, navigates with up/down (or ctrl+p/ctrl+n), executes on enter
-// and closes on esc. `paletteReducer` is pure and returns the next state plus
-// an optional `PaletteAction` the app acts on (`execute` / `close`).
+// ctrl+p opens a centered command palette that fuzzy-filters the palette
+// items, navigates with up/down (or ctrl+p/ctrl+n), executes on enter and
+// closes on esc. `paletteReducer` is pure and returns the next state plus an
+// optional `PaletteAction` the app acts on (`execute` / `close`).
+//
+// The item list is runtime data, not a compile-time constant: the built-in
+// UI commands (derived from BUILTIN_COMMANDS in ../commands.ts — no-arg ones
+// execute locally, arg-taking ones seed the editor with `/name `) plus the
+// session's custom slash commands (commands/*.md templates the server
+// expands; the palette seeds the editor with `/name ` so the user can
+// supply arguments). `paletteItems()` builds the combined list.
 //
 // Rendering mirrors the approval overlay: `renderPalette` returns the modal
 // lines + (top, left); the app composites them over a dimmed base scene.
@@ -21,12 +28,59 @@ import {
   truncateToWidth,
 } from "@niuma/tuikit";
 
+import { BUILTIN_COMMANDS } from "../commands.ts";
+
 // ---------------------------------------------------------------------------
 // Types + constants
 // ---------------------------------------------------------------------------
 
-export const PALETTE_COMMANDS = ["/model", "/clear", "/quit", "/help"] as const;
-export type PaletteCommand = (typeof PALETTE_COMMANDS)[number];
+/** One selectable palette row. `name` carries the leading "/". */
+export interface PaletteItem {
+  readonly name: string;
+  readonly description?: string;
+  /** Built-in UI commands execute locally; custom commands seed the editor
+   * with `/name ` for the user to complete and submit. */
+  readonly builtin: boolean;
+  /** Built-ins that take an argument seed the editor (like custom commands)
+   * instead of executing on the spot. */
+  readonly takesArg?: boolean;
+}
+
+/** Minimal shape the palette needs of a server-listed custom command. */
+export interface PaletteCommandInfo {
+  readonly name: string;
+  readonly description?: string;
+  readonly argumentHint?: string;
+}
+
+export const BUILTIN_PALETTE_ITEMS: readonly PaletteItem[] = [
+  ...BUILTIN_COMMANDS.map((c) => ({
+    name: `/${c.name}`,
+    description: c.description,
+    builtin: true,
+    takesArg: c.takesArg,
+  })),
+  // Alias row so "quit" is reachable from the palette too (resolves to /exit
+  // in the command parser).
+  {
+    name: "/quit",
+    description: "Quit niuma (alias for /exit)",
+    builtin: true,
+    takesArg: false,
+  },
+];
+
+/** Built-ins first, then the session's custom slash commands. */
+export const paletteItems = (
+  custom: readonly PaletteCommandInfo[],
+): readonly PaletteItem[] => [
+  ...BUILTIN_PALETTE_ITEMS,
+  ...custom.map((c) => ({
+    name: `/${c.name}`,
+    builtin: false,
+    ...(c.description !== undefined ? { description: c.description } : {}),
+  })),
+];
 
 export interface PaletteState {
   readonly open: boolean;
@@ -38,7 +92,7 @@ export interface PaletteState {
 }
 
 export type PaletteAction =
-  | { readonly type: "execute"; readonly command: PaletteCommand }
+  | { readonly type: "execute"; readonly item: PaletteItem }
   | { readonly type: "close" };
 
 /** Colors the palette needs. Decoupled from the A-side `Theme`. */
@@ -62,22 +116,25 @@ export const initialPaletteState: PaletteState = {
 // ---------------------------------------------------------------------------
 
 interface Scored {
-  readonly cmd: PaletteCommand;
+  readonly item: PaletteItem;
   readonly score: number;
 }
 
-/** Rank commands against `query` (subsequence match, prefix preferred). */
-const fuzzyFilter = (query: string): readonly Scored[] => {
+/** Rank items against `query` (subsequence match, prefix preferred). */
+const fuzzyFilter = (
+  query: string,
+  items: readonly PaletteItem[],
+): readonly Scored[] => {
   const q = query.toLowerCase().trim();
   const out: Scored[] = [];
-  for (const cmd of PALETTE_COMMANDS) {
-    const c = cmd.toLowerCase();
+  for (const item of items) {
+    const c = item.name.toLowerCase();
     if (q === "") {
-      out.push({ cmd, score: 0 });
+      out.push({ item, score: 0 });
       continue;
     }
     if (c.startsWith(q)) {
-      out.push({ cmd, score: 1000 - c.length });
+      out.push({ item, score: 1000 - c.length });
       continue;
     }
     // subsequence match with contiguous-run bonus
@@ -93,16 +150,19 @@ const fuzzyFilter = (query: string): readonly Scored[] => {
         contig = 0;
       }
     }
-    if (qi === q.length) out.push({ cmd, score: 10 + maxContig });
+    if (qi === q.length) out.push({ item, score: 10 + maxContig });
   }
-  out.sort((a, b) => b.score - a.score || a.cmd.localeCompare(b.cmd));
+  out.sort((a, b) =>
+    b.score - a.score || a.item.name.localeCompare(b.item.name)
+  );
   return out;
 };
 
-/** The filtered command list for a state (what the renderer lists). */
+/** The filtered item list for a state (what the renderer lists). */
 export const paletteFiltered = (
   state: PaletteState,
-): readonly PaletteCommand[] => fuzzyFilter(state.query).map((s) => s.cmd);
+  items: readonly PaletteItem[],
+): readonly PaletteItem[] => fuzzyFilter(state.query, items).map((s) => s.item);
 
 const clamp = (n: number, lo: number, hi: number): number =>
   n < lo ? lo : n > hi ? hi : n;
@@ -129,10 +189,13 @@ export const closePalette = (state: PaletteState): PaletteState => ({
 /**
  * Pure palette reducer. ctrl+p toggles open / moves up once open; ctrl+n moves
  * down. All other events are ignored when closed so the editor keeps working.
+ * `items` is the runtime item list (built-ins + custom commands) built once
+ * by the app.
  */
 export const paletteReducer = (
   state: PaletteState,
   ev: InputEvent,
+  items: readonly PaletteItem[],
 ): readonly [PaletteState, PaletteAction?] => {
   // ctrl+p opens the palette from anywhere.
   if (!state.open) {
@@ -146,8 +209,8 @@ export const paletteReducer = (
   if (ev.kind === "esc") return [closePalette(state), { type: "close" }];
 
   if (ev.kind === "text") {
-    if (matchesKey(ev, "ctrl+p")) return [move(state, -1), undefined];
-    if (matchesKey(ev, "ctrl+n")) return [move(state, 1), undefined];
+    if (matchesKey(ev, "ctrl+p")) return [move(state, items, -1), undefined];
+    if (matchesKey(ev, "ctrl+n")) return [move(state, items, 1), undefined];
     if (matchesKey(ev, "ctrl+c")) {
       return [closePalette(state), { type: "close" }];
     }
@@ -166,18 +229,18 @@ export const paletteReducer = (
   // named keys
   switch (ev.key) {
     case "enter": {
-      const filtered = paletteFiltered(state);
-      const cmd = filtered[clamp(state.selected, 0, filtered.length - 1)];
-      if (!cmd) return [closePalette(state), { type: "close" }];
+      const filtered = paletteFiltered(state, items);
+      const item = filtered[clamp(state.selected, 0, filtered.length - 1)];
+      if (!item) return [closePalette(state), { type: "close" }];
       return [{ ...closePalette(state), selected: 0 }, {
         type: "execute",
-        command: cmd,
+        item,
       }];
     }
     case "up":
-      return [move(state, -1), undefined];
+      return [move(state, items, -1), undefined];
     case "down":
-      return [move(state, 1), undefined];
+      return [move(state, items, 1), undefined];
     case "left":
       return [{
         ...state,
@@ -209,15 +272,19 @@ export const paletteReducer = (
     }
     case "tab": {
       // tab cycles the selection like many palettes do.
-      return [move(state, 1), undefined];
+      return [move(state, items, 1), undefined];
     }
     default:
       return [state, undefined];
   }
 };
 
-const move = (state: PaletteState, delta: number): PaletteState => {
-  const len = paletteFiltered(state).length;
+const move = (
+  state: PaletteState,
+  items: readonly PaletteItem[],
+  delta: number,
+): PaletteState => {
+  const len = paletteFiltered(state, items).length;
   if (len === 0) return state;
   const next = (state.selected + delta + len) % len;
   return { ...state, selected: next };
@@ -267,20 +334,26 @@ export interface RenderedOverlay {
 
 /**
  * Render the palette modal: an input row (❯ query with a block cursor) on top,
- * the filtered commands below with the selection reversed. Returns the lines
- * and the (top, left) where the app stamps them.
+ * the filtered items below (name + muted description, selection reversed).
+ * Returns the lines and the (top, left) where the app stamps them.
  */
 export const renderPalette = (
   state: PaletteState,
+  items: readonly PaletteItem[],
   screenW: number,
   screenH: number,
   theme: PaletteTheme,
 ): RenderedOverlay => {
-  const filtered = paletteFiltered(state);
+  const filtered = paletteFiltered(state, items);
   const maxBoxW = Math.max(24, screenW - 2);
   const minBoxW = 28;
-  const longest = PALETTE_COMMANDS.reduce(
-    (m, c) => Math.max(m, stringWidth(c)),
+  const longest = items.reduce(
+    (m, c) =>
+      Math.max(
+        m,
+        stringWidth(c.name) +
+          (c.description !== undefined ? stringWidth(c.description) + 2 : 0),
+      ),
     0,
   );
   const queryW = stringWidth(PROMPT + state.query);
@@ -333,20 +406,36 @@ export const renderPalette = (
     lines.push({ spans });
   }
 
-  // command rows
+  // item rows: name left, description right-padded after it (muted)
   for (let i = 0; i < filtered.length; i++) {
-    const cmd = filtered[i];
+    const item = filtered[i];
     const selected = i === state.selected;
-    const label = `  ${cmd}`;
-    const shown = truncateToWidth(label, innerW);
-    const pad = innerW - stringWidth(shown);
+    const name = `  ${item.name}`;
+    const desc = item.description ?? "";
+    const nameW = stringWidth(name);
+    const descW = stringWidth(desc);
+    const gap = 2;
     const spans: StyledSpan[] = [span(`${VBAR} `, theme.border)];
     if (selected) {
-      spans.push(span(shown, theme.accent, { reverse: true }));
+      const label = truncateToWidth(
+        desc === "" ? name : `${name}${repeat(" ", gap)}${desc}`,
+        innerW,
+      );
+      spans.push(span(label, theme.accent, { reverse: true }));
+      const pad = innerW - stringWidth(label);
+      if (pad > 0) {
+        spans.push(span(repeat(" ", pad), theme.accent, { reverse: true }));
+      }
     } else {
-      spans.push(span(shown, theme.text));
+      spans.push(span(truncateToWidth(name, innerW), theme.text));
+      if (desc !== "" && nameW + gap + descW <= innerW) {
+        spans.push(blank(repeat(" ", innerW - nameW - descW)));
+        spans.push(span(desc, theme.muted, { dim: true }));
+      } else {
+        const pad = innerW - Math.min(nameW, innerW);
+        if (pad > 0) spans.push(blank(repeat(" ", pad)));
+      }
     }
-    if (!selected && pad > 0) spans.push(blank(repeat(" ", pad)));
     spans.push(span(` ${VBAR}`, theme.border));
     lines.push({ spans });
   }

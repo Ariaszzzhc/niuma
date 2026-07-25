@@ -1,10 +1,11 @@
 // ===========================================================================
 // @niuma/tui — the TEA Program (app.ts, INPUT/ORCHESTRATION half)
 // ---------------------------------------------------------------------------
-// Wires the input components (editor / palette / approval) and the SSE reducer
-// (`reduce_event.ts`) into one `Program<AppModel, Msg>` for `@niuma/tuikit`'s
-// `run`. Owns the full-screen layout (transcript / statusline / editor) and
-// overlays the palette + approval modal on a dimmed base scene.
+// Wires the input components (editor / palette / approval / completion menu)
+// and the SSE reducer (`reduce_event.ts`) into one `Program<AppModel, Msg>`
+// for `@niuma/tuikit`'s `run`. Owns the full-screen layout (transcript /
+// statusline / editor), stamps the slash-command completion menu above the
+// editor, and overlays the palette + approval modal on a dimmed base scene.
 //
 // INTERLOCK (A-side, owned by a parallel agent — imported, not stubbed):
 //   - renderTranscript(state: TranscriptState, w, h, theme)       [transcript.ts]
@@ -37,8 +38,10 @@ import {
   createEditorState,
   editorIsEmpty,
   editorReducer,
+  editorText,
   type EditorState,
   renderEditor,
+  setEditorText,
 } from "./components/editor.ts";
 import {
   APPROVAL_OPTIONS,
@@ -50,13 +53,17 @@ import {
 import {
   closePalette,
   initialPaletteState,
+  type PaletteItem,
+  paletteItems,
   paletteReducer,
   type PaletteState,
   renderPalette,
 } from "./components/palette.ts";
 import {
   initialModelState,
+  nextEventId,
   reduceEvent,
+  reduceEventSequence,
   type SseEvent,
   type TuiToolCall,
 } from "./reduce_event.ts";
@@ -65,6 +72,21 @@ import {
   parseSseStream,
   type TuiClient,
 } from "./client.ts";
+import {
+  type CompletionCandidate,
+  formatSessionList,
+  helpLines,
+  parseBuiltinCommand,
+  resolveSessionId,
+  slashCommandCandidates,
+} from "./commands.ts";
+import {
+  type CompletionState,
+  initialCompletionState,
+  moveCompletion,
+  renderCompletionMenu,
+} from "./components/completion.ts";
+import type { RecordedEvent, SessionInfo } from "@niuma/schema";
 
 // -- A-side view layer (parallel agent) --------------------------------------
 // Imported by signature; shapes reconciled against the landed modules.
@@ -131,6 +153,50 @@ type GitTickMsg = { readonly type: "tuikit:git-tick"; readonly n: number };
 type GitMsg = { readonly type: "tui:git"; readonly status: GitStatus | null };
 type QuitMsg = { readonly type: "tui:quit" };
 
+/** Async outcome of a built-in slash command, delivered back into update.
+ *  The Cmd performs the client call; the reducer applies state + notices so
+ *  the whole dispatch stays testable through `update`. */
+type CommandOutcome =
+  | {
+    readonly kind: "model";
+    readonly ok: boolean;
+    readonly ref: string;
+    readonly model?: string;
+    readonly contextWindow?: number;
+    readonly error?: string;
+  }
+  | {
+    readonly kind: "effort";
+    readonly ok: boolean;
+    readonly ref: string;
+    readonly effort?: string;
+    readonly error?: string;
+  }
+  | {
+    readonly kind: "compact";
+    readonly ok: boolean;
+    readonly code?: string;
+    readonly error?: string;
+  }
+  | { readonly kind: "clear"; readonly ok: boolean; readonly error?: string }
+  | {
+    readonly kind: "sessions";
+    readonly ok: boolean;
+    readonly sessions?: readonly SessionInfo[];
+    readonly error?: string;
+  }
+  | {
+    readonly kind: "resume";
+    readonly ok: boolean;
+    readonly info?: SessionInfo;
+    readonly history?: ReadonlyArray<RecordedEvent>;
+    readonly error?: string;
+  };
+type CommandResultMsg = {
+  readonly type: "tui:command";
+  readonly outcome: CommandOutcome;
+};
+
 type Msg =
   | LoopMsg
   | SseMsg
@@ -139,18 +205,19 @@ type Msg =
   | InterruptDoneMsg
   | GitTickMsg
   | GitMsg
-  | QuitMsg;
+  | QuitMsg
+  | CommandResultMsg;
 
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
 
-type Focus = "editor" | "transcript";
-
 interface AppModel {
   readonly state: ReturnType<typeof initialModelState>;
   readonly editor: EditorState;
   readonly palette: PaletteState;
+  /** Slash-command completion popup state (selection + esc dismissal). */
+  readonly completion: CompletionState;
   readonly approval: ApprovalView | null;
   readonly spinnerFrame: number;
   /** Git state for the workspace, refreshed by a periodic probe Cmd. */
@@ -163,9 +230,11 @@ interface AppModel {
    * the authoritative flag (not re-derived from the offset) so an incoming SSE
    * event never re-pins a view the user scrolled up. */
   readonly followTail: boolean;
-  readonly focus: Focus;
   readonly quitting: boolean;
   readonly lastCtrlC: number;
+  /** Thinking effort set via /effort (TUI-local mirror of the server-side
+   * setting). undefined = the model's own default; reset on session switch. */
+  readonly effort: string | undefined;
   readonly width: number;
   readonly height: number;
 }
@@ -193,19 +262,23 @@ export interface AppDeps {
 export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
   const { client, theme } = deps;
   const colors = themeColors(theme);
+  // Built-in UI commands + this session's custom slash commands (from the
+  // session-create response); fixed for the app's lifetime.
+  const paletteItemList = paletteItems(client.commands);
 
   const initialModel: AppModel = {
     state: initialModelState(),
     editor: createEditorState(),
     palette: initialPaletteState,
+    completion: initialCompletionState,
     approval: null,
     spinnerFrame: 0,
     gitStatus: null,
     transcriptScroll: 0,
     followTail: true,
-    focus: "editor",
     quitting: false,
     lastCtrlC: 0,
+    effort: undefined,
     width: deps.size.cols,
     height: deps.size.rows,
   };
@@ -226,43 +299,98 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     (n) => ({ type: "tuikit:git-tick", n }) as Msg,
   );
 
+  // SSE pump with session-switch support: tuikit calls `subscriptions()` once,
+  // so the Sub itself watches `client.streamVersion` (bumped by newSession /
+  // resume — the /clear and /resume commands) and swaps pumps when it changes.
+  // Each pump owns an explicit reader so teardown cancels the underlying fetch
+  // body (a flag-only cancel would leave the old connection parked on a read
+  // until the next server frame).
   const sseSub: Sub<Msg> = {
     subscribe: (emit) => {
-      let cancelled = false;
-      (async () => {
-        try {
-          for await (const frame of parseSseStream(client.eventsStream)) {
-            if (cancelled) break;
-            if (frame.event === "ping") continue;
-            if (frame.data.length === 0) continue;
-            let payload: { type?: string; data?: Record<string, unknown> };
-            try {
-              payload = JSON.parse(frame.data);
-            } catch {
-              continue;
+      let disposed = false;
+      let pumpVersion = -1;
+      let cancelPump: (() => void) | null = null;
+
+      const startPump = (): void => {
+        pumpVersion = client.streamVersion;
+        const reader = client.eventsStream.getReader();
+        // Bridge so parseSseStream can lock its own reader while WE keep the
+        // real one for cancellation.
+        const bridge = new ReadableStream<Uint8Array>({
+          pull: async (controller) => {
+            const { value, done } = await reader.read();
+            if (done) controller.close();
+            else if (value !== undefined) controller.enqueue(value);
+          },
+          cancel: (reason) => reader.cancel(reason),
+        });
+        let cancelled = false;
+        (async () => {
+          try {
+            for await (const frame of parseSseStream(bridge)) {
+              if (cancelled) break;
+              if (frame.event === "ping") continue;
+              if (frame.data.length === 0) continue;
+              let payload: { type?: string; data?: Record<string, unknown> };
+              try {
+                payload = JSON.parse(frame.data);
+              } catch {
+                continue;
+              }
+              const event: SseEvent = {
+                type: payload.type ?? frame.event ?? "",
+                data: payload.data ?? {},
+              };
+              emit({ type: "tui:sse", event });
             }
-            const event: SseEvent = {
-              type: payload.type ?? frame.event ?? "",
-              data: payload.data ?? {},
-            };
-            emit({ type: "tui:sse", event });
+          } catch {
+            // stream closed / errored — the turn-aborted path handles UI.
           }
-        } catch {
-          // stream closed / errored — the turn-aborted path handles UI.
+        })();
+        cancelPump = () => {
+          cancelled = true;
+          void reader.cancel().catch(() => {});
+        };
+      };
+
+      startPump();
+      const poll = setInterval(() => {
+        if (disposed) return;
+        if (client.streamVersion !== pumpVersion) {
+          cancelPump?.();
+          startPump();
         }
-      })();
+      }, 100);
+
       return () => {
-        cancelled = true;
+        disposed = true;
+        clearInterval(poll);
+        cancelPump?.();
       };
     },
   };
 
   // -- helpers ------------------------------------------------------------
 
+  // Local notices share reduce_event's id counter so the view can merge them
+  // with SSE-produced messages/notices back into chronological order.
   const notice = (text: string, kind: "info" | "error" = "info") => ({
-    id: `n${Date.now()}${Math.random()}`,
+    id: nextEventId("n"),
     kind,
     text,
+  });
+
+  /** Append a notice to the model's state (command feedback channel). */
+  const withNotice = (
+    model: AppModel,
+    text: string,
+    kind: "info" | "error" = "info",
+  ): AppModel => ({
+    ...model,
+    state: {
+      ...model.state,
+      notices: [...model.state.notices, notice(text, kind)],
+    },
   });
 
   /** Map our TuiToolCall to the A-side ToolCallView (structural interlock).
@@ -315,21 +443,41 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
    * They are passed through verbatim — never re-derived from the offset — so an
    * incoming SSE event while the user is scrolled up cannot re-pin the view.
    *
-   * INTERLEAVING NOTE: reduce_event keeps user/assistant text and tool calls
-   * in separate arrays, so here we append tool calls after the text messages
-   * and the live streaming text last. Perfect message/tool interleaving would
-   * need a single ordered timeline in reduce_event (future refinement).
+   * INTERLEAVING NOTE: messages and notices are merged chronologically via
+   * the shared id counter (see below); tool calls still live in a separate
+   * array and are appended after the text/notice timeline, and the live
+   * streaming text goes last. Perfect message/tool interleaving would need
+   * a single ordered timeline in reduce_event (future refinement).
    */
   const buildTranscriptMessages = (model: AppModel): ChatMessage[] => {
-    const baseMsgs: ChatMessage[] = model.state.messages.map((m) =>
-      m.role === "user"
-        ? { role: "user", text: m.text }
-        : { role: "assistant", text: m.text, thinking: m.thinking }
-    );
+    // Messages and notices share reduce_event's id counter, so the numeric
+    // id suffix is a total chronological order across both channels — merge
+    // by it instead of appending notices at the end.
+    const seqOf = (id: string): number => {
+      const n = Number(id.replace(/^[^\d]+/, ""));
+      return Number.isFinite(n) ? n : 0;
+    };
+    const timed: Array<{ seq: number; msg: ChatMessage }> = [
+      ...model.state.messages.map((m) => ({
+        seq: seqOf(m.id),
+        msg: m.role === "user"
+          ? { role: "user", text: m.text } as ChatMessage
+          : {
+            role: "assistant",
+            text: m.text,
+            thinking: m.thinking,
+          } as ChatMessage,
+      })),
+      ...model.state.notices.map((n) => ({
+        seq: seqOf(n.id),
+        msg: { role: "notice", text: n.text, kind: n.kind } as ChatMessage,
+      })),
+    ];
+    timed.sort((a, b) => a.seq - b.seq);
     const toolMsgs: ChatMessage[] = model.state.toolCalls.map(
       (c): ChatMessage => ({ role: "tool", call: toToolCallView(c) }),
     );
-    let messages: ChatMessage[] = [...baseMsgs, ...toolMsgs];
+    let messages: ChatMessage[] = [...timed.map((t) => t.msg), ...toolMsgs];
     const streaming = model.state.streaming;
     if (
       streaming && (streaming.text.length > 0 || streaming.thinking.length > 0)
@@ -465,17 +613,88 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       return [model]; // swallow everything else while the modal is up
     }
 
-    // 2) palette gets the next crack (opens on ctrl+p, owns input when open)
-    const [paletteNext, paletteAction] = paletteReducer(model.palette, event);
-    if (paletteNext.open || paletteAction !== undefined) {
+    // 2) palette: when OPEN it owns input (the completion menu is derived
+    //    from the editor buffer, which the palette freezes, so the two never
+    //    compete). The closed-palette ctrl+p open is handled at 4), AFTER the
+    //    completion menu — a live menu gets ctrl+p first (menu navigation).
+    if (model.palette.open) {
+      const [paletteNext, paletteAction] = paletteReducer(
+        model.palette,
+        event,
+        paletteItemList,
+      );
       let m: AppModel = { ...model, palette: paletteNext };
       if (paletteAction?.type === "execute") {
-        m = runPaletteCommand(m, paletteAction.command);
+        const [next, ...cmds] = runPaletteCommand(m, paletteAction.item);
+        m = next;
+        return [m, ...cmds];
       }
       return [m];
     }
 
-    // 3) ctrl+d: quit when the editor is empty (readline-style EOF), with the
+    // 3) completion menu: auto-pops on a `/partial` token. Navigation keys
+    //    (up/down + ctrl+p/ctrl+n) move the selection; tab accepts (fills
+    //    `/name `); enter accepts AND submits; esc dismisses the menu for the
+    //    current token (buffer edits re-arm it). Anything else falls through
+    //    to the normal pipeline — text edits reach the editor at 8), ctrl+c
+    //    keeps its global meaning at 5).
+    const menu = completionMenu(model);
+    if (menu !== null) {
+      if (event.kind === "key") {
+        if (event.key === "up" || event.key === "down") {
+          return [{
+            ...model,
+            completion: moveCompletion(
+              model.completion,
+              menu.items.length,
+              event.key === "up" ? -1 : 1,
+            ),
+          }];
+        }
+        if (event.key === "tab") return acceptCompletion(model, menu, false);
+        if (event.key === "enter") return acceptCompletion(model, menu, true);
+      }
+      if (event.kind === "text") {
+        if (matchesKey(event, "ctrl+p")) {
+          return [{
+            ...model,
+            completion: moveCompletion(model.completion, menu.items.length, -1),
+          }];
+        }
+        if (matchesKey(event, "ctrl+n")) {
+          return [{
+            ...model,
+            completion: moveCompletion(model.completion, menu.items.length, 1),
+          }];
+        }
+      }
+      if (event.kind === "esc") {
+        return [{
+          ...model,
+          completion: { ...model.completion, dismissed: true },
+        }];
+      }
+    }
+
+    // 4) closed palette: ctrl+p opens it (only reached with no live menu).
+    {
+      const [paletteNext, paletteAction] = paletteReducer(
+        model.palette,
+        event,
+        paletteItemList,
+      );
+      if (paletteNext.open || paletteAction !== undefined) {
+        let m: AppModel = { ...model, palette: paletteNext };
+        if (paletteAction?.type === "execute") {
+          const [next, ...cmds] = runPaletteCommand(m, paletteAction.item);
+          m = next;
+          return [m, ...cmds];
+        }
+        return [m];
+      }
+    }
+
+    // 5) ctrl+d: quit when the editor is empty (readline-style EOF), with the
     //    same double-press-confirm as ctrl+c. When the editor has content the
     //    key falls through to the editor, which swallows ctrl-prefixed text
     //    events (matching the previous behavior).
@@ -499,7 +718,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       ];
     }
 
-    // 4) ctrl+c: interrupt an active turn, else double-press-to-quit
+    // 6) ctrl+c: interrupt an active turn, else double-press-to-quit
     if (matchesKey(event, "ctrl+c")) {
       if (model.state.turnActive) {
         return [
@@ -529,7 +748,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       ];
     }
 
-    // 4) ctrl+o: expand/collapse the latest tool call
+    // 7) ctrl+o: expand/collapse the latest tool call
     if (matchesKey(event, "ctrl+o")) {
       const calls = model.state.toolCalls;
       if (calls.length === 0) return [model];
@@ -547,17 +766,26 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       return [{ ...model, state: { ...model.state, toolCalls } }];
     }
 
-    // 5) tab: toggle focus editor <-> transcript
+    // 8) tab: (re-)open the completion menu on a `/partial` token — this also
+    //    re-arms an esc-dismissed menu. With no live menu and no candidates,
+    //    tab does nothing (keyboard focus never leaves the editor).
     if (event.kind === "key" && event.key === "tab") {
-      return [{
-        ...model,
-        focus: model.focus === "editor" ? "transcript" : "editor",
-      }];
+      const text = editorText(model.editor);
+      if (
+        /^\/\S*$/.test(text) &&
+        slashCommandCandidates(text.slice(1), client.commands).length > 0
+      ) {
+        return [{
+          ...model,
+          completion: { selected: 0, dismissed: false },
+        }];
+      }
+      return [model];
     }
 
-    // 6) page up/down + mouse wheel scroll the transcript regardless of
-    //    focus — PgUp/PgDn and the wheel are viewport controls, not editor
-    //    input, so they never move focus away from what the user is typing.
+    // 9) page up/down + mouse wheel scroll the transcript — PgUp/PgDn and the
+    //    wheel are viewport controls, not editor input, so they work while the
+    //    user is typing.
     if (event.kind === "key") {
       if (event.key === "pageUp") {
         return [applyTranscriptScroll(model, { type: "PageUp" })];
@@ -579,25 +807,9 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       return [model];
     }
 
-    // 6b) line scroll keys when the transcript is focused — routed through
-    //    the pure transcriptReducer (given the live content + viewport
-    //    height) so offsets clamp and scrolling back to the bottom re-engages
-    //    followTail. home/end jump to the absolute top / bottom.
-    if (model.focus === "transcript" && event.kind === "key") {
-      if (event.key === "home") {
-        return [{ ...model, transcriptScroll: 0, followTail: false }];
-      }
-      if (event.key === "end") {
-        return [{ ...model, followTail: true }];
-      }
-      const smsg = scrollMsg(event.key);
-      if (smsg !== null) {
-        return [applyTranscriptScroll(model, smsg)];
-      }
-    }
-
-    // 7) esc: interrupt an in-flight turn (same as ctrl+c), otherwise cancel
-    //    an in-flight scroll / refocus the editor.
+    // 10) esc: interrupt an in-flight turn (same as ctrl+c), otherwise snap
+    //    the transcript back to the tail. (A live completion menu already
+    //    consumed esc at 3) as a plain dismissal.)
     if (event.kind === "esc") {
       if (model.state.turnActive) {
         return [
@@ -610,84 +822,398 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       }
       return [{
         ...model,
-        focus: "editor",
         transcriptScroll: 0,
         followTail: true,
       }];
     }
 
-    // 8) editor: everything else
+    // 11) editor: everything else. A buffer change re-arms the completion
+    //    menu (clears an esc dismissal and resets the selection) so filtering
+    //    follows the typed prefix live.
     const [editorNext, action] = editorReducer(model.editor, event);
     if (action?.type === "submit") {
-      const text = action.text;
-      if (text.trim() === "") return [{ ...model, editor: editorNext }];
-      return [
-        {
-          ...model,
-          editor: editorNext,
-          state: { ...model.state, turnActive: true },
-          focus: "editor",
-        },
-        cmd(async () => {
-          const r = await client.prompt(text);
-          return {
-            type: "tui:prompted",
-            ok: r.ok,
-            status: r.status,
-            body: r.body,
-          } as Msg;
-        }),
-      ];
+      return submitText(model, editorNext, action.text);
     }
-    return [{ ...model, editor: editorNext }];
+    const textChanged = editorText(editorNext) !== editorText(model.editor);
+    return [{
+      ...model,
+      editor: editorNext,
+      completion: textChanged ? initialCompletionState : model.completion,
+    }];
+  };
+
+  // -- built-in slash command dispatch --------------------------------------
+  // ONE dispatch path feeds both the palette (runPaletteCommand) and editor
+  // submit: commands.ts decides whether a text is a built-in, this switch
+  // performs the local effect and/or kicks off a Cmd whose CommandOutcome is
+  // applied back in `update` (case "tui:command").
+
+  const commandMsg = (outcome: CommandOutcome): Msg =>
+    ({ type: "tui:command", outcome }) as Msg;
+
+  /**
+   * Derive the live completion menu for the current buffer: active only when
+   * the whole buffer is a single slash token (`^/\S*$`) with at least one
+   * candidate, no palette/approval is up, and the user has not esc-dismissed
+   * the menu for the current token. Returns the candidates plus the clamped
+   * selection; null keeps the normal key bindings (history arrows etc.).
+   */
+  const completionMenu = (
+    model: AppModel,
+  ): {
+    readonly items: readonly CompletionCandidate[];
+    readonly selected: number;
+  } | null => {
+    if (model.approval !== null || model.palette.open) return null;
+    if (model.completion.dismissed) return null;
+    const text = editorText(model.editor);
+    if (!/^\/\S*$/.test(text)) return null;
+    const items = slashCommandCandidates(text.slice(1), client.commands);
+    if (items.length === 0) return null;
+    return {
+      items,
+      selected: Math.min(model.completion.selected, items.length - 1),
+    };
+  };
+
+  /**
+   * Shared submit pipeline for the editor's enter AND the completion menu's
+   * accept-and-submit: built-in slash commands dispatch locally, anything
+   * else goes to the server as a prompt. `editorNext` is the post-submit
+   * editor state (already cleared by the editor reducer).
+   */
+  const submitText = (
+    model: AppModel,
+    editorNext: EditorState,
+    text: string,
+  ): readonly [AppModel, ...Cmd<Msg>[]] => {
+    if (text.trim() === "") return [{ ...model, editor: editorNext }];
+    // Built-in slash commands are dispatched locally and never become a
+    // prompt; anything else (custom commands, plain text) goes to the
+    // server, which expands commands/*.md templates.
+    const withEditor: AppModel = {
+      ...model,
+      editor: editorNext,
+      completion: initialCompletionState,
+    };
+    const builtin = runSlashCommand(withEditor, text);
+    if (builtin !== null) return builtin;
+    return [
+      {
+        ...withEditor,
+        state: { ...withEditor.state, turnActive: true },
+      },
+      cmd(async () => {
+        const r = await client.prompt(text);
+        return {
+          type: "tui:prompted",
+          ok: r.ok,
+          status: r.status,
+          body: r.body,
+        } as Msg;
+      }),
+    ];
+  };
+
+  /**
+   * Completion-menu accept. `submit=false` (tab) fills `/name ` for the user
+   * to complete; `submit=true` (enter) submits the command on the spot via
+   * the normal pipeline (the editor reducer supplies the history bookkeeping
+   * and the cleared buffer).
+   */
+  const acceptCompletion = (
+    model: AppModel,
+    menu: { readonly items: readonly CompletionCandidate[]; readonly selected: number },
+    submit: boolean,
+  ): readonly [AppModel, ...Cmd<Msg>[]] => {
+    const item = menu.items[menu.selected];
+    if (item === undefined) return [model];
+    if (!submit) {
+      return [{
+        ...model,
+        editor: setEditorText(model.editor, `/${item.name} `),
+        completion: initialCompletionState,
+      }];
+    }
+    const [editorNext, action] = editorReducer(
+      setEditorText(model.editor, `/${item.name}`),
+      ENTER_EVENT,
+    );
+    return action?.type === "submit"
+      ? submitText(model, editorNext, action.text)
+      : [{ ...model, editor: editorNext, completion: initialCompletionState }];
   };
 
   const runPaletteCommand = (
     model: AppModel,
-    command: string,
-  ): AppModel => {
-    switch (command) {
-      case "/quit":
-        return { ...model, quitting: true };
-      case "/clear":
-        return {
+    item: PaletteItem,
+  ): readonly [AppModel, ...Cmd<Msg>[]] => {
+    // Arg-taking built-ins and custom commands seed the editor with `/name `
+    // so the user supplies arguments; submitting then re-enters this same
+    // dispatch (built-in) or the prompt path (custom, expanded server-side).
+    if (!item.builtin || item.takesArg === true) {
+      return [{
+        ...model,
+        editor: setEditorText(model.editor, `${item.name} `),
+        completion: initialCompletionState,
+      }];
+    }
+    return runSlashCommand(model, item.name) ?? [model];
+  };
+
+  /**
+   * Dispatch a `/name args` text against the built-in registry. Returns null
+   * when the text is not a built-in command (caller falls through to prompt).
+   */
+  const runSlashCommand = (
+    model: AppModel,
+    text: string,
+  ): readonly [AppModel, ...Cmd<Msg>[]] | null => {
+    const parsed = parseBuiltinCommand(text);
+    if (parsed === null) return null;
+    switch (parsed.name) {
+      case "help": {
+        let m = model;
+        for (const line of helpLines(client.commands)) m = withNotice(m, line);
+        return [m];
+      }
+      case "exit":
+        return [{ ...model, quitting: true }];
+      case "model": {
+        if (parsed.args === "") {
+          return [
+            withNotice(model, `model: ${model.state.model ?? "(default)"}`),
+          ];
+        }
+        const ref = parsed.args;
+        return [
+          model,
+          cmd(async () => {
+            const r = await client.setModel(ref);
+            return commandMsg({ kind: "model", ref, ...r });
+          }),
+        ];
+      }
+      case "effort": {
+        if (parsed.args === "") {
+          return [
+            withNotice(model, `effort: ${model.effort ?? "(model default)"}`),
+          ];
+        }
+        const ref = parsed.args;
+        return [
+          model,
+          cmd(async () => {
+            const r = await client.setEffort(ref);
+            return commandMsg({ kind: "effort", ref, ...r });
+          }),
+        ];
+      }
+      case "compact":
+        return [
+          model,
+          cmd(async () => {
+            const r = await client.compact();
+            return commandMsg({ kind: "compact", ...r });
+          }),
+        ];
+      case "clear":
+        return [
+          model,
+          cmd(async (): Promise<Msg> => {
+            try {
+              await client.newSession();
+              return commandMsg({ kind: "clear", ok: true });
+            } catch (err) {
+              return commandMsg({
+                kind: "clear",
+                ok: false,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }),
+        ];
+      case "resume": {
+        if (parsed.args === "") {
+          return [
+            model,
+            cmd(async (): Promise<Msg> => {
+              try {
+                const sessions = await client.listSessions();
+                return commandMsg({ kind: "sessions", ok: true, sessions });
+              } catch (err) {
+                return commandMsg({
+                  kind: "sessions",
+                  ok: false,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }),
+          ];
+        }
+        const query = parsed.args;
+        return [
+          model,
+          cmd(async (): Promise<Msg> => {
+            try {
+              // Resolve exact-or-unique-prefix against the projection rows so
+              // a short id prefix is enough; then switch the client over.
+              const sessions = await client.listSessions();
+              const res = resolveSessionId(
+                sessions.map((s) => s.sessionId),
+                query,
+              );
+              if (res.type === "not-found") {
+                return commandMsg({
+                  kind: "resume",
+                  ok: false,
+                  error: `session not found: ${query}`,
+                });
+              }
+              if (res.type === "ambiguous") {
+                return commandMsg({
+                  kind: "resume",
+                  ok: false,
+                  error: `ambiguous session id ${query}: ${
+                    res.matches.join(", ")
+                  }`,
+                });
+              }
+              const { info, history } = await client.resume(res.sessionId);
+              return commandMsg({ kind: "resume", ok: true, info, history });
+            } catch (err) {
+              return commandMsg({
+                kind: "resume",
+                ok: false,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }),
+        ];
+      }
+      case "mcp": {
+        const servers = client.mcpServers;
+        if (servers.length === 0) {
+          return [withNotice(model, "no MCP servers configured")];
+        }
+        return [
+          withNotice(
+            model,
+            `mcp servers: ${
+              servers.map((s) => `${s.id} (${s.toolCount} tools)`).join("  ")
+            }`,
+          ),
+        ];
+      }
+      default:
+        return null;
+    }
+  };
+
+  /** Apply a finished command's outcome (state + notices) inside update. */
+  const applyCommandOutcome = (
+    model: AppModel,
+    o: CommandOutcome,
+  ): readonly [AppModel, ...Cmd<Msg>[]] => {
+    switch (o.kind) {
+      case "model": {
+        if (!o.ok) {
+          return [withNotice(model, o.error ?? "model switch failed", "error")];
+        }
+        const name = o.model ?? o.ref;
+        return [{
           ...model,
           state: {
             ...model.state,
-            messages: [],
-            notices: [],
-            streaming: null,
-            toolCalls: [],
+            model: name,
+            contextWindow: o.contextWindow ?? model.state.contextWindow,
+            notices: [...model.state.notices, notice(`model: ${name}`)],
           },
+        }];
+      }
+      case "effort": {
+        if (!o.ok) {
+          return [
+            withNotice(model, o.error ?? "effort switch failed", "error"),
+          ];
+        }
+        const effort = o.effort ?? o.ref;
+        return [
+          withNotice({ ...model, effort }, `effort: ${effort}`),
+        ];
+      }
+      case "compact": {
+        if (o.ok) return [withNotice(model, "compacting context…")];
+        if (o.code === "turn_in_flight") {
+          return [withNotice(
+            model,
+            "wait for the current turn to finish before compacting",
+          )];
+        }
+        return [withNotice(model, o.error ?? "compact failed", "error")];
+      }
+      case "clear": {
+        if (!o.ok) {
+          return [withNotice(model, o.error ?? "new session failed", "error")];
+        }
+        // Fresh session: drop every session-scoped slice. The new SSE stream
+        // (cursor 0) replays session.created, which repopulates model /
+        // contextWindow / mcpServers.
+        return [{
+          ...model,
+          state: {
+            ...initialModelState(),
+            notices: [notice(`new session ${client.sessionId}`)],
+          },
+          approval: null,
+          effort: undefined,
           transcriptScroll: 0,
           followTail: true,
-        };
-      case "/help":
-        return {
+          completion: initialCompletionState,
+        }];
+      }
+      case "sessions": {
+        if (!o.ok || o.sessions === undefined) {
+          return [withNotice(model, o.error ?? "session list failed", "error")];
+        }
+        const lines = formatSessionList(o.sessions);
+        const hints = o.sessions.length > 0
+          ? [...lines, "use /resume <id> to switch sessions"]
+          : lines;
+        let m = model;
+        for (const line of hints) m = withNotice(m, line);
+        return [m];
+      }
+      case "resume": {
+        if (!o.ok || o.info === undefined || o.history === undefined) {
+          return [withNotice(model, o.error ?? "resume failed", "error")];
+        }
+        // Rebuild the session view from the recorded history. RecordedEvent
+        // carries seq/ts/sessionId on top of the {type, data} envelope the
+        // reducer consumes — strip down to the envelope.
+        const events: SseEvent[] = o.history.map((e) => ({
+          type: e.type,
+          data: e.data as Readonly<Record<string, unknown>>,
+        }));
+        const rebuilt = reduceEventSequence(events);
+        return [{
           ...model,
           state: {
-            ...model.state,
+            ...rebuilt,
+            model: rebuilt.model ?? o.info.model,
+            contextWindow: rebuilt.contextWindow ?? client.contextWindow,
             notices: [
-              ...model.state.notices,
-              notice(
-                "enter submit · shift+enter/ctrl+j newline · ctrl+p palette · ctrl+o expand · esc/ctrl+c interrupt · ctrl+c/d quit · ctrl+- undo · tab focus",
-              ),
+              ...rebuilt.notices,
+              notice(`resumed session ${o.info.sessionId}`),
             ],
           },
-        };
-      case "/model":
-        return {
-          ...model,
-          state: {
-            ...model.state,
-            notices: [
-              ...model.state.notices,
-              notice(`model: ${model.state.model ?? "(default)"}`),
-            ],
-          },
-        };
-      default:
-        return model;
+          approval: null,
+          effort: undefined,
+          transcriptScroll: 0,
+          followTail: true,
+          completion: initialCompletionState,
+        }];
+      }
     }
   };
 
@@ -771,11 +1297,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
         } else if (!newState.pendingApproval && model.state.pendingApproval) {
           approval = null;
         }
-        // restore editor focus when a turn ends
-        const focus: Focus = (!newState.turnActive && model.state.turnActive)
-          ? "editor"
-          : model.focus;
-        return [{ ...model, state: newState, approval, palette, focus }];
+        return [{ ...model, state: newState, approval, palette }];
       }
 
       case "tui:prompted":
@@ -810,6 +1332,9 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
 
       case "tui:interrupt":
         return [model];
+
+      case "tui:command":
+        return applyCommandOutcome(model, msg.outcome);
 
       case "tui:quit":
         return [{ ...model, quitting: true }];
@@ -861,11 +1386,11 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       lines.push(blankLine());
     }
 
-    // editor (bottom)
+    // editor (bottom) — always focused: keyboard focus never leaves it
     const editorLines = renderEditor(
       model.editor,
       W,
-      model.focus === "editor",
+      true,
       {
         border: colors.border,
         borderFocused: colors.accent,
@@ -875,6 +1400,28 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       },
     );
     for (const l of editorLines) lines.push(l);
+
+    // -- completion menu (popup, NOT dimmed) --------------------------------
+    // Stamped left-aligned over the transcript rows directly above the editor
+    // box. Never overlaps the editor itself; when the transcript is shorter
+    // than the menu, the top rows are clipped.
+    const menu = completionMenu(model);
+    if (menu !== null) {
+      const menuLines = renderCompletionMenu(menu.items, menu.selected, W, {
+        border: colors.border,
+        accent: colors.accent,
+        text: colors.text,
+        muted: colors.muted,
+      });
+      const editorTop = lines.length - editorLines.length;
+      const top = Math.max(0, editorTop - menuLines.length);
+      for (let i = 0; i < menuLines.length; i++) {
+        const row = top + i;
+        if (row < editorTop) {
+          lines[row] = stampOverlayRow(lines[row], menuLines[i], 0, W);
+        }
+      }
+    }
 
     // -- overlay compositing (palette / approval) -------------------------
     const overlay = model.approval !== null
@@ -890,7 +1437,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       }
       : model.palette.open
       ? {
-        ...renderPalette(model.palette, W, H, {
+        ...renderPalette(model.palette, paletteItemList, W, H, {
           border: colors.border,
           accent: colors.accent,
           text: colors.text,
@@ -965,6 +1512,15 @@ export const probeGitStatus = async (
 // Helpers used by update / view
 // ---------------------------------------------------------------------------
 
+/** Synthetic plain-enter key event — the completion menu's accept-and-submit
+ *  replays the editor's own submit path (history bookkeeping + cleared buffer). */
+const ENTER_EVENT: import("@niuma/tuikit").InputEvent = {
+  kind: "key",
+  key: "enter",
+  mods: { shift: false, alt: false, ctrl: false, super: false },
+  eventType: "press",
+};
+
 const approvalDecision = (
   ev: import("@niuma/tuikit").InputEvent,
 ): { decision: ApprovalDecision; feedback?: string } | null => {
@@ -983,25 +1539,6 @@ const approvalDecision = (
     }
   }
   return null;
-};
-
-/** Map a named key to a transcript scroll reducer message (home/end are handled
- *  inline by the caller as absolute jumps). Returns null for non-scroll keys. */
-const scrollMsg = (
-  key: import("@niuma/tuikit").NamedKey,
-): TranscriptMsg | null => {
-  switch (key) {
-    case "up":
-      return { type: "ScrollUp" };
-    case "down":
-      return { type: "ScrollDown" };
-    case "pageUp":
-      return { type: "PageUp" };
-    case "pageDown":
-      return { type: "PageDown" };
-    default:
-      return null;
-  }
 };
 
 /** Dim every span of the base scene, then stamp the overlay rows at (top,left). */

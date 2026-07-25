@@ -39,7 +39,11 @@ export type ChatMessage =
     /** Reasoning/thinking text, rendered dimmed above the body. */
     readonly thinking?: string;
   }
-  | { readonly role: "tool"; readonly call: ToolCallView };
+  | { readonly role: "tool"; readonly call: ToolCallView }
+  /** Local command output / system notices (/help, /model, errors…).
+   * `kind` mirrors reduce_event's NoticeKind; only "error" gets a distinct
+   * colour, the rest render dim. */
+  | { readonly role: "notice"; readonly text: string; readonly kind?: string };
 
 /** Mutable-by-reduction transcript state. */
 export interface TranscriptState {
@@ -224,6 +228,48 @@ const renderThinking = (
   }));
 };
 
+/**
+ * Render a system notice (local command output, errors) as dimmed lines with
+ * a "─ " gutter. Newlines are preserved (help/list output is pre-formatted);
+ * each logical line is word-wrapped. `kind === "error"` uses the error
+ * colour instead of the dim one.
+ */
+const renderNotice = (
+  text: string,
+  width: number,
+  theme: Theme,
+  kind?: string,
+): StyledLine[] => {
+  const prefix = "─ ";
+  const prefixW = stringWidth(prefix);
+  const contentW = Math.max(1, width - prefixW);
+  const fg = kind === "error" ? theme.error : theme.textDim;
+  const gutter: StyledSpan = {
+    text: prefix,
+    style: { fg, dim: kind !== "error" },
+  };
+  const indent: StyledSpan = { text: " ".repeat(prefixW), style: {} };
+  const out: StyledLine[] = [];
+  const logical = text.split("\n");
+  if (logical.every((l) => l.trim() === "")) return [{ spans: [gutter] }];
+  for (const line of logical) {
+    const wrapped = wrapPlain(line, contentW);
+    if (wrapped.length === 0) {
+      out.push({ spans: [gutter] });
+      continue;
+    }
+    for (let idx = 0; idx < wrapped.length; idx++) {
+      out.push({
+        spans: [
+          out.length === 0 ? gutter : indent,
+          { text: wrapped[idx], style: { fg, dim: kind !== "error" } },
+        ],
+      });
+    }
+  }
+  return out;
+};
+
 export interface TranscriptRenderOpts {
   /** Spinner frame forwarded to tool_call cards (animates running tools). */
   readonly spinnerFrame?: number;
@@ -279,6 +325,11 @@ export const renderTranscriptContent = (
           ...indentLines(
             renderToolCall(msg.call, contentW, theme, spinnerFrame),
           ),
+        );
+        break;
+      case "notice":
+        out.push(
+          ...indentLines(renderNotice(msg.text, contentW, theme, msg.kind)),
         );
         break;
     }

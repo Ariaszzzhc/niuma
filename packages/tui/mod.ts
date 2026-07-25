@@ -35,6 +35,7 @@ export {
   editorReducer,
   editorText,
   renderEditor,
+  setEditorText,
 } from "./src/components/editor.ts";
 export type {
   EditorAction,
@@ -51,17 +52,19 @@ export {
 export type { ApprovalTheme, ApprovalView } from "./src/components/approval.ts";
 
 export {
+  BUILTIN_PALETTE_ITEMS,
   closePalette,
   initialPaletteState,
   openPalette,
-  PALETTE_COMMANDS,
   paletteFiltered,
+  paletteItems,
   paletteReducer,
   renderPalette,
 } from "./src/components/palette.ts";
 export type {
   PaletteAction,
-  PaletteCommand,
+  PaletteCommandInfo,
+  PaletteItem,
   PaletteState,
   PaletteTheme,
 } from "./src/components/palette.ts";
@@ -69,10 +72,41 @@ export type {
 export { createTuiClient, parseSseStream } from "./src/client.ts";
 export type {
   ApprovalDecision,
+  ClientCommand,
   ClientResult,
+  CompactResult,
+  ResumeResult,
+  SetEffortResult,
+  SetModelResult,
   TuiClient,
   TuiClientOptions,
 } from "./src/client.ts";
+
+export {
+  BUILTIN_COMMANDS,
+  findBuiltinCommand,
+  formatSessionList,
+  helpLines,
+  parseBuiltinCommand,
+  resolveSessionId,
+  slashCommandCandidates,
+} from "./src/commands.ts";
+export type {
+  BuiltinCommand,
+  CompletionCandidate,
+  ParsedBuiltinCommand,
+  SessionIdResolution,
+} from "./src/commands.ts";
+
+export {
+  initialCompletionState,
+  moveCompletion,
+  renderCompletionMenu,
+} from "./src/components/completion.ts";
+export type {
+  CompletionState,
+  CompletionTheme,
+} from "./src/components/completion.ts";
 
 export {
   initialModelState,
