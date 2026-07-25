@@ -3,6 +3,20 @@ import { StopReason } from "./domain.ts";
 import { ApprovalDecisionType } from "./permission.ts";
 import { LiveEvent, RecordedEvent } from "./event.ts";
 
+// ---- Custom slash commands ----
+
+// A user/project-defined command (a `commands/*.md` template), as listed in
+// the session-create response. `template` stays server-side; clients only
+// need the listing metadata.
+// deno-lint-ignore no-slow-types
+const CommandInfo_ = Schema.Struct({
+  name: Schema.String,
+  description: Schema.optional(Schema.String),
+  argumentHint: Schema.optional(Schema.String),
+});
+export type CommandInfo = Schema.Schema.Type<typeof CommandInfo_>;
+export const CommandInfo: Schema.Codec<CommandInfo> = CommandInfo_;
+
 // ---- Session lifecycle ----
 
 // deno-lint-ignore no-slow-types
@@ -19,6 +33,9 @@ const CreateSessionRes_ = Schema.Struct({
   sessionId: Schema.String,
   workspace: Schema.String,
   model: Schema.String,
+  // Custom slash commands visible to this session's workspace (user +
+  // project `commands/*.md`). Optional so older servers still decode.
+  commands: Schema.optional(Schema.Array(CommandInfo_)),
 });
 export type CreateSessionRes = Schema.Schema.Type<typeof CreateSessionRes_>;
 export const CreateSessionRes: Schema.Codec<CreateSessionRes> =
@@ -46,6 +63,44 @@ const ApprovalReplyReq_ = Schema.Struct({
 export type ApprovalReplyReq = Schema.Schema.Type<typeof ApprovalReplyReq_>;
 export const ApprovalReplyReq: Schema.Codec<ApprovalReplyReq> =
   ApprovalReplyReq_;
+
+// ---- Runtime model / effort switching ----
+
+// `model` accepts either a full "provider/model-id" ref (a cross-provider
+// switch rebuilds the adapter server-side) or a bare model-id (same provider,
+// new model name).
+// deno-lint-ignore no-slow-types
+const SetModelReq_ = Schema.Struct({
+  model: Schema.String,
+});
+export type SetModelReq = Schema.Schema.Type<typeof SetModelReq_>;
+export const SetModelReq: Schema.Codec<SetModelReq> = SetModelReq_;
+
+// deno-lint-ignore no-slow-types
+const SetModelRes_ = Schema.Struct({
+  ok: Schema.Boolean,
+  model: Schema.optional(Schema.String),
+  contextWindow: Schema.optional(Schema.Number),
+});
+export type SetModelRes = Schema.Schema.Type<typeof SetModelRes_>;
+export const SetModelRes: Schema.Codec<SetModelRes> = SetModelRes_;
+
+// `effort` is a provider-defined档位 string passed through verbatim — no
+// enum validation (mirrors ThinkingConfig.effort).
+// deno-lint-ignore no-slow-types
+const SetEffortReq_ = Schema.Struct({
+  effort: Schema.String,
+});
+export type SetEffortReq = Schema.Schema.Type<typeof SetEffortReq_>;
+export const SetEffortReq: Schema.Codec<SetEffortReq> = SetEffortReq_;
+
+// deno-lint-ignore no-slow-types
+const SetEffortRes_ = Schema.Struct({
+  ok: Schema.Boolean,
+  effort: Schema.optional(Schema.String),
+});
+export type SetEffortRes = Schema.Schema.Type<typeof SetEffortRes_>;
+export const SetEffortRes: Schema.Codec<SetEffortRes> = SetEffortRes_;
 
 // ---- Projection read model (SQLite-backed; rebuildable from the event log) ----
 

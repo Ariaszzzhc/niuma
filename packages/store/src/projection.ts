@@ -33,6 +33,13 @@ function toStatus(event: RecordedEvent): SessionStatus {
 
 function firstUserText(event: RecordedEvent): string | null {
   if (event.type !== "user.message") return null;
+  // A slash-command-expanded message keeps the user's typed input in
+  // sourceText — that (e.g. "/review src/foo.ts") is the meaningful title,
+  // not the expanded template text.
+  if (event.data.sourceText !== undefined) {
+    const typed = event.data.sourceText.trim();
+    if (typed.length > 0) return typed.slice(0, 120);
+  }
   for (const p of event.data.parts) {
     if (p.type === "text" && p.text.trim().length > 0) {
       return p.text.slice(0, 120);

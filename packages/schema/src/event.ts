@@ -51,6 +51,11 @@ export type SessionCreatedEvent = Schema.Schema.Type<
 // deno-lint-ignore no-slow-types
 const UserMessageData_ = Schema.Struct({
   parts: Schema.Array(Part),
+  // The text the user actually typed, when it differs from the message
+  // content — set when a custom slash command (/name args) was expanded
+  // server-side into `parts`. Display surfaces (transcript, session title)
+  // prefer this over the expanded text. Optional so pre-change logs decode.
+  sourceText: Schema.optional(Schema.String),
 });
 export type UserMessageData = Schema.Schema.Type<typeof UserMessageData_>;
 export const UserMessageData: Schema.Codec<UserMessageData> = UserMessageData_;
@@ -215,6 +220,13 @@ export const CompactionPerformedData = Schema.Struct({
   // when the summary call failed or returned empty. Optional → old JSONL
   // logs decode unchanged.
   mode: Schema.optional(Schema.Literals(["llm", "template"])),
+  // The summary BODY (no SUMMARY_PREFIX — the projection layer re-wraps it
+  // when folding the event into the bridge message, so the marker convention
+  // stays single-sourced). Present ⇒ the compaction persists across turns:
+  // replay replaces everything projected so far with the bridge message.
+  // Absent (pre-persistence logs) ⇒ replay ignores the event, matching the
+  // old in-turn-only behavior.
+  summary: Schema.optional(Schema.String),
 });
 export type CompactionPerformedData = Schema.Schema.Type<
   typeof CompactionPerformedData

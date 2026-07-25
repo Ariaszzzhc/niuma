@@ -277,6 +277,44 @@ Deno.test("Projection title is first-user-wins, not last", async () => {
   }
 });
 
+Deno.test("Projection title prefers user.message sourceText (slash commands)", async () => {
+  const dir = await tmpDir();
+  try {
+    const proj = Projection.open(dir);
+    await proj.migrate();
+    const sid = "sess-title-source";
+
+    const events: RecordedEvent[] = [
+      {
+        seq: 1,
+        ts: 1,
+        sessionId: sid,
+        type: "session.created",
+        data: { workspace: dir, model: "m" },
+      },
+      {
+        seq: 2,
+        ts: 2,
+        sessionId: sid,
+        type: "user.message",
+        data: {
+          parts: [{ type: "text", text: "Review src/foo.ts carefully." }],
+          sourceText: "/review src/foo.ts",
+        },
+      },
+    ];
+
+    for (const ev of events) await proj.apply(ev);
+
+    const info = await proj.getSession(sid);
+    assertExists(info);
+    assertEquals(info!.title, "/review src/foo.ts");
+    await proj.close();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("Projection rebuildAll replays JSONL", async () => {
   const dir = await tmpDir();
   try {

@@ -50,6 +50,18 @@ export type {
 } from "./src/mcp.ts";
 
 export {
+  COMMANDS_DIR_BASENAME,
+  expandCommandTemplate,
+  loadCommands,
+  parseCommandFile,
+} from "./src/commands.ts";
+export type {
+  CommandDef,
+  CommandTable,
+  LoadCommandsOptions,
+} from "./src/commands.ts";
+
+export {
   getAuth,
   readAuthFile,
   removeAuth,
