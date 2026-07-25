@@ -1,5 +1,10 @@
 export { runTurn } from "./src/loop.ts";
 export type { TurnResult } from "./src/loop.ts";
+export { compactSession } from "./src/compact.ts";
+export type {
+  CompactSessionDeps,
+  CompactSessionResult,
+} from "./src/compact.ts";
 
 export { AgentSession, SessionManager } from "./src/session.ts";
 export type { AgentInfra, SessionOptions } from "./src/session.ts";

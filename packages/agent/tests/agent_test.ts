@@ -25,6 +25,7 @@ import {
   SUMMARY_PREFIX,
 } from "../src/compaction.ts";
 import { makeApprovalGateway } from "../src/approval.ts";
+import { compactSession } from "../src/compact.ts";
 import { type AgentInfra, SessionManager } from "../src/session.ts";
 import type { EventInput, EventLog, ToolPipeline } from "../src/deps.ts";
 
@@ -367,7 +368,11 @@ Deno.test("eventsToMessages: cross-provider replay keeps text-only and encrypted
   // encrypted field to decide which blocks to re-send; the projection layer
   // must not pre-filter, fold, or drop either.
   const events: RecordedEvent[] = [
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u1" }] },
+    },
     {
       ...base,
       type: "assistant.message",
@@ -379,7 +384,11 @@ Deno.test("eventsToMessages: cross-provider replay keeps text-only and encrypted
         usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u2" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u2" }] },
+    },
     {
       ...base,
       type: "assistant.message",
@@ -444,7 +453,11 @@ Deno.test("eventsToMessages: keepThinking:none strips both text-only and encrypt
 Deno.test("projectEvent: incremental mirror preserves multi-block reasoningContent (Fix D)", () => {
   const base = { seq: 0, ts: 0, sessionId: "s" };
   const events: RecordedEvent[] = [
-    { ...base, type: "user.message", data: { parts: [{ type: "text", text: "u1" }] } },
+    {
+      ...base,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "u1" }] },
+    },
     {
       ...base,
       type: "assistant.message",
@@ -1331,13 +1344,18 @@ Deno.test("compaction over threshold uses LLM summary (Fix B)", async () => {
   );
   assertEquals(result.text, "answer");
 
-  // compaction.performed recorded with mode "llm".
+  // compaction.performed recorded with mode "llm" and the summary body, so
+  // the in-turn compaction persists across turns on replay.
   const compactions = log.dump(session.id).filter((e) =>
     e.type === "compaction.performed"
   );
   assertEquals(compactions.length >= 1, true);
   const cp = compactions[0];
   assertEquals(cp?.type === "compaction.performed" && cp.data.mode, "llm");
+  assertEquals(
+    cp?.type === "compaction.performed" && cp.data.summary,
+    "LLM SUMMARY",
+  );
 
   // The second request (compacted answer) has the LLM summary as messages[0].
   const reqs = provider.requests();
@@ -1461,4 +1479,153 @@ Deno.test("summarizeHistory: appends prompt as final user message, no tools (Fix
     assertEquals(captured.messages.length, messages.length + 1);
     assertEquals(captured.messages[0].content, "hello");
   }
+});
+
+// ---------------------------------------------------------------------------
+// Cross-turn compaction persistence (summary-bearing compaction.performed)
+// ---------------------------------------------------------------------------
+
+Deno.test("eventsToMessages: summary-bearing compaction folds prior history into the bridge", async () => {
+  const log = makeMemoryLog();
+  await seedTurns(log, "s", [["u1", "r1"], ["u2", "r2"], ["u3", "r3"]]);
+  await Effect.runPromise(log.append("s", {
+    type: "compaction.performed",
+    data: { summaryMessageId: "sum-1", mode: "llm", summary: "SUMMARY BODY" },
+  }));
+  await seedTurns(log, "s", [["u4", "r4"]]);
+
+  const msgs = eventsToMessages(log.dump("s"));
+  // Everything before the event collapsed into the bridge; events after it
+  // project normally.
+  assertEquals(msgs.length, 3);
+  assertEquals(msgs[0].role, "user");
+  assertEquals(msgs[0].content, `${SUMMARY_PREFIX}\nSUMMARY BODY`);
+  assertEquals(isSummaryMessage(msgs[0].content), true);
+  assertEquals(msgs[1].content, "u4");
+  assertEquals(msgs[2].content, "r4");
+});
+
+Deno.test("eventsToMessages: compaction.performed without summary is ignored (legacy logs)", async () => {
+  const log = makeMemoryLog();
+  await seedTurns(log, "s", [["u1", "r1"]]);
+  await Effect.runPromise(log.append("s", {
+    type: "compaction.performed",
+    data: { summaryMessageId: "sum-1", mode: "template" },
+  }));
+
+  const msgs = eventsToMessages(log.dump("s"));
+  assertEquals(msgs.map((m) => m.content), ["u1", "r1"]);
+});
+
+Deno.test("eventsToMessages: tool.result for a call cut by the compaction fold is dropped", async () => {
+  const log = makeMemoryLog();
+  await Effect.runPromise(log.append("s", {
+    type: "user.message",
+    data: { parts: [{ type: "text", text: "u1" }] },
+  }));
+  // Assistant with an unanswered tool_call — the fold cuts it away before
+  // its result lands, so the result must not orphan-poison the projection.
+  await Effect.runPromise(log.append("s", {
+    type: "assistant.message",
+    data: {
+      parts: [{
+        type: "tool_call",
+        id: "tc1",
+        name: "read",
+        input: { path: "x" },
+      }],
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+  }));
+  await Effect.runPromise(log.append("s", {
+    type: "compaction.performed",
+    data: { summaryMessageId: "sum-1", mode: "llm", summary: "BODY" },
+  }));
+  await Effect.runPromise(log.append("s", {
+    type: "tool.result",
+    data: {
+      callId: "tc1",
+      content: "file contents",
+      isError: false,
+      durationMs: 1,
+    },
+  }));
+  await Effect.runPromise(log.append("s", {
+    type: "user.message",
+    data: { parts: [{ type: "text", text: "u2" }] },
+  }));
+
+  const msgs = eventsToMessages(log.dump("s"));
+  // Bridge + u2 only: no synthetic `aborted` for the cut call, and the late
+  // result is dropped (no pending call to home it to).
+  assertEquals(msgs.map((m) => m.role), ["user", "user"]);
+  assertEquals(isSummaryMessage(msgs[0].content), true);
+  assertEquals(msgs[1].content, "u2");
+});
+
+Deno.test("compactSession: LLM summary path records a persistent compaction", async () => {
+  const log = makeMemoryLog();
+  const provider = scriptedProvider([[
+    { _tag: "TextDelta", text: "LLM SUMMARY" },
+    { _tag: "Finish", reason: "stop" },
+  ]]);
+  await seedTurns(log, "s", [["u1", "r1"], ["u2", "r2"], ["u3", "r3"]]);
+
+  const result = await Effect.runPromise(
+    compactSession("s", { event_log: log, provider, model: "test-model" }),
+  );
+  assertEquals(result, { compacted: true, mode: "llm" });
+
+  const compactions = log.dump("s").filter((e) =>
+    e.type === "compaction.performed"
+  );
+  assertEquals(compactions.length, 1);
+  const cp = compactions[0];
+  assertEquals(
+    cp?.type === "compaction.performed" && cp.data.summary,
+    "LLM SUMMARY",
+  );
+
+  // The next turn's replay folds the whole history into the bridge.
+  const msgs = eventsToMessages(log.dump("s"));
+  assertEquals(msgs.length, 1);
+  assertEquals(msgs[0].content, `${SUMMARY_PREFIX}\nLLM SUMMARY`);
+});
+
+Deno.test("compactSession: summary failure falls back to template", async () => {
+  const log = makeMemoryLog();
+  const provider = flakyProvider([
+    { events: [], fail: new Network({ cause: new Error("x") }) },
+  ]);
+  await seedTurns(log, "s", [["u1", "r1"], ["u2", "r2"], ["u3", "r3"]]);
+
+  const result = await Effect.runPromise(
+    compactSession("s", { event_log: log, provider, model: "test-model" }),
+  );
+  assertEquals(result, { compacted: true, mode: "template" });
+
+  const cp = log.dump("s").find((e) => e.type === "compaction.performed");
+  const summary = cp?.type === "compaction.performed"
+    ? cp.data.summary
+    : undefined;
+  assertEquals(typeof summary, "string");
+  assertEquals(summary!.includes("Conversation summary"), true);
+});
+
+Deno.test("compactSession: too few user turns is a no-op", async () => {
+  const log = makeMemoryLog();
+  const provider = scriptedProvider([[
+    { _tag: "TextDelta", text: "unused" },
+    { _tag: "Finish", reason: "stop" },
+  ]]);
+  await seedTurns(log, "s", [["u1", "r1"], ["u2", "r2"]]);
+
+  const result = await Effect.runPromise(
+    compactSession("s", { event_log: log, provider, model: "test-model" }),
+  );
+  assertEquals(result, { compacted: false });
+  assertEquals(
+    log.dump("s").filter((e) => e.type === "compaction.performed").length,
+    0,
+  );
 });

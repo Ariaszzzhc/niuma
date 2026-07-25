@@ -171,13 +171,11 @@ const runStreamOnce = (
             // sealed, so a later delta starts a fresh one. An `encrypted`
             // credential closes the block it lands on.
             const open = acc.thinking[acc.thinking.length - 1];
-            const block = open && open.encrypted === undefined
-              ? open
-              : (() => {
-                const b: { text: string; encrypted?: string } = { text: "" };
-                acc.thinking.push(b);
-                return b;
-              })();
+            const block = open && open.encrypted === undefined ? open : (() => {
+              const b: { text: string; encrypted?: string } = { text: "" };
+              acc.thinking.push(b);
+              return b;
+            })();
             block.text += ev.text;
             if (ev.encrypted !== undefined) block.encrypted = ev.encrypted;
             acc.emittedAny.v = true;
@@ -353,11 +351,13 @@ export function runTurn(
 
     // Append + mirror: every event the loop records is folded into the local
     // projection so neither `messages` nor `historyEvents` need re-deriving
-    // from a fresh replay. Metadata events (turn.*, compaction.*, error.*,
-    // approval.*, tool.call.requested) are pushed into historyEvents (keeping
+    // from a fresh replay. Metadata events (turn.*, error.*, approval.*,
+    // tool.call.requested) are pushed into historyEvents (keeping
     // buildSummary's view identical to a replay) and no-op'd for messages by
-    // projectEvent. The `messages` binding is captured by reference, so a
-    // reassignment from compaction is seen by subsequent calls.
+    // projectEvent; compaction.performed is the exception — its mirror folds
+    // `messages` down to the bridge, but compactNow computes the compacted
+    // list before appending and the caller reassigns `messages` to it, so
+    // the fold is never observed here.
     const append = (input: EventInput): Effect.Effect<RecordedEvent> =>
       Effect.gen(function* () {
         const ev = yield* deps.event_log.append(sessionId, input);
@@ -399,11 +399,17 @@ export function runTurn(
           : ("template" as const);
         const body = llmText ?? buildSummary(events);
         const summaryText = `${SUMMARY_PREFIX}\n${body}`;
+        // Compute the compacted list BEFORE appending: projectEvent folds a
+        // summary-bearing compaction.performed into the mirrored `messages`
+        // (splicing it down to the bridge), which would otherwise destroy
+        // the tail compactMessages keeps. The event stores the bare body —
+        // the projection layer re-wraps it with SUMMARY_PREFIX on replay.
+        const compacted = compactMessages(msgs, summaryText, keepUserTurns);
         yield* append({
           type: "compaction.performed",
-          data: { summaryMessageId: summaryId, mode },
+          data: { summaryMessageId: summaryId, mode, summary: body },
         });
-        return compactMessages(msgs, summaryText, keepUserTurns);
+        return compacted;
       });
 
     yield* append({ type: "turn.started", data: {} });
