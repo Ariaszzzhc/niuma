@@ -14,10 +14,10 @@
 //
 // Run: `deno run --allow-all scripts/smoke.ts`
 
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { DatabaseSync } from "node:sqlite";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("..", import.meta.url));
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder();
 
