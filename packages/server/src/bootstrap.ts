@@ -1,6 +1,10 @@
 import { Effect, Layer } from "effect";
 import { ensureSchema, type Projection } from "./projection.ts";
-import { type EventLog, makeEventLog } from "./event_log.ts";
+import {
+  CorruptSessionError,
+  type EventLog,
+  makeEventLog,
+} from "./event_log.ts";
 import { Kernel, KernelLive, makeKernel } from "./kernel.ts";
 import { type EventBus, makeEventBus } from "./event_bus.ts";
 import {
@@ -102,6 +106,34 @@ const newSessionId = (): string => {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
+const validateEventLogs = async (
+  eventLog: EventLog,
+  projection: Projection,
+): Promise<void> => {
+  const sessionIds = await eventLog.listSessions();
+  const sourceSessions = new Set(sessionIds);
+
+  for (const sessionId of sessionIds) {
+    try {
+      for await (const _event of eventLog.replay(sessionId)) {
+        // Validation happens before replay yields its first event.
+      }
+    } catch (error) {
+      if (!(error instanceof CorruptSessionError)) throw error;
+      sourceSessions.delete(sessionId);
+      await projection.resetSession(sessionId);
+    }
+  }
+
+  // The JSONL log is the source of truth. Derived rows without a source log
+  // cannot describe a live session and are removed at startup.
+  for (const session of await projection.listSessions()) {
+    if (!sourceSessions.has(session.sessionId)) {
+      await projection.resetSession(session.sessionId);
+    }
+  }
+};
+
 export const bootstrap = async (
   deps: BootstrapDeps = {},
 ): Promise<BootstrapResult> => {
@@ -109,9 +141,13 @@ export const bootstrap = async (
   await Deno.mkdir(paths.root, { recursive: true });
   await Deno.mkdir(paths.sessions, { recursive: true });
 
-  const event_log = deps.event_log ??
-    makeEventLog({ sessionsDir: paths.sessions });
   const projection = deps.projection ?? await ensureSchema(paths.db);
+  const event_log = deps.event_log ??
+    makeEventLog({
+      sessionsDir: paths.sessions,
+      onCorrupt: (sessionId) => projection.resetSession(sessionId),
+    });
+  await validateEventLogs(event_log, projection);
   const bus = deps.bus ?? await Effect.runPromise(makeEventBus());
 
   // ---- Configuration: config.toml + auth.json. ----

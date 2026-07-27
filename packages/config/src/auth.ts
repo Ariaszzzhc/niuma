@@ -55,9 +55,9 @@ const isOAuthAuth = (v: unknown): v is OAuthAuth =>
 
 /** Two-branch narrowing: an api entry needs a string key; an oauth entry
  * needs string refresh/access plus a finite numeric expires (accountId is
- * optional but, when present, must be a string). Anything else is dropped
- * individually so a hand-edited file can't lock out every provider. */
-const isAuthInfo = (v: unknown): v is AuthInfo => isApiAuth(v) || isOAuthAuth(v);
+ * optional but, when present, must be a string). */
+const isAuthInfo = (v: unknown): v is AuthInfo =>
+  isApiAuth(v) || isOAuthAuth(v);
 
 /** Copy only the declared fields, so stray keys on a hand-edited entry do
  * not survive a read/write round-trip (and exactOptionalPropertyTypes is
@@ -70,9 +70,17 @@ const normalize = (info: AuthInfo): AuthInfo => {
     : { type, refresh, access, expires };
 };
 
-/** Read the whole auth file. A missing file is an empty map; malformed or
- * unrecognised entries are dropped individually (mirrors opencode's
- * filterMap behaviour) so one bad line can't lock out every provider. */
+const deleteCorruptAuthFile = async (path: string): Promise<void> => {
+  try {
+    await Deno.remove(path);
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+};
+
+/** Read the whole auth file. A missing file is an empty map. A malformed root
+ * deletes the whole file; invalid entries in an object are deleted by
+ * rewriting only the independently valid credentials. */
 export const readAuthFile = async (path: string): Promise<AuthMap> => {
   let text: string;
   try {
@@ -85,15 +93,25 @@ export const readAuthFile = async (path: string): Promise<AuthMap> => {
   try {
     parsed = JSON.parse(text);
   } catch {
+    await deleteCorruptAuthFile(path);
     return {};
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+  if (!isRecord(parsed)) {
+    await deleteCorruptAuthFile(path);
     return {};
   }
   const out: Record<string, AuthInfo> = {};
-  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-    if (isAuthInfo(v)) out[k] = normalize(v);
+  let changed = false;
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!isAuthInfo(value)) {
+      changed = true;
+      continue;
+    }
+    const normalized = normalize(value);
+    out[key] = normalized;
+    if (JSON.stringify(value) !== JSON.stringify(normalized)) changed = true;
   }
+  if (changed) await writeAuthFile(path, out);
   return out;
 };
 
@@ -105,6 +123,7 @@ export const writeAuthFile = async (
   await Deno.writeTextFile(path, JSON.stringify(auth, null, 2) + "\n", {
     mode: 0o600,
   });
+  if (Deno.build.os !== "windows") await Deno.chmod(path, 0o600);
 };
 
 export const getAuth = async (

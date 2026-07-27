@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
 import {
   getAuth,
@@ -25,14 +25,15 @@ Deno.test("readAuthFile: missing file is an empty map", async () => {
   });
 });
 
-Deno.test("readAuthFile: malformed JSON is an empty map", async () => {
+Deno.test("readAuthFile: malformed JSON is deleted", async () => {
   await withTempFile(async (path) => {
     await Deno.writeTextFile(path, "{not json");
     assertEquals(await readAuthFile(path), {});
+    await assertRejects(() => Deno.stat(path), Deno.errors.NotFound);
   });
 });
 
-Deno.test("readAuthFile: drops unrecognised entries, keeps valid ones", async () => {
+Deno.test("readAuthFile: deletes unrecognised entries and preserves valid ones", async () => {
   await withTempFile(async (path) => {
     await Deno.writeTextFile(
       path,
@@ -43,6 +44,9 @@ Deno.test("readAuthFile: drops unrecognised entries, keeps valid ones", async ()
       }),
     );
     assertEquals(await readAuthFile(path), {
+      good: { type: "api", key: "sk-1" },
+    });
+    assertEquals(JSON.parse(await Deno.readTextFile(path)), {
       good: { type: "api", key: "sk-1" },
     });
   });
@@ -97,9 +101,19 @@ Deno.test("readAuthFile: keeps valid oauth entries, drops malformed ones", async
         expires: 1735689600000,
         accountId: "acct-1",
       },
-      no_account: { type: "oauth", refresh: "rt-2", access: "at-2", expires: 1 },
+      no_account: {
+        type: "oauth",
+        refresh: "rt-2",
+        access: "at-2",
+        expires: 1,
+      },
       api: { type: "api", key: "sk-2" },
     });
+    assertEquals(Object.keys(JSON.parse(await Deno.readTextFile(path))), [
+      "ok",
+      "no_account",
+      "api",
+    ]);
   });
 });
 
@@ -244,17 +258,19 @@ Deno.test("setAuth/getAuth/removeAuth: oauth credentials round-trip and stay 060
 
 // ----- additional edge cases ------------------------------------------------
 
-Deno.test("readAuthFile: JSON array root is treated as empty map", async () => {
+Deno.test("readAuthFile: JSON array root is deleted", async () => {
   await withTempFile(async (path) => {
     await Deno.writeTextFile(path, "[1, 2, 3]");
     assertEquals(await readAuthFile(path), {});
+    await assertRejects(() => Deno.stat(path), Deno.errors.NotFound);
   });
 });
 
-Deno.test("readAuthFile: JSON scalar root is treated as empty map", async () => {
+Deno.test("readAuthFile: JSON scalar root is deleted", async () => {
   await withTempFile(async (path) => {
     await Deno.writeTextFile(path, "42");
     assertEquals(await readAuthFile(path), {});
+    await assertRejects(() => Deno.stat(path), Deno.errors.NotFound);
   });
 });
 
@@ -267,11 +283,14 @@ Deno.test("readAuthFile: getAuth returns undefined for a missing provider id", a
 
 Deno.test("readAuthFile: api entry with a non-string key is dropped", async () => {
   await withTempFile(async (path) => {
-    await Deno.writeTextFile(path, JSON.stringify({
-      // type:"api" but `key` is the wrong shape; the receiver must drop it.
-      bad: { type: "api", key: 42 },
-      good: { type: "api", key: "sk-1" },
-    }));
+    await Deno.writeTextFile(
+      path,
+      JSON.stringify({
+        // type:"api" but `key` is the wrong shape; the receiver must drop it.
+        bad: { type: "api", key: 42 },
+        good: { type: "api", key: "sk-1" },
+      }),
+    );
     assertEquals(await readAuthFile(path), {
       good: { type: "api", key: "sk-1" },
     });
@@ -292,20 +311,26 @@ Deno.test("readAuthFile: oauth entry with NaN/Infinity expires is dropped", asyn
 
 Deno.test("readAuthFile: oauth entry with a non-string refresh/access is dropped", async () => {
   await withTempFile(async (path) => {
-    await Deno.writeTextFile(path, JSON.stringify({
-      bad_refresh: { type: "oauth", refresh: 42, access: "a", expires: 1 },
-      bad_access: { type: "oauth", refresh: "r", access: null, expires: 1 },
-    }));
+    await Deno.writeTextFile(
+      path,
+      JSON.stringify({
+        bad_refresh: { type: "oauth", refresh: 42, access: "a", expires: 1 },
+        bad_access: { type: "oauth", refresh: "r", access: null, expires: 1 },
+      }),
+    );
     assertEquals(await readAuthFile(path), {});
   });
 });
 
 Deno.test("readAuthFile: unknown type value is dropped (no false-positive match)", async () => {
   await withTempFile(async (path) => {
-    await Deno.writeTextFile(path, JSON.stringify({
-      weird: { type: "service-account", token: "x" },
-      no_type: { key: "k" },
-    }));
+    await Deno.writeTextFile(
+      path,
+      JSON.stringify({
+        weird: { type: "service-account", token: "x" },
+        no_type: { key: "k" },
+      }),
+    );
     assertEquals(await readAuthFile(path), {});
   });
 });

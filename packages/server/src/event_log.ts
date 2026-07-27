@@ -15,15 +15,23 @@ export interface EventLog {
   ) => AsyncIterable<RecordedEvent>;
   readonly listSessions: () => Promise<string[]>;
   readonly lastSeq: (sessionId: string) => Promise<number>;
-  readonly rebuildProjection: (
-    sessionId: string,
-    apply: (event: RecordedEvent) => Promise<void>,
-  ) => Promise<number>;
 }
 
 export interface EventLogOptions {
   readonly sessionsDir: string;
   readonly now?: () => number;
+  /** Remove derived state after a corrupted source-of-truth log is deleted. */
+  readonly onCorrupt?: (sessionId: string) => Promise<void>;
+}
+
+export class CorruptSessionError extends Error {
+  readonly sessionId: string;
+
+  constructor(sessionId: string, cause: unknown) {
+    super(`corrupted event log deleted for session ${sessionId}`, { cause });
+    this.name = "CorruptSessionError";
+    this.sessionId = sessionId;
+  }
 }
 
 const ensureDir = async (dir: string): Promise<void> => {
@@ -39,6 +47,77 @@ export const makeEventLog = (opts: EventLogOptions): EventLog => {
   const { sessionsDir } = opts;
   const now = opts.now ?? (() => Date.now());
   const logger = log("niuma.server.eventlog");
+
+  const removeCorrupt = async (
+    sessionId: string,
+    path: string,
+    cause: unknown,
+  ): Promise<never> => {
+    try {
+      await Deno.remove(path);
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    await opts.onCorrupt?.(sessionId);
+    logger.warn("deleted corrupted event log for session {id}: {err}", {
+      id: sessionId,
+      err: String(cause),
+    });
+    throw new CorruptSessionError(sessionId, cause);
+  };
+
+  const readValidated = async (
+    sessionId: string,
+  ): Promise<ReadonlyArray<RecordedEvent>> => {
+    if (!isSafeId(sessionId)) {
+      throw new Error(`unsafe sessionId: ${sessionId}`);
+    }
+    const path = pathFor(sessionsDir, sessionId);
+    let bytes: Uint8Array;
+    try {
+      bytes = await Deno.readFile(path);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return [];
+      throw error;
+    }
+
+    try {
+      if (bytes.length === 0) {
+        throw new Error("event log is empty");
+      }
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      if (!text.endsWith("\n")) {
+        throw new Error("event log has a truncated final line");
+      }
+
+      const lines = text.slice(0, -1).split("\n");
+      const events: RecordedEvent[] = [];
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (line.length === 0) {
+          throw new Error(`event log contains an empty line at ${index + 1}`);
+        }
+        const event = parseEventLine(line);
+        if (event.sessionId !== sessionId) {
+          throw new Error(
+            `event log line ${index + 1} belongs to ${event.sessionId}`,
+          );
+        }
+        const expectedSeq = index + 1;
+        if (!Number.isSafeInteger(event.seq) || event.seq !== expectedSeq) {
+          throw new Error(
+            `event log line ${
+              index + 1
+            } has seq ${event.seq}; expected ${expectedSeq}`,
+          );
+        }
+        events.push(event);
+      }
+      return events;
+    } catch (error) {
+      return await removeCorrupt(sessionId, path, error);
+    }
+  };
 
   const append: EventLog["append"] = async (raw) => {
     if (!isSafeId(raw.sessionId)) {
@@ -59,56 +138,9 @@ export const makeEventLog = (opts: EventLogOptions): EventLog => {
     sessionId: string,
     fromSeq = 0,
   ): AsyncIterable<RecordedEvent> {
-    if (!isSafeId(sessionId)) {
-      throw new Error(`unsafe sessionId: ${sessionId}`);
-    }
-    const path = pathFor(sessionsDir, sessionId);
-    let fh: Deno.FsFile | null = null;
-    try {
-      fh = await Deno.open(path, { read: true });
-    } catch (e) {
-      if (e instanceof Deno.errors.NotFound) return;
-      throw e;
-    }
-    if (!fh) return;
-    try {
-      const decoder = new TextDecoder();
-      let pending = "";
-      while (true) {
-        const chunk = new Uint8Array(64 * 1024);
-        const n = await fh.read(chunk);
-        if (n === null || n === 0) break;
-        pending += decoder.decode(chunk.subarray(0, n), { stream: true });
-        let nl: number;
-        while ((nl = pending.indexOf("\n")) !== -1) {
-          const raw_line = pending.slice(0, nl);
-          pending = pending.slice(nl + 1);
-          if (raw_line.length === 0) continue;
-          try {
-            const evt = parseEventLine(raw_line);
-            if (evt.seq >= fromSeq) yield evt;
-          } catch (e) {
-            logger.warn("malformed jsonl line skipped: {err}", {
-              err: String(e),
-            });
-          }
-        }
-      }
-      // flush any trailing partial line
-      if (pending.trim().length > 0) {
-        try {
-          const evt = parseEventLine(pending);
-          if (evt.seq >= fromSeq) yield evt;
-        } catch {
-          // ignore trailing garbage
-        }
-      }
-    } finally {
-      try {
-        fh.close();
-      } catch {
-        // ignored
-      }
+    const events = await readValidated(sessionId);
+    for (const event of events) {
+      if (event.seq >= fromSeq) yield event;
     }
   };
 
@@ -128,62 +160,11 @@ export const makeEventLog = (opts: EventLogOptions): EventLog => {
   };
 
   const lastSeq: EventLog["lastSeq"] = async (sessionId: string) => {
-    if (!isSafeId(sessionId)) return 0;
-    const path = pathFor(sessionsDir, sessionId);
-    let last = 0;
-    try {
-      const fh = await Deno.open(path, { read: true });
-      try {
-        const decoder = new TextDecoder();
-        let pending = "";
-        while (true) {
-          const chunk = new Uint8Array(32 * 1024);
-          const n = await fh.read(chunk);
-          if (n === null || n === 0) break;
-          pending += decoder.decode(chunk.subarray(0, n), { stream: true });
-          let nl: number;
-          while ((nl = pending.indexOf("\n")) !== -1) {
-            const raw_line = pending.slice(0, nl);
-            pending = pending.slice(nl + 1);
-            if (raw_line.length === 0) continue;
-            try {
-              const evt = parseEventLine(raw_line);
-              if (evt.seq > last) last = evt.seq;
-            } catch {
-              // skip malformed
-            }
-          }
-        }
-      } finally {
-        try {
-          fh.close();
-        } catch {
-          // ignored
-        }
-      }
-    } catch (e) {
-      if (!(e instanceof Deno.errors.NotFound)) throw e;
-    }
-    return last;
+    const events = await readValidated(sessionId);
+    return events.at(-1)?.seq ?? 0;
   };
 
-  const rebuildProjection: EventLog["rebuildProjection"] = async (
-    sessionId,
-    apply,
-  ): Promise<number> => {
-    let count = 0;
-    for await (const evt of replay(sessionId, 0)) {
-      await apply(evt);
-      count += 1;
-    }
-    logger.info("rebuilt projection for session {id} from {n} events", {
-      id: sessionId,
-      n: count,
-    });
-    return count;
-  };
-
-  return { append, replay, listSessions, lastSeq, rebuildProjection };
+  return { append, replay, listSessions, lastSeq };
 };
 
 export { SCHEMA_VERSION };
