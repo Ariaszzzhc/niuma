@@ -37,6 +37,8 @@ export interface TuiMessage {
 export type ToolCallStatus = "running" | "done" | "denied";
 
 export interface TuiToolCall {
+  /** Stable synthetic id that anchors the call in transcript chronology. */
+  readonly id: string;
   readonly callId: string;
   readonly name: string;
   /** Raw tool arguments from the event (arbitrary JSON). */
@@ -400,13 +402,21 @@ export const reduceEvent = (
 
     // -- tool calls --------------------------------------------------------
     case "tool.call.requested": {
-      const callId = asString(d["callId"]) ?? nextId("c");
+      const eventCallId = asString(d["callId"]);
       // A repeated request for an already-tracked callId (replay / duplicate
       // live delivery) is a no-op: appending a second entry would double-
       // render the card and, if the original already finished, resurrect it
       // as a fresh "running" call.
-      if (model.toolCalls.some((c) => c.callId === callId)) return model;
+      if (
+        eventCallId !== null &&
+        model.toolCalls.some((c) => c.callId === eventCallId)
+      ) {
+        return model;
+      }
+      const id = nextId("t");
+      const callId = eventCallId ?? id;
       const call: TuiToolCall = {
+        id,
         callId,
         name: asString(d["name"]) ?? "tool",
         input: d["input"],

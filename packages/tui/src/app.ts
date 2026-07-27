@@ -443,16 +443,14 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
    * They are passed through verbatim — never re-derived from the offset — so an
    * incoming SSE event while the user is scrolled up cannot re-pin the view.
    *
-   * INTERLEAVING NOTE: messages and notices are merged chronologically via
-   * the shared id counter (see below); tool calls still live in a separate
-   * array and are appended after the text/notice timeline, and the live
-   * streaming text goes last. Perfect message/tool interleaving would need
-   * a single ordered timeline in reduce_event (future refinement).
+   * Messages, notices, tool calls, and the live streaming message all receive
+   * ids from reduce_event's shared counter. Merging every channel by that id
+   * preserves the event chronology while allowing each channel's reducer to
+   * update its own entries in place.
    */
   const buildTranscriptMessages = (model: AppModel): ChatMessage[] => {
-    // Messages and notices share reduce_event's id counter, so the numeric
-    // id suffix is a total chronological order across both channels — merge
-    // by it instead of appending notices at the end.
+    // The numeric id suffix is a total chronological order across every
+    // transcript channel.
     const seqOf = (id: string): number => {
       const n = Number(id.replace(/^[^\d]+/, ""));
       return Number.isFinite(n) ? n : 0;
@@ -472,26 +470,29 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
         seq: seqOf(n.id),
         msg: { role: "notice", text: n.text, kind: n.kind } as ChatMessage,
       })),
+      ...model.state.toolCalls.map((c) => ({
+        seq: seqOf(c.id),
+        msg: {
+          role: "tool",
+          call: toToolCallView(c),
+        } as ChatMessage,
+      })),
     ];
-    timed.sort((a, b) => a.seq - b.seq);
-    const toolMsgs: ChatMessage[] = model.state.toolCalls.map(
-      (c): ChatMessage => ({ role: "tool", call: toToolCallView(c) }),
-    );
-    let messages: ChatMessage[] = [...timed.map((t) => t.msg), ...toolMsgs];
     const streaming = model.state.streaming;
     if (
       streaming && (streaming.text.length > 0 || streaming.thinking.length > 0)
     ) {
-      messages = [
-        ...messages,
-        {
+      timed.push({
+        seq: seqOf(streaming.id),
+        msg: {
           role: "assistant",
           text: streaming.text,
           thinking: streaming.thinking,
         },
-      ];
+      });
     }
-    return messages;
+    timed.sort((a, b) => a.seq - b.seq);
+    return timed.map((t) => t.msg);
   };
 
   const toTranscriptState = (model: AppModel): TranscriptState => ({

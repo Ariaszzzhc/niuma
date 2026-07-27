@@ -19,7 +19,7 @@
 // markdown renderer -> stringWidth), so it is warmed at module load.
 // ===========================================================================
 
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import type { InputEvent, KeyMods, NamedKey } from "@niuma/tuikit";
 import { stringWidth } from "@niuma/tuikit";
 import type { RecordedEvent, SessionInfo } from "@niuma/schema";
@@ -145,6 +145,74 @@ Deno.test("app scroll: scrolling up breaks follow and survives an SSE event", ()
     offsetAfterScroll,
     "offset unchanged by the SSE event",
   );
+});
+
+Deno.test("app transcript: finalizing streaming text preserves tool-call order", () => {
+  const program = buildProgram({
+    client: fakeClient,
+    theme: darkTheme,
+    version: "test",
+    workspace: "/w",
+    size: { cols: 100, rows: 24 },
+  });
+  const u = step(program.update);
+  let model = program.init()[0];
+
+  const assertOrder = (label: string): void => {
+    const text = program.view(model)
+      .map((line) => line.spans.map((span) => span.text).join(""))
+      .join("\n");
+    const before = text.indexOf("BEFORE_TOOL");
+    const tool = text.indexOf("ORDER_PROBE");
+    const after = text.indexOf("AFTER_TOOL");
+    assert(before >= 0, `${label}: missing text before tool`);
+    assert(tool >= 0, `${label}: missing tool call`);
+    assert(after >= 0, `${label}: missing text after tool`);
+    assert(
+      before < tool && tool < after,
+      `${label}: expected before < tool < after`,
+    );
+  };
+
+  model = u(model, sse("text.delta", { delta: "BEFORE_TOOL" }));
+  model = u(
+    model,
+    sse("assistant.message", {
+      parts: [],
+      usage: { inputTokens: 0, outputTokens: 0 },
+    }),
+  );
+  model = u(
+    model,
+    sse("tool.call.requested", {
+      callId: "order-probe",
+      name: "ORDER_PROBE",
+      input: {},
+    }),
+  );
+  model = u(
+    model,
+    sse("tool.result", {
+      callId: "order-probe",
+      content: "",
+      isError: false,
+      durationMs: 1,
+    }),
+  );
+  model = u(model, sse("text.delta", { delta: "AFTER_TOOL" }));
+  assertOrder("while streaming");
+
+  model = u(
+    model,
+    sse("assistant.message", {
+      parts: [],
+      usage: { inputTokens: 0, outputTokens: 0 },
+    }),
+  );
+  assertOrder("after assistant.message");
+
+  model = u(model, sse("turn.completed", { stopReason: "stop" }));
+  assertOrder("after turn.completed");
 });
 
 Deno.test("app scroll: line keys stay in the editor (they never scroll the transcript)", () => {
