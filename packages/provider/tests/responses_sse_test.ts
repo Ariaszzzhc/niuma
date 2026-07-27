@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertRejects } from "@std/assert";
 import type { StreamEvent } from "../src/domain.ts";
 import { InvalidResponse } from "../src/errors.ts";
 import { parseResponsesSSE } from "../src/responses_sse.ts";
@@ -173,7 +173,9 @@ Deno.test("parseResponsesSSE falls back total_tokens to input+output when wire o
 Deno.test("parseResponsesSSE skips unknown event types (forward-compatible)", async () => {
   const events = await collect(
     evt("response.created", { response: { id: "resp_1" } }),
-    evt("response.web_search_call.in_progress", { item: { type: "web_search_call" } }),
+    evt("response.web_search_call.in_progress", {
+      item: { type: "web_search_call" },
+    }),
     evt("response.output_text.delta", { delta: "ok" }),
     evt("response.completed", { response: { status: "completed" } }),
   );
@@ -205,12 +207,15 @@ Deno.test("parseResponsesSSE omits encrypted when reasoning item lacks encrypted
 
 Deno.test("parseResponsesSSE throws InvalidResponse on malformed JSON", async () => {
   await assertRejects(
-    () => drain(new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode("data: {not json\n\n"));
-        controller.close();
-      },
-    })),
+    () =>
+      drain(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("data: {not json\n\n"));
+            controller.close();
+          },
+        }),
+      ),
     InvalidResponse,
   );
 });
@@ -407,8 +412,8 @@ Deno.test("parseResponsesSSE: empty delta text in output_text.delta is skipped",
 });
 
 Deno.test("parseResponsesSSE: response.output_item.done with no type is a no-op", async () => {
-  // The schema allows an item without a type discriminator (legacy or
-  // forward-incompatible items). The parser must skip it cleanly.
+  // The schema allows an item without a type discriminator. The parser must
+  // skip it cleanly.
   const events = await collect(
     evt("response.output_item.done", {
       item: { id: "weird", name: "x" },
@@ -513,7 +518,9 @@ Deno.test("parseResponsesSSE: chunked delivery across reader.read() boundaries",
     start(controller) {
       controller.enqueue(encoder.encode("data: "));
       controller.enqueue(encoder.encode(json.slice(0, 25)));
-      controller.enqueue(encoder.encode(json.slice(25) + "\n\ndata: [DONE]\n\n"));
+      controller.enqueue(
+        encoder.encode(json.slice(25) + "\n\ndata: [DONE]\n\n"),
+      );
       controller.close();
     },
   });
@@ -554,7 +561,8 @@ Deno.test("parseResponsesSSE: response.failed without an error payload still thr
   // A failed event with no error.code/message must still throw (never mask);
   // the fallback string keeps the message non-empty for logs/diagnostics.
   await assertRejects(
-    () => drain(sse(evt("response.failed", { response: { status: "failed" } }))),
+    () =>
+      drain(sse(evt("response.failed", { response: { status: "failed" } }))),
     InvalidResponse,
     "unknown error",
   );

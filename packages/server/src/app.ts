@@ -41,6 +41,8 @@ export interface ServerApp {
     unknown
   >;
   readonly bootstrap: BootstrapResult;
+  /** Dispose the Effect runtime, MCP transports, and projection. Idempotent. */
+  readonly close: () => Promise<void>;
 }
 
 export const createServerApp = async (
@@ -181,7 +183,25 @@ export const createServerApp = async (
     )
   );
 
-  return { app, kernel, sessionManager, runtime, bootstrap: boot };
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    try {
+      await runtime.dispose();
+    } finally {
+      await boot.close();
+    }
+  };
+
+  return {
+    app,
+    kernel,
+    sessionManager,
+    runtime,
+    bootstrap: boot,
+    close,
+  };
 };
 
 const safeJson = async (c: HonoContext): Promise<unknown> => {

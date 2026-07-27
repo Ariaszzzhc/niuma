@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { Effect, Stream } from "effect";
 import { VERSION } from "@niuma/config";
 import {
@@ -8,7 +8,10 @@ import {
   type ResponsesAdapterConfig,
 } from "../src/responses.ts";
 import { AuthFailed, RateLimited } from "../src/errors.ts";
-import { messagesToResponses, toolsToResponses } from "../src/responses_convert.ts";
+import {
+  messagesToResponses,
+  toolsToResponses,
+} from "../src/responses_convert.ts";
 import type { ChatRequest } from "../src/domain.ts";
 
 // =============================================================================
@@ -24,7 +27,11 @@ const apiKeyConfig = (
 });
 
 const oauthConfig = (
-  overrides: { tokenSource?: OAuthTokenSource; defaultModel?: string; baseUrl?: string } = {},
+  overrides: {
+    tokenSource?: OAuthTokenSource;
+    defaultModel?: string;
+    baseUrl?: string;
+  } = {},
 ): ResponsesAdapterConfig => ({
   baseUrl: overrides.baseUrl ?? "https://api.openai.com/v1",
   defaultModel: overrides.defaultModel ?? "gpt-5",
@@ -112,7 +119,11 @@ Deno.test("Responses buildBody hoists system to instructions, forces store:false
   assertEquals(body.stream, true);
   assertEquals(body.model, "gpt-5");
   assertEquals(body.input, [
-    { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "hi" }],
+    },
   ]);
 });
 
@@ -165,7 +176,11 @@ Deno.test("Responses buildBody emits tools as function tools with strict:false",
   const { body } = await captureRequest(apiKeyConfig(), {
     model: "gpt-5",
     messages: [],
-    tools: [{ name: "search", description: "look up", parameters: { type: "object" } }],
+    tools: [{
+      name: "search",
+      description: "look up",
+      parameters: { type: "object" },
+    }],
   });
   assertEquals(body.tools, [
     {
@@ -219,7 +234,11 @@ Deno.test("messagesToResponses maps tool results to function_call_output items",
       { role: "tool", content: "result", toolCallId: "call_1" },
     ]),
     [
-      { type: "message", role: "user", content: [{ type: "input_text", text: "q" }] },
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "q" }],
+      },
       { type: "function_call_output", call_id: "call_1", output: "result" },
     ],
   );
@@ -229,17 +248,20 @@ Deno.test("toolsToResponses defaults description/parameters only when set, alway
   assertEquals(toolsToResponses([{ name: "n1" }]), [
     { type: "function", name: "n1", strict: false },
   ]);
-  assertEquals(toolsToResponses([
-    { name: "n2", description: "doc", parameters: { type: "object" } },
-  ]), [
-    {
-      type: "function",
-      name: "n2",
-      strict: false,
-      description: "doc",
-      parameters: { type: "object" },
-    },
-  ]);
+  assertEquals(
+    toolsToResponses([
+      { name: "n2", description: "doc", parameters: { type: "object" } },
+    ]),
+    [
+      {
+        type: "function",
+        name: "n2",
+        strict: false,
+        description: "doc",
+        parameters: { type: "object" },
+      },
+    ],
+  );
 });
 
 // =============================================================================
@@ -270,7 +292,10 @@ Deno.test("Responses oauth omits ChatGPT-Account-Id when accountId undefined", a
     }),
     { model: "gpt-5", messages: [], tools: [] },
   );
-  assertEquals("chatgpt-account-id" in (headers as Record<string, string>), false);
+  assertEquals(
+    "chatgpt-account-id" in (headers as Record<string, string>),
+    false,
+  );
 });
 
 Deno.test("Responses apiKey posts to {baseUrl}/responses with a Bearer key, no oauth headers", async () => {
@@ -314,7 +339,10 @@ Deno.test("Responses oauth 401 triggers invalidateAndRefresh and retries the POS
               Effect.succeed({ accessToken: "tok-1", accountId: "acct-1" }),
             invalidateAndRefresh: () => {
               refreshCalls++;
-              return Effect.succeed({ accessToken: "tok-2", accountId: "acct-1" });
+              return Effect.succeed({
+                accessToken: "tok-2",
+                accountId: "acct-1",
+              });
             },
           },
         })).stream({ model: "gpt-5", messages: [], tools: [] }),
@@ -329,7 +357,8 @@ Deno.test("Responses oauth 401 triggers invalidateAndRefresh and retries the POS
 
 Deno.test("Responses oauth second 401 surfaces AuthFailed (retry bounded to one)", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(new Response("unauth", { status: 401 }));
+  globalThis.fetch = () =>
+    Promise.resolve(new Response("unauth", { status: 401 }));
   try {
     const tag = await failureTag(oauthConfig(), {
       model: "gpt-5",
@@ -344,7 +373,8 @@ Deno.test("Responses oauth second 401 surfaces AuthFailed (retry bounded to one)
 
 Deno.test("Responses apiKey 401 surfaces AuthFailed without invoking any token source", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(new Response("unauth", { status: 401 }));
+  globalThis.fetch = () =>
+    Promise.resolve(new Response("unauth", { status: 401 }));
   try {
     const tag = await failureTag(apiKeyConfig(), {
       model: "gpt-5",
@@ -365,7 +395,9 @@ Deno.test("Responses apiKey 401 surfaces AuthFailed without invoking any token s
 Deno.test("Responses 400 context-too-long surfaces ContextOverflow (non-retryable)", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () =>
-    Promise.resolve(new Response("this model's context window is too long", { status: 400 }));
+    Promise.resolve(
+      new Response("this model's context window is too long", { status: 400 }),
+    );
   try {
     const tag = await failureTag(apiKeyConfig(), {
       model: "gpt-5",
@@ -398,16 +430,20 @@ Deno.test("Responses 400 generic surfaces InvalidResponse", async () => {
 // listModels
 // =============================================================================
 Deno.test("Responses oauth listModels returns the static default (no /models on codex backend)", async () => {
-  const models = await Effect.runPromise(makeResponsesAdapter(oauthConfig()).listModels());
+  const models = await Effect.runPromise(
+    makeResponsesAdapter(oauthConfig()).listModels(),
+  );
   assertEquals(models, [{ id: "gpt-5", name: "gpt-5" }]);
 });
 
 Deno.test("Responses apiKey listModels falls back to defaultModel on failure", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(new Response("boom", { status: 500 }));
+  globalThis.fetch = () =>
+    Promise.resolve(new Response("boom", { status: 500 }));
   try {
     const models = await Effect.runPromise(
-      makeResponsesAdapter(apiKeyConfig({ defaultModel: "gpt-5" })).listModels(),
+      makeResponsesAdapter(apiKeyConfig({ defaultModel: "gpt-5" }))
+        .listModels(),
     );
     assertEquals(models, [{ id: "gpt-5", name: "gpt-5" }]);
   } finally {
@@ -425,7 +461,9 @@ Deno.test("Responses apiKey listModels parses the /models catalogue on success",
       ),
     );
   try {
-    const models = await Effect.runPromise(makeResponsesAdapter(apiKeyConfig()).listModels());
+    const models = await Effect.runPromise(
+      makeResponsesAdapter(apiKeyConfig()).listModels(),
+    );
     assertEquals(models, [
       { id: "gpt-5", name: "gpt-5" },
       { id: "gpt-5-mini", name: "gpt-5-mini" },
@@ -562,7 +600,9 @@ Deno.test("Responses oauth 401: refresh path also runs successfully on the secon
   let call = 0;
   globalThis.fetch = () => {
     call++;
-    if (call === 1) return Promise.resolve(new Response("unauth", { status: 401 }));
+    if (call === 1) {
+      return Promise.resolve(new Response("unauth", { status: 401 }));
+    }
     return Promise.resolve(
       new Response("data: [DONE]\n", {
         status: 200,
@@ -728,7 +768,9 @@ Deno.test("Responses 429: a follow-up inspect of the error carries retryAfterMs"
     }
     if (!(caught instanceof RateLimited)) {
       throw new Error(
-        `expected RateLimited, got ${(caught as { _tag?: string })?._tag ?? typeof caught}`,
+        `expected RateLimited, got ${
+          (caught as { _tag?: string })?._tag ?? typeof caught
+        }`,
       );
     }
     assertEquals(caught.retryAfterMs, 7000);

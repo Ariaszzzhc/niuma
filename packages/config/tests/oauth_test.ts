@@ -1,8 +1,4 @@
-import {
-  assertEquals,
-  assertRejects,
-  assertStringIncludes,
-} from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { encodeBase64Url } from "@std/encoding";
 import {
   buildAuthorizeUrl,
@@ -77,7 +73,10 @@ const capturingFetch = (
 const formBody = (req: CapturedRequest): Record<string, string> =>
   Object.fromEntries(new URLSearchParams(req.body));
 
-const withFixedNow = async <T>(ms: number, fn: () => Promise<T> | T): Promise<T> => {
+const withFixedNow = async <T>(
+  ms: number,
+  fn: () => Promise<T> | T,
+): Promise<T> => {
   const real = Date.now;
   Date.now = () => ms;
   try {
@@ -128,7 +127,10 @@ Deno.test("buildAuthorizeUrl: carries every required param with originator=niuma
   const state = "state-123";
   const url = buildAuthorizeUrl(pkce, state);
   const parsed = new URL(url);
-  assertEquals(`${parsed.origin}${parsed.pathname}`, `${OAUTH_ISSUER}/oauth/authorize`);
+  assertEquals(
+    `${parsed.origin}${parsed.pathname}`,
+    `${OAUTH_ISSUER}/oauth/authorize`,
+  );
   const params = parsed.searchParams;
   assertEquals(params.get("response_type"), "code");
   assertEquals(params.get("client_id"), OAUTH_CLIENT_ID);
@@ -153,7 +155,9 @@ Deno.test("exchangeCode: posts form-encoded grant and parses the response", asyn
     refresh_token: "rtk",
     expires_in: 3600,
   };
-  const { fetchFn, requests } = capturingFetch(() => jsonResponse(200, tokenBody));
+  const { fetchFn, requests } = capturingFetch(() =>
+    jsonResponse(200, tokenBody)
+  );
   const tokens = await exchangeCode("the-code", stubPkce, { fetchFn });
   assertEquals(tokens, tokenBody);
 
@@ -161,7 +165,10 @@ Deno.test("exchangeCode: posts form-encoded grant and parses the response", asyn
   const req = requests[0]!;
   assertEquals(req.url, `${OAUTH_ISSUER}/oauth/token`);
   assertEquals(req.method, "POST");
-  assertEquals(req.headers.get("Content-Type"), "application/x-www-form-urlencoded");
+  assertEquals(
+    req.headers.get("Content-Type"),
+    "application/x-www-form-urlencoded",
+  );
   assertEquals(formBody(req), {
     grant_type: "authorization_code",
     code: "the-code",
@@ -220,7 +227,11 @@ Deno.test("refreshTokens: posts refresh grant and returns rotated tokens", async
     })
   );
   const tokens = await refreshTokens("old-r", { fetchFn });
-  assertEquals(tokens, { access_token: "new-a", refresh_token: "new-r", expires_in: 1800 });
+  assertEquals(tokens, {
+    access_token: "new-a",
+    refresh_token: "new-r",
+    expires_in: 1800,
+  });
   assertEquals(formBody(requests[0]!), {
     grant_type: "refresh_token",
     refresh_token: "old-r",
@@ -240,13 +251,20 @@ Deno.test("refreshTokens: keeps the input refresh token when the issuer omits it
 });
 
 Deno.test("refreshTokens: non-2xx throws OAuthError with status", async () => {
-  const { fetchFn } = capturingFetch(() => jsonResponse(401, { error: "invalid_grant" }));
-  const err = await assertRejects(() => refreshTokens("r", { fetchFn }), OAuthError);
+  const { fetchFn } = capturingFetch(() =>
+    jsonResponse(401, { error: "invalid_grant" })
+  );
+  const err = await assertRejects(
+    () => refreshTokens("r", { fetchFn }),
+    OAuthError,
+  );
   assertEquals(err.status, 401);
 });
 
 Deno.test("refreshTokens: response missing access_token throws OAuthError", async () => {
-  const { fetchFn } = capturingFetch(() => jsonResponse(200, { refresh_token: "r" }));
+  const { fetchFn } = capturingFetch(() =>
+    jsonResponse(200, { refresh_token: "r" })
+  );
   await assertRejects(
     () => refreshTokens("r", { fetchFn }),
     OAuthError,
@@ -265,8 +283,15 @@ Deno.test("requestDeviceCode: parses device_auth_id/user_code and string interva
     })
   );
   const dc = await requestDeviceCode({ fetchFn });
-  assertEquals(dc, { deviceAuthId: "daid-1", userCode: "USER-CODE", interval: 5 });
-  assertEquals(requests[0]!.url, `${OAUTH_ISSUER}/api/accounts/deviceauth/usercode`);
+  assertEquals(dc, {
+    deviceAuthId: "daid-1",
+    userCode: "USER-CODE",
+    interval: 5,
+  });
+  assertEquals(
+    requests[0]!.url,
+    `${OAUTH_ISSUER}/api/accounts/deviceauth/usercode`,
+  );
   assertEquals(
     JSON.parse(requests[0]!.body),
     { client_id: OAUTH_CLIENT_ID },
@@ -282,7 +307,10 @@ Deno.test("requestDeviceCode: accepts a numeric interval too", async () => {
 
 Deno.test("requestDeviceCode: non-2xx throws OAuthError", async () => {
   const { fetchFn } = capturingFetch(() => jsonResponse(404, "not enabled"));
-  const err = await assertRejects(() => requestDeviceCode({ fetchFn }), OAuthError);
+  const err = await assertRejects(
+    () => requestDeviceCode({ fetchFn }),
+    OAuthError,
+  );
   assertEquals(err.status, 404);
 });
 
@@ -313,7 +341,10 @@ Deno.test("pollDeviceAuth: 403 then 404 (pending) then 200 returns code+verifier
   assertEquals(requests.length, 3);
   for (const req of requests) {
     assertEquals(req.url, `${OAUTH_ISSUER}/api/accounts/deviceauth/token`);
-    assertEquals(JSON.parse(req.body), { device_auth_id: "daid", user_code: "uc" });
+    assertEquals(JSON.parse(req.body), {
+      device_auth_id: "daid",
+      user_code: "uc",
+    });
   }
 });
 
@@ -327,7 +358,9 @@ Deno.test("pollDeviceAuth: a terminal error status throws OAuthError", async () 
 });
 
 Deno.test("pollDeviceAuth: success response missing fields throws OAuthError", async () => {
-  const { fetchFn } = capturingFetch(() => jsonResponse(200, { authorization_code: "x" }));
+  const { fetchFn } = capturingFetch(() =>
+    jsonResponse(200, { authorization_code: "x" })
+  );
   await assertRejects(
     () => pollDeviceAuth("d", "u", 0, { fetchFn }),
     OAuthError,
@@ -349,13 +382,18 @@ Deno.test("parseJwtClaims: extracts the typed subset and drops unrelated fields"
       chatgpt_account_id: "flat",
       email: "u@example.com",
       organizations: [{ id: "org-1" }, { id: "org-2" }],
-      "https://api.openai.com/auth": { chatgpt_account_id: "ns", chatgpt_plan_type: "plus" },
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "ns",
+        chatgpt_plan_type: "plus",
+      },
       unrelated: "drop",
     }),
   )!;
   assertEquals(claims.chatgpt_account_id, "flat");
   assertEquals(claims.organizations, [{ id: "org-1" }, { id: "org-2" }]);
-  assertEquals(claims["https://api.openai.com/auth"], { chatgpt_account_id: "ns" });
+  assertEquals(claims["https://api.openai.com/auth"], {
+    chatgpt_account_id: "ns",
+  });
   // No leak of unrelated/email/plan-type into the typed object.
   assertEquals(
     "unrelated" in (claims as Record<string, unknown>),
@@ -369,17 +407,43 @@ Deno.test("extractAccountId: namespaced claim wins over flat claim and organizat
     organizations: [{ id: "org" }],
     "https://api.openai.com/auth": { chatgpt_account_id: "ns" },
   });
-  assertEquals(extractAccountId({ access_token: "a", refresh_token: "r", id_token: idToken }), "ns");
+  assertEquals(
+    extractAccountId({
+      access_token: "a",
+      refresh_token: "r",
+      id_token: idToken,
+    }),
+    "ns",
+  );
 });
 
 Deno.test("extractAccountId: flat claim used when namespaced is absent", () => {
-  const idToken = makeJwt({ chatgpt_account_id: "flat", organizations: [{ id: "org" }] });
-  assertEquals(extractAccountId({ access_token: "a", refresh_token: "r", id_token: idToken }), "flat");
+  const idToken = makeJwt({
+    chatgpt_account_id: "flat",
+    organizations: [{ id: "org" }],
+  });
+  assertEquals(
+    extractAccountId({
+      access_token: "a",
+      refresh_token: "r",
+      id_token: idToken,
+    }),
+    "flat",
+  );
 });
 
 Deno.test("extractAccountId: first organization id used when no account claim is present", () => {
-  const idToken = makeJwt({ organizations: [{ id: "org-a" }, { id: "org-b" }] });
-  assertEquals(extractAccountId({ access_token: "a", refresh_token: "r", id_token: idToken }), "org-a");
+  const idToken = makeJwt({
+    organizations: [{ id: "org-a" }, { id: "org-b" }],
+  });
+  assertEquals(
+    extractAccountId({
+      access_token: "a",
+      refresh_token: "r",
+      id_token: idToken,
+    }),
+    "org-a",
+  );
 });
 
 Deno.test("extractAccountId: falls back to the access_token when id_token has no account", () => {
@@ -407,7 +471,9 @@ Deno.test("extractAccountId: returns undefined when neither token carries an acc
 
 Deno.test("toOAuthAuth: expires = now + expires_in*1000, accountId propagated", async () => {
   await withFixedNow(1_700_000_000_000, () => {
-    const idToken = makeJwt({ "https://api.openai.com/auth": { chatgpt_account_id: "acct-1" } });
+    const idToken = makeJwt({
+      "https://api.openai.com/auth": { chatgpt_account_id: "acct-1" },
+    });
     const auth = toOAuthAuth({
       access_token: "a",
       refresh_token: "r",
@@ -501,7 +567,11 @@ Deno.test("extractAccountId: organizations with no extractable id is treated as 
     organizations: [{ id: 42 }, null, { name: "no-id" }],
   });
   assertEquals(
-    extractAccountId({ access_token: "a", refresh_token: "r", id_token: idToken }),
+    extractAccountId({
+      access_token: "a",
+      refresh_token: "r",
+      id_token: idToken,
+    }),
     undefined,
   );
 });
@@ -564,7 +634,10 @@ Deno.test("generatePkce: every generated verifier parses as a valid S256 challen
     const { verifier, challenge } = await generatePkce();
     const expected = encodeBase64Url(
       new Uint8Array(
-        await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(verifier),
+        ),
       ),
     );
     assertEquals(challenge, expected);
@@ -589,7 +662,9 @@ Deno.test("exchangeCode: 2xx response with non-JSON body throws OAuthError", asy
 });
 
 Deno.test("exchangeCode: 2xx non-object JSON body throws OAuthError", async () => {
-  const { fetchFn } = capturingFetch(() => jsonResponse(200, ["not", "object"]));
+  const { fetchFn } = capturingFetch(() =>
+    jsonResponse(200, ["not", "object"])
+  );
   const err = await assertRejects(
     () => exchangeCode("c", stubPkce, { fetchFn }),
     OAuthError,
@@ -679,7 +754,9 @@ Deno.test("requestDeviceCode: accepts user_code alias usercode", async () => {
 });
 
 Deno.test("requestDeviceCode: non-object JSON body throws OAuthError", async () => {
-  const { fetchFn } = capturingFetch(() => jsonResponse(200, ["not", "object"]));
+  const { fetchFn } = capturingFetch(() =>
+    jsonResponse(200, ["not", "object"])
+  );
   await assertRejects(() => requestDeviceCode({ fetchFn }), OAuthError);
 });
 

@@ -100,7 +100,11 @@ export async function* parseAnthropicSSE(
         const block = evt.content_block;
         if (!block) break;
         if (block.type === "tool_use") {
-          currentTool = { id: block.id ?? "", name: block.name ?? "", args: "" };
+          currentTool = {
+            id: block.id ?? "",
+            name: block.name ?? "",
+            args: "",
+          };
         } else if (block.type === "redacted_thinking") {
           currentRedactedData = block.data;
         }

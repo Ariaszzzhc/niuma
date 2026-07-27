@@ -148,9 +148,13 @@ export const runInteractive = async (
     );
     return 1;
   } finally {
-    // Tear down the worker regardless of outcome — leaking a background
-    // fiber that owns the SQLite projection / event bus is worse than a
-    // clean shutdown. The JSONL log is already flushed.
+    // Ask the worker to dispose its runtime, MCP transports, and projection
+    // before terminating the isolate.
+    try {
+      await tunnel.close();
+    } catch {
+      // The hard termination below remains the final safety net.
+    }
     try {
       tunnel.worker.terminate();
     } catch {

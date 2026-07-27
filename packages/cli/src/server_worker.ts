@@ -17,7 +17,7 @@
 // the terminal (the TUI draws into the alternate screen; one-shot reserves
 // stdout for the final answer).
 
-import { bootstrap, createServerApp, setupLogger } from "@niuma/server";
+import { bootstrap, createServerApp, log, setupLogger } from "@niuma/server";
 import { parseConfig } from "@niuma/config";
 import { makeMockProvider } from "@niuma/provider";
 import {
@@ -35,9 +35,9 @@ const activeReaders = new Map<
   ReadableStreamDefaultReader<Uint8Array>
 >();
 
-// Extended init shape for the smoke harness: `mockProvider: true` injects
-// the scripted network-free provider through bootstrap deps, replacing the
-// old NIUMA_MOCK_PROVIDER env switch. Production CLI spawns never set it.
+// Extended init shape for the smoke harness: `mockProvider: true` injects the
+// scripted network-free provider through bootstrap deps. Production CLI
+// spawns never set it.
 // (The flag is declared on TunnelOut's init variant in tunnel.ts.)
 
 self.onmessage = async (e: MessageEvent) => {
@@ -50,23 +50,24 @@ self.onmessage = async (e: MessageEvent) => {
       // JSON-lines file under <data>/log; level from [core] log_level in
       // config.toml. No console sink — see the header comment.
       await setupLogger();
-      const app = msg.mockProvider === true
+      const server = msg.mockProvider === true
         ? (await createServerApp({
           bootstrap: await bootstrap({
             config: parseConfig(""),
             infra: { provider: makeMockProvider() },
           }),
-        })).app
+        }))
         : (await createServerApp({
           bootstrap: await bootstrap({
             ...(msg.defaultModelRef !== undefined
               ? { defaultModelRef: msg.defaultModelRef }
               : {}),
           }),
-        })).app;
-      const appFetch = app.fetch.bind(app) as (
+        }));
+      const appFetch = server.app.fetch.bind(server.app) as (
         request: Request,
       ) => Promise<Response>;
+      let closing = false;
 
       // Request loop. Each message is dispatched concurrently — the tunnel
       // is designed for concurrent in-flight requests (SSE stream + approval
@@ -76,6 +77,7 @@ self.onmessage = async (e: MessageEvent) => {
         if (!inner || typeof inner !== "object") return;
         switch (inner.kind) {
           case "request": {
+            if (closing) return;
             // Fire-and-forget; handleTunnelRequest serialises the response
             // back through the port.
             void handleTunnelRequest(
@@ -95,6 +97,37 @@ self.onmessage = async (e: MessageEvent) => {
                 // Ignore — the pump loop will observe the rejection.
               }
             }
+            return;
+          }
+          case "shutdown": {
+            if (closing) return;
+            closing = true;
+            void (async () => {
+              for (const reader of activeReaders.values()) {
+                try {
+                  await reader.cancel("server shutting down");
+                } catch {
+                  // The response pump may already have closed it.
+                }
+              }
+              activeReaders.clear();
+              try {
+                await server.close();
+              } catch (error) {
+                log("niuma.cli.worker").error(
+                  "server resource shutdown failed: {error}",
+                  {
+                    error: error instanceof Error
+                      ? error.message
+                      : String(error),
+                  },
+                );
+              } finally {
+                port.postMessage({ kind: "closed" } satisfies TunnelIn);
+                port.close();
+                self.close();
+              }
+            })();
             return;
           }
           default: {

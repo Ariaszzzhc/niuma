@@ -11,8 +11,9 @@ HTTP+SSE server — all driving the same event-sourced agent core.
 The architecture is event-sourced: the JSONL event log (one file per session) is
 the source of truth, and a SQLite database (`niuma.db`) is a derived projection.
 The agent loop, permission engine, and tool pipeline are decoupled behind port
-interfaces and wired together with [Effect](https://effect.website) (v4 beta)
-services, streams, and layers.
+interfaces. [Effect](https://effect.website) (v4 beta) provides concurrency,
+streams, resource scopes, and the server's composition boundary; leaf modules
+use plain interfaces rather than parallel service wrappers.
 
 Runtime flow (one-shot mode as an example):
 
@@ -37,11 +38,10 @@ re-exports only), `src/` (implementation), `tests/` (`*_test.ts`).
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/schema`     | Currency types and Effect-Schema codecs for the whole system: domain, events, permission rules, wire protocol, JSONL log format. Exports `SCHEMA_VERSION`.                                                                                                                                                                                                                                                      |
 | `packages/provider`   | LLM provider layer: provider-agnostic domain (`ChatRequest`, `Message`, `ToolCall`, `StreamEvent`), adapters for OpenAI chat completions, OpenAI Responses, and Anthropic, plus SSE parsing, retry policy, error taxonomy (`RateLimited`, `Overloaded`, `ContextOverflow`, ...), and a scripted `MockProvider` for network-free tests.                                                                          |
-| `packages/store`      | Persistence: JSONL `EventLog` (source of truth), SQLite `Projection` (via kysely over a vendored `node:sqlite` dialect in `vendor/`), replay, data-dir paths.                                                                                                                                                                                                                                                   |
-| `packages/permission` | Rule-based permission engine: rule parser (`allow`/`deny`/`ask`), glob matching, sensitive-path detection, ordered policy chain, engine with snapshot support.                                                                                                                                                                                                                                                  |
+| `packages/permission` | Stateless permission policy primitives: glob compilation/matching, sensitive-path detection, and ordered `allow`/`deny`/`ask` evaluation. The session-scoped mutable engine lives in `packages/tools`.                                                                                                                                                                                                          |
 | `packages/tools`      | Built-in tools (`bash`, `read`, `write`, `edit`, `glob`, `grep`, `apply_patch`, `question`, `spawn_subagent`, `update_plan`) under `src/tools/`, plus the tool pipeline (authorize → execute), scheduler, output truncation/spill, and path resolution confined to the workspace root.                                                                                                                          |
-| `packages/agent`      | Agent core: `runTurn` loop, `AgentSession`/`SessionManager`, approval gateway, event→message context projection (replay folds `compaction.performed`), history compaction/summarization (`compactSession`), system-prompt builder. Depends on ports (`deps.ts`), not on concrete server/store.                                                                                                                  |
-| `packages/server`     | HTTP+SSE server (Hono): `Kernel` (append/replay/subscribe), session manager (prompt/compact/model/effort), event bus, bootstrap wiring (Effect Layers), handlers for sessions and events.                                                                                                                                                                                                                       |
+| `packages/agent`      | Agent core: `runTurn` loop, event→message context projection (replay folds `compaction.performed`), history compaction/summarization (`compactSession`), system-prompt builder, and the adapter from the agent tool port to `@niuma/tools`. Session and approval lifecycles belong to `packages/server`; the agent depends only on ports (`deps.ts`).                                                            |
+| `packages/server`     | HTTP+SSE server (Hono): canonical JSONL `EventLog` (source of truth), SQLite `Projection` (via kysely over the vendored `node:sqlite` dialect in `vendor/`), `Kernel` (append/replay/subscribe), session manager (prompt/compact/model/effort), event bus, bootstrap wiring (Effect Layers), handlers for sessions and events.                                                                                  |
 | `packages/config`     | Configuration: `config.toml` parsing and user/project merge, built-in providers (`builtin.ts`: kimi/openai login-and-go definitions + user-table overlay), `auth.json` credentials (API keys + OAuth), OAuth flows (ChatGPT in `oauth.ts`, Kimi device-code in `kimi_oauth.ts`), MCP config, custom slash commands (`commands/*.md` discovery + template expansion), `niumaPaths()` directory layout, `VERSION`. |
 | `packages/mcp`        | MCP client: connects to configured MCP servers and adapts MCP tools into niuma tools (`@modelcontextprotocol/sdk`).                                                                                                                                                                                                                                                                                              |
 | `packages/cli`        | Entrypoint (`src/main.ts`): subcommands `tui` (default), `-p` one-shot, `serve`, `auth`; argument parsing; server-worker spawn + fetch tunnel; stdin approval plumbing.                                                                                                                                                                                                                                         |
@@ -49,11 +49,12 @@ re-exports only), `src/` (implementation), `tests/` (`*_test.ts`).
 | `packages/tui`        | Interactive TUI: `runTui` entrypoint, built-in slash command dispatch (`src/commands.ts`), components (editor, transcript, approval overlay, command palette, completion menu, statusline, tool-call rendering), theme detection, markdown rendering, multi-session SSE client.                                                                                                                                 |
 | `scripts/smoke.ts`    | Network-free end-to-end smoke test (see below).                                                                                                                                                                                                                                                                                                                                                                 |
 
-Dependency direction: `schema` is the base; `provider`, `store`, `permission`,
-`config` sit above it; `tools`/`agent`/`mcp` compose those; `server` wires
-everything; `cli`/`tui` are the delivery surfaces. Lower packages must not
-import from higher ones. Cross-package imports always go through the `@niuma/*`
-aliases from the root import map — never relative paths that escape the package.
+Dependency direction: `schema` is the base; `provider`, `permission`, and
+`config` sit above it; `tools`/`agent`/`mcp` compose those; `server` owns
+persistence and wires everything; `cli`/`tui` are the delivery surfaces. Lower
+packages must not import from higher ones. Cross-package imports always go
+through the `@niuma/*` aliases from the root import map — never relative paths
+that escape the package.
 
 ## Build, run, and test commands
 
@@ -66,6 +67,10 @@ deno task test           # full test suite: deno test --allow-all --unstable-wor
 deno task cli -- ...     # run the CLI from source (alias for deno run --allow-all packages/cli/src/main.ts)
 deno task build:native   # cargo build --release of packages/tuikit/native (needed before TUI/FFI use)
 deno task build          # full pipeline: native build + deno compile -> dist/niuma(.exe), then a binary smoke run
+cd packages/tuikit/native
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
 ```
 
 Notes:
@@ -87,8 +92,9 @@ Notes:
   compile time. `--target <triple>` cross-compiles the JS side, but the cdylib
   must match the TARGET platform and already sit in
   `packages/tuikit/native/target/release/`. `dist/` is gitignored.
-- There is no CI configuration in the repo at present; `deno task check` +
-  `deno task test` are the gates.
+- There is no CI configuration in the repo at present. The gates are
+  `deno fmt --check`, `deno lint`, `deno task check`, `deno task test`, the
+  three Rust commands above, the network-free smoke test, and `deno task build`.
 
 ## Testing instructions
 
@@ -118,18 +124,18 @@ Notes:
 - House style is functional: `const f = (x): T => ...`, `readonly` interfaces,
   discriminated unions with `{ type, data }` shapes, no classes except where
   Effect services make them idiomatic.
-- Effect is the effect system: `Effect`/`Stream`/`Layer` for services and
-  concurrency. Follow the existing service pattern (`XService`, `XServiceLive`,
-  `XServiceShape`) instead of introducing a new DI style.
+- Use `Effect`/`Stream`/`Layer` where scoped resources, concurrency, or the
+  server runtime need them. Elsewhere prefer the existing plain port interfaces;
+  do not add a second DI representation for the same capability.
 - Every package exposes its public API exclusively through `mod.ts` re-exports;
   internal modules stay under `src/` and are imported with the `./src/` prefix
   inside the package. Don't re-export FFI internals from `@niuma/tuikit`
   (`binding_contract.ts` is types/constants only).
 - Modules open with a banner comment explaining the file's role and any
-  non-obvious invariants; keep those headers (and any "Fix X" design notes)
-  accurate when you change the code. Lint excludes `no-slow-types` deliberately
-  — where a suppression is needed, use `// deno-lint-ignore no-slow-types` as
-  the existing code does.
+  non-obvious invariants. Keep invariant comments current and remove historical
+  implementation notes once the implementation has landed. Lint excludes
+  `no-slow-types` deliberately — where a suppression is needed, use
+  `// deno-lint-ignore no-slow-types` as the existing code does.
 - Match Deno's default formatting (`deno fmt`); keep edits minimal and scoped to
   the package you are changing.
 
@@ -195,10 +201,9 @@ Notes:
 
 ## Security considerations
 
-- Every tool call passes through the permission engine (`@niuma/permission`): an
-  ordered allow/deny/ask rule chain, sensitive-path detection, and read-only
-  tool classification. Preserve this — never add a code path that executes a
-  tool without authorization.
+- Every tool call passes through `@niuma/tools`' permission engine, backed by
+  `@niuma/permission`'s ordered policy and sensitive-path primitives. Preserve
+  this — never add a code path that executes a tool without authorization.
 - Path tools resolve strictly within the workspace root (`resolvePath` /
   `resolveWithinRoot` in `@niuma/tools`); keep that confinement intact.
 - `auth.json` contains credentials: never log token material, and keep
@@ -207,10 +212,14 @@ Notes:
   every `extern fn` must `catch_unwind` and return the sentinel; the TS side
   (`ffi.ts`) raises `TuikitError` on it. The crate intentionally has no external
   dependencies except `windows-sys`.
-- `packages/store/vendor/` is vendored third-party code: excluded from
+- `packages/server/vendor/` is vendored third-party code: excluded from
   type-check/lint; do not hand-edit beyond syncing it.
 - The HTTP server validates session ids and binds locally by default; keep input
   validation in `handlers/` when adding endpoints.
 
 ## Current Status
-The project is currently under active development and has not had any official releases yet. With the exception of the database, do not introduce any backward compatibility code, technical debt, or data migration logic. If any corrupted user data is found in niuma, simply delete the corrupted data.
+
+The project is currently under active development and has not had any official
+releases yet. With the exception of the database, do not introduce any backward
+compatibility code, technical debt, or data migration logic. If any corrupted
+user data is found in niuma, simply delete the corrupted data.

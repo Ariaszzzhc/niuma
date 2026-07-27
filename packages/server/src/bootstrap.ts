@@ -82,6 +82,8 @@ export interface BootstrapResult {
    * own the process lifecycle may close() them on shutdown; the worker
    * exiting also reaps stdio subprocesses. */
   readonly mcpServers: ReadonlyArray<McpServerHandle>;
+  /** Release MCP transports and the SQLite projection. Idempotent. */
+  readonly close: () => Promise<void>;
   readonly kernelLayer: Layer.Layer<Kernel, never, never>;
   readonly sessionLayer: Layer.Layer<SessionManager, never, Kernel>;
 }
@@ -386,6 +388,33 @@ export const bootstrap = async (
     ),
   );
 
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    const failures: unknown[] = [];
+    for (const server of [...mcpServers].reverse()) {
+      try {
+        await server.close();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    try {
+      await Effect.runPromise(bus.shutdown());
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      projection.close();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "failed to close server resources");
+    }
+  };
+
   return {
     paths,
     event_log,
@@ -394,6 +423,7 @@ export const bootstrap = async (
     infra,
     config,
     mcpServers,
+    close,
     kernelLayer,
     sessionLayer,
   };

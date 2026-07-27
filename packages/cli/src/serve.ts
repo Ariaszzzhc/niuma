@@ -78,6 +78,7 @@ export const runServe = async (opts: ServeOptions): Promise<number> => {
     } catch {
       // Platform without SIGTERM or already removed.
     }
+    await app.close();
   }
 
   return 0;

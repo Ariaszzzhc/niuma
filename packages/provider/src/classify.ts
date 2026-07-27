@@ -4,8 +4,8 @@ import {
   ContextOverflow,
   InvalidResponse,
   Overloaded,
-  RateLimited,
   type ProviderError,
+  RateLimited,
 } from "./errors.ts";
 
 // Shared HTTP-status -> ProviderError ladder for every fetch-based adapter.

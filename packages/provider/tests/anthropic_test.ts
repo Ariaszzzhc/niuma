@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { Effect, Stream } from "effect";
 import { VERSION } from "@niuma/config";
 import {
@@ -15,11 +15,11 @@ import type { ChatRequest, StreamEvent } from "../src/domain.ts";
 const sseEvent = (
   event: string,
   data: Record<string, unknown>,
-): string =>
-  `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+): string => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
-const sseBody = (...events: ReadonlyArray<readonly [string, Record<string, unknown>]>):
-  ReadableStream<Uint8Array> => {
+const sseBody = (
+  ...events: ReadonlyArray<readonly [string, Record<string, unknown>]>
+): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
   const text = events.map(([e, d]) => sseEvent(e, d)).join("");
   return new ReadableStream({
@@ -35,7 +35,10 @@ const collectSSE = async (
 ): Promise<StreamEvent[]> => {
   const out: StreamEvent[] = [];
   for await (
-    const event of parseAnthropicSSE(sseBody(...events), new AbortController().signal)
+    const event of parseAnthropicSSE(
+      sseBody(...events),
+      new AbortController().signal,
+    )
   ) {
     out.push(event);
   }
@@ -49,7 +52,10 @@ Deno.test("parseAnthropicSSE emits full event sequence ending in tool_calls Fini
       "content_block_start",
       { index: 0, content_block: { type: "thinking", thinking: "" } },
     ],
-    ["content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "plan" } }],
+    ["content_block_delta", {
+      index: 0,
+      delta: { type: "thinking_delta", thinking: "plan" },
+    }],
     [
       "content_block_delta",
       { index: 0, delta: { type: "signature_delta", signature: "sig-A" } },
@@ -59,15 +65,30 @@ Deno.test("parseAnthropicSSE emits full event sequence ending in tool_calls Fini
       "content_block_start",
       { index: 1, content_block: { type: "text", text: "" } },
     ],
-    ["content_block_delta", { index: 1, delta: { type: "text_delta", text: "Hello " } }],
-    ["content_block_delta", { index: 1, delta: { type: "text_delta", text: "world" } }],
+    ["content_block_delta", {
+      index: 1,
+      delta: { type: "text_delta", text: "Hello " },
+    }],
+    ["content_block_delta", {
+      index: 1,
+      delta: { type: "text_delta", text: "world" },
+    }],
     ["content_block_stop", { index: 1 }],
     [
       "content_block_start",
-      { index: 2, content_block: { type: "tool_use", id: "call_1", name: "lookup" } },
+      {
+        index: 2,
+        content_block: { type: "tool_use", id: "call_1", name: "lookup" },
+      },
     ],
-    ["content_block_delta", { index: 2, delta: { type: "input_json_delta", partial_json: '{"q' } }],
-    ["content_block_delta", { index: 2, delta: { type: "input_json_delta", partial_json: 'uery":"x"}' } }],
+    ["content_block_delta", {
+      index: 2,
+      delta: { type: "input_json_delta", partial_json: '{"q' },
+    }],
+    ["content_block_delta", {
+      index: 2,
+      delta: { type: "input_json_delta", partial_json: 'uery":"x"}' },
+    }],
     ["content_block_stop", { index: 2 }],
     [
       "message_delta",
@@ -104,10 +125,16 @@ Deno.test("parseAnthropicSSE emits redacted_thinking as encrypted-only ThinkingD
     ["message_start", { message: { usage: { input_tokens: 4 } } }],
     [
       "content_block_start",
-      { index: 0, content_block: { type: "redacted_thinking", data: "blob-data" } },
+      {
+        index: 0,
+        content_block: { type: "redacted_thinking", data: "blob-data" },
+      },
     ],
     ["content_block_stop", { index: 0 }],
-    ["content_block_delta", { index: 0, delta: { type: "text_delta", text: "ok" } }],
+    ["content_block_delta", {
+      index: 0,
+      delta: { type: "text_delta", text: "ok" },
+    }],
     ["content_block_stop", { index: 1 }],
     ["message_delta", { delta: { stop_reason: "end_turn" } }],
     ["message_stop", {}],
@@ -178,10 +205,12 @@ const captureBodyAndHeaders = async (
     headers = (init as RequestInit | undefined)?.headers;
     const raw = (init as RequestInit | undefined)?.body;
     body = JSON.parse(String(raw)) as Record<string, unknown>;
-    return Promise.resolve(new Response(sseText, {
-      status: 200,
-      headers: { "content-type": "text/event-stream" },
-    }));
+    return Promise.resolve(
+      new Response(sseText, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
   };
   try {
     const adapter = makeAnthropicAdapter({
@@ -357,13 +386,16 @@ Deno.test("messagesToAnthropic keeps only signed thinking blocks (drops signatur
 });
 
 Deno.test("toolsToAnthropic defaults to empty input_schema and forwards description only when set", () => {
-  assertEquals(toolsToAnthropic([
-    { name: "n1" },
-    { name: "n2", description: "doc", parameters: { type: "object" } },
-  ]), [
-    { name: "n1", input_schema: {} },
-    { name: "n2", description: "doc", input_schema: { type: "object" } },
-  ]);
+  assertEquals(
+    toolsToAnthropic([
+      { name: "n1" },
+      { name: "n2", description: "doc", parameters: { type: "object" } },
+    ]),
+    [
+      { name: "n1", input_schema: {} },
+      { name: "n2", description: "doc", input_schema: { type: "object" } },
+    ],
+  );
 });
 
 // =============================================================================
@@ -371,7 +403,8 @@ Deno.test("toolsToAnthropic defaults to empty input_schema and forwards descript
 // =============================================================================
 Deno.test("Anthropic listModels falls back to defaultModel on failure", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(new Response("boom", { status: 500 }));
+  globalThis.fetch = () =>
+    Promise.resolve(new Response("boom", { status: 500 }));
   try {
     const adapter = makeAnthropicAdapter({
       baseUrl: "https://example.test",
@@ -388,15 +421,17 @@ Deno.test("Anthropic listModels falls back to defaultModel on failure", async ()
 Deno.test("Anthropic listModels parses the documented /v1/models response on success", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () =>
-    Promise.resolve(new Response(
-      JSON.stringify({
-        data: [
-          { id: "claude-x", display_name: "Claude X" },
-          { id: "claude-y" },
-        ],
-      }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    ));
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: "claude-x", display_name: "Claude X" },
+            { id: "claude-y" },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
   try {
     const adapter = makeAnthropicAdapter({
       baseUrl: "https://example.test",

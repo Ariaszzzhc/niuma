@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { niumaFetch } from "../src/http.ts";
 import { VERSION } from "@niuma/config";
 

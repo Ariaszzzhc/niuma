@@ -33,7 +33,8 @@ export type TunnelOut =
     defaultModelRef?: string;
   }
   | TunnelRequest
-  | { kind: "cancel"; id: string };
+  | { kind: "cancel"; id: string }
+  | { kind: "shutdown" };
 
 export interface TunnelRequest {
   kind: "request";
@@ -48,6 +49,7 @@ export interface TunnelRequest {
 export type TunnelIn =
   | { kind: "ready" }
   | { kind: "init_error"; message: string }
+  | { kind: "closed" }
   | {
     kind: "response";
     id: string;
@@ -82,6 +84,8 @@ export interface TunnelFetch {
   readonly ready: Promise<void>;
   /** Explicitly cancel an in-flight request (idempotent, no-op if unknown). */
   readonly cancel: (id: string) => void;
+  /** Ask the worker to release its server resources. Idempotent. */
+  readonly close: () => Promise<void>;
   /** The underlying port — exposed so callers can detach it on shutdown. */
   readonly port: MessagePort;
   /** The worker handle — exposed so callers can terminate it on shutdown. */
@@ -123,6 +127,10 @@ export const setupTunnel = (
     readyResolve = resolve;
     readyReject = reject;
   });
+  let closedResolve!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    closedResolve = resolve;
+  });
 
   const onMessage = (ev: MessageEvent) => {
     const msg = ev.data as TunnelIn | undefined;
@@ -135,6 +143,11 @@ export const setupTunnel = (
     }
     if (msg.kind === "init_error") {
       readyReject(new Error(msg.message));
+      closedResolve();
+      return;
+    }
+    if (msg.kind === "closed") {
+      closedResolve();
       return;
     }
 
@@ -215,14 +228,15 @@ export const setupTunnel = (
       entry.reject(new Error(`server worker error: ${message}`));
     }
     inflight.clear();
+    closedResolve();
     // The caller is responsible for calling Deno.exit; we only signal.
   });
 
   // Hand port1 to the worker. The transfer list detaches port1 in this
   // thread; only the worker may post through it from now on. The optional
-  // mockProvider flag is the smoke harness's injection channel (replaces
-  // the old NIUMA_MOCK_PROVIDER env switch); defaultModelRef carries the
-  // one-shot's resolved model ref so the worker binds the right provider.
+  // mockProvider flag is the smoke harness's injection channel;
+  // defaultModelRef carries the one-shot's resolved model ref so the worker
+  // binds the right provider.
   worker.postMessage(
     {
       kind: "init",
@@ -274,7 +288,36 @@ export const setupTunnel = (
     port.postMessage({ kind: "cancel", id } satisfies TunnelOut);
   };
 
-  return { fetch: tunnelFetch, ready, cancel, port, worker };
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    if (closing) return closing;
+    closing = (async () => {
+      try {
+        await ready;
+        port.postMessage({ kind: "shutdown" } satisfies TunnelOut);
+        await waitForClose(closed);
+      } finally {
+        port.close();
+      }
+    })();
+    return closing;
+  };
+
+  return { fetch: tunnelFetch, ready, cancel, close, port, worker };
+};
+
+const waitForClose = async (closed: Promise<void>): Promise<void> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      closed,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, 2_000);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 };
 
 // ---------------------------------------------------------------------------

@@ -33,7 +33,7 @@ export interface OneShotArgs {
   /** Explicit --model override; undefined means "use config.toml's model". */
   readonly model?: string;
   /** Smoke-harness only: inject the scripted network-free provider into the
-   * server worker (replaces the old NIUMA_MOCK_PROVIDER env switch). */
+   * server worker. */
   readonly mockProvider: boolean;
 }
 

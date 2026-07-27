@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import {
   messagesToResponses,
   toolsToResponses,
@@ -129,7 +129,11 @@ Deno.test("messagesToResponses: function_call items precede the visible message 
       },
     ]),
     [
-      { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer" }] },
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "answer" }],
+      },
       { type: "function_call", call_id: "c1", name: "n1", arguments: "{}" },
     ],
   );
@@ -172,15 +176,27 @@ Deno.test("messagesToResponses: full conversation round-trip shape", () => {
     },
   ]);
   assertEquals(items, [
-    { type: "message", role: "user", content: [{ type: "input_text", text: "q1" }] },
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "q1" }],
+    },
     {
       type: "reasoning",
       summary: [{ type: "summary_text", text: "thinking" }],
       encrypted_content: "enc-1",
     },
-    { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer1" }] },
+    {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "answer1" }],
+    },
     { type: "function_call_output", call_id: "c1", output: "r1" },
-    { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer2" }] },
+    {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "answer2" }],
+    },
     { type: "function_call", call_id: "c2", name: "n2", arguments: "{}" },
   ]);
 });
