@@ -209,7 +209,7 @@ const readReply = async (timeoutMs: number): Promise<Uint8Array | null> => {
       return null;
     }
   })();
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<null>((resolve) => {
     timer = setTimeout(() => resolve(null), timeoutMs);
   });

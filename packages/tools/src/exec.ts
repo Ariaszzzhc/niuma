@@ -86,7 +86,7 @@ export async function execCapture(
 
   let timedOut = false;
   let aborted = false;
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   const killChild = (cause: "timeout" | "abort") => {
     if (cause === "timeout") timedOut = true;

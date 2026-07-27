@@ -227,7 +227,7 @@ export const run = async <Model, Msg>(
   };
 
   let renderScheduled = false;
-  let renderTimer: number | undefined;
+  let renderTimer: ReturnType<typeof setTimeout> | undefined;
   let lastRender = 0;
 
   const renderNow = (): void => {
@@ -388,7 +388,7 @@ export const run = async <Model, Msg>(
 
   // Bound the pump drain so a misbehaving stream can't hang shutdown. The
   // timer handle is cleared as soon as either side settles (no timer leak).
-  let drainTimer: number | undefined;
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([
     inputPump,
     new Promise<void>((resolve) => {
