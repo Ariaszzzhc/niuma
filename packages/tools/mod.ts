@@ -16,18 +16,7 @@ export type {
   ToolOutput,
 } from "./src/types.ts";
 export { READ_ONLY_ALLOWED } from "./src/types.ts";
-export {
-  makeEngine,
-  matchWildcard,
-  MemoryPermissionEngine,
-} from "./src/permission.ts";
-export {
-  FILE_TOOLS,
-  isSensitivePath,
-  READ_ONLY_TOOLS,
-  runPolicy,
-} from "./src/permission.ts";
-export type { Verdict } from "./src/permission.ts";
+export { MemoryPermissionEngine } from "./src/permission.ts";
 export { authorize } from "./src/authorize.ts";
 export type { AuthorizeContext } from "./src/authorize.ts";
 export { runPipeline } from "./src/pipeline.ts";

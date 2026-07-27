@@ -48,15 +48,26 @@ export const grepTool: Tool<GrepInput> = {
     // 1. Try rg first.
     const rgPath = await findRgPath();
     if (rgPath) {
-      const cmd = `${rgPath} --no-heading --color=never ${ci} ${
-        input.glob ? `-g ${shellEscape(input.glob)}` : ""
-      } --max-count=${max} -- ${shellEscape(input.pattern)} ${
-        shellEscape(input.path ?? ctx.cwd)
-      }`;
-      const r = await execCapture(cmd, { cwd: ctx.cwd, timeoutMs: 60_000 });
+      const cmd = [
+        rgPath,
+        "--no-heading",
+        "--color=never",
+        ln ? "--line-number" : "--no-line-number",
+        ...(ci ? [ci] : []),
+        ...(input.glob ? ["-g", input.glob] : []),
+        "--",
+        input.pattern,
+        input.path ?? ctx.cwd,
+      ];
+      const r = await execCapture(cmd, {
+        cwd: ctx.cwd,
+        timeoutMs: 60_000,
+        signal: ctx.signal,
+      });
       if (r.code === 0 || r.code === 1) {
+        const output = takeResultLines(r.stdout, max);
         return await toolOutput(
-          r.stdout || "[no matches]",
+          output || "[no matches]",
           callId,
         );
       }
@@ -161,7 +172,8 @@ function matchSimpleGlob(glob: string, path: string): boolean {
   return new RegExp(re).test(path);
 }
 
-function shellEscape(s: string): string {
-  if (s === "") return "''";
-  return `'${s.replace(/'/g, `'\\''`)}'`;
+function takeResultLines(output: string, limit: number): string {
+  const lines = output.split(/\r?\n/);
+  if (lines.at(-1) === "") lines.pop();
+  return lines.slice(0, limit).join("\n");
 }

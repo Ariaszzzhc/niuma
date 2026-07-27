@@ -1,24 +1,31 @@
 // Adapts MCP tools (from @modelcontextprotocol/sdk) to @niuma/tools' Tool
 // interface so they flow through the standard pipeline: zod validation,
 // permission Ask, scheduling, truncation.
-//
-// TODO(mcp): expose MCP resources and prompts as well — the sketch is one
-// aggregate tool per server (`mcp__<server>__read_resource` /
-// `mcp__<server>__get_prompt`) with the server's listing embedded in the
-// tool description. Deferred from v1 to keep the surface minimal.
 
 import { z } from "zod";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Tool as McpTool } from "@modelcontextprotocol/sdk/types.js";
 import type { Accesses, JsonSchemaObject, Tool, ToolOutput } from "@niuma/tools";
 
-/** LLM tool APIs restrict names to [a-zA-Z0-9_-]; anything else folds to _. */
+/**
+ * LLM tool APIs restrict names to [a-zA-Z0-9_-]. Encode every disallowed
+ * code point — including the escape delimiter `_` itself — so distinct MCP
+ * identifiers cannot collapse onto the same provider-facing name.
+ */
 export const sanitizeNameComponent = (s: string): string =>
-  s.replace(/[^a-zA-Z0-9_-]/g, "_");
+  Array.from(
+    s,
+    (char) =>
+      /[a-zA-Z0-9-]/.test(char)
+        ? char
+        : `_${char.codePointAt(0)!.toString(16)}_`,
+  ).join("");
 
-/** Collision-free tool name: `mcp__<server>__<tool>`. */
-export const mcpToolName = (serverId: string, toolName: string): string =>
-  `mcp__${sanitizeNameComponent(serverId)}__${sanitizeNameComponent(toolName)}`;
+/** Collision-free tool name with a length-delimited server component. */
+export const mcpToolName = (serverId: string, toolName: string): string => {
+  const server = sanitizeNameComponent(serverId);
+  return `mcp__${server.length}_${server}__${sanitizeNameComponent(toolName)}`;
+};
 
 // MCP inputs are validated server-side; locally a permissive passthrough is
 // all the pipeline's zod step needs. The real schema goes to the LLM via
@@ -49,17 +56,18 @@ export const mcpToolToNiumaTool = (
     accesses: ctx.accesses,
     inputSchema: PassthroughInput,
     // The policy chain matches on this string, so a rule like
-    // `allow mcp__filesystem__*` addresses this server's tools.
+    // `allow mcp__10_filesystem__*` addresses this server's tools.
     normalize: () => name,
-    // NOTE: ctx.signal is not forwarded into callTool — the SDK types the
-    // abort path through its compat result schema, and per-call cancellation
-    // between pipeline steps already covers turn aborts in v1.
-    async execute(input): Promise<ToolOutput> {
+    async execute(input, toolCtx): Promise<ToolOutput> {
       try {
-        const result = await ctx.client.callTool({
-          name: mcpTool.name,
-          arguments: input,
-        });
+        const result = await ctx.client.callTool(
+          {
+            name: mcpTool.name,
+            arguments: input,
+          },
+          undefined,
+          { signal: toolCtx.signal },
+        );
         let content = renderContent(result.content ?? []);
         if (
           content.length === 0 && result.structuredContent !== undefined

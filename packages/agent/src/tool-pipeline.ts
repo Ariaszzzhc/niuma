@@ -8,7 +8,7 @@ import type {
   Tool,
   ToolOutput,
 } from "@niuma/tools";
-import { runPipeline, ToolRegistry } from "@niuma/tools";
+import { READ_ONLY_ALLOWED, runPipeline, ToolRegistry } from "@niuma/tools";
 import type {
   ApprovalOutcome,
   ApprovalRequest,
@@ -19,30 +19,14 @@ import type {
   ToolRunResult,
 } from "./deps.ts";
 
-// Tools that mutate the workspace or shell out — dropped from `defs` and
-// rejected at `run` time when the session is in read-only mode (subagents).
-const MUTATING_TOOLS = new Set([
-  "bash",
-  "write",
-  "edit",
-  "apply_patch",
-]);
-
 export interface MakeToolPipelineOptions {
   // Optional override of the tool registry; defaults to builtins().
   readonly registry?: ToolRegistry;
-  // Permission engine driving authorize(). Used when one engine serves every
-  // session (tests, single-session CLI). Mutually exclusive with `engineFor`.
-  readonly engine?: PermissionEngine;
-  // Per-session permission engine factory. Required for multi-session runs
-  // (the @niuma/permission engine is constructed per-cwd and holds per-session
-  // rule state). Memorable; the adapter memoises by sessionId.
-  readonly engineFor?: (
-    sessionId: string,
-    workspace: string,
-  ) => PermissionEngine;
+  // Permission engine driving authorize(). Remembered rules are keyed by
+  // session, so one engine safely serves the multi-session server.
+  readonly engine: PermissionEngine;
   // Optional subagent spawner — when present, threaded into ToolCtx so the
-  // spawn_subagent tool can dispatch to AgentSession.spawnSubagent.
+  // spawn_subagent tool can dispatch to the server's child-session runner.
   readonly spawnSubagent?: (req: {
     readonly prompt: string;
     readonly mode?: "default" | "read-only";
@@ -57,8 +41,8 @@ const isReadOnly = (mode: ToolMode): boolean => mode === "read-only";
 /**
  * Adapter from the agent's ToolPipeline port to @niuma/tools' runPipeline.
  *
- * - `defs(mode)` projects the registry to ProviderToolDef[], dropping
- *   bash/write/edit/apply_patch for read-only sessions (subagents).
+ * - `defs(mode)` projects the registry to ProviderToolDef[], exposing only
+ *   the shared read-only allowlist for read-only sessions (subagents).
  * - `run(batch, ctx)` wraps runPipeline in Effect.promise, translating the
  *   agent's port types (ToolCallRequest/ApprovalRequest/ApprovalOutcome) into
  *   the tools' (ToolCallRecord/ApprovalInfo/ApprovalDecision) and back
@@ -72,27 +56,11 @@ export function makeToolPipeline(
   const registry = opts.registry ?? new ToolRegistry();
   const tools = registry.all();
   const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]));
-  // Per-session engine cache so repeat batches in the same session reuse the
-  // same engine (and its remembered "always" rules).
-  const engineCache = new Map<string, PermissionEngine>();
-  const engineForCtx = (ctx: ToolRunContext): PermissionEngine => {
-    if (opts.engine) return opts.engine;
-    if (!opts.engineFor) {
-      throw new Error(
-        "makeToolPipeline: either `engine` or `engineFor` must be provided",
-      );
-    }
-    const cached = engineCache.get(ctx.sessionId);
-    if (cached) return cached;
-    const fresh = opts.engineFor(ctx.sessionId, ctx.workspace);
-    engineCache.set(ctx.sessionId, fresh);
-    return fresh;
-  };
 
   const defs = (mode: ToolMode): ReadonlyArray<ProviderToolDef> => {
     const out: ProviderToolDef[] = [];
     for (const t of tools) {
-      if (isReadOnly(mode) && MUTATING_TOOLS.has(t.name)) continue;
+      if (isReadOnly(mode) && !READ_ONLY_ALLOWED.has(t.name)) continue;
       const def: ProviderToolDef = {
         name: t.def.name,
         ...(t.def.description !== undefined
@@ -121,7 +89,7 @@ export function makeToolPipeline(
         const results: ToolRunResult[] = [];
         const surviving: ToolCallRequest[] = [];
         for (const c of batch) {
-          if (MUTATING_TOOLS.has(c.name)) {
+          if (!READ_ONLY_ALLOWED.has(c.name)) {
             results.push({
               callId: c.callId,
               content: `Tool ${c.name} is not available in read-only mode`,
@@ -136,7 +104,7 @@ export function makeToolPipeline(
         const ran = await executeBatch(
           surviving,
           ctx,
-          engineForCtx(ctx),
+          opts.engine,
           opts,
           toolMap,
         );
@@ -148,7 +116,7 @@ export function makeToolPipeline(
         );
       }
 
-      return await executeBatch(batch, ctx, engineForCtx(ctx), opts, toolMap);
+      return await executeBatch(batch, ctx, opts.engine, opts, toolMap);
     });
 
   return { defs, run };

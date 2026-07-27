@@ -1,5 +1,9 @@
 import type { z } from "zod";
-import type { PermissionRule } from "@niuma/schema";
+import type {
+  ApprovalDecisionType,
+  Decision,
+  PermissionRule,
+} from "@niuma/schema";
 
 // ---- Resource footprint declared by a tool ----
 
@@ -48,12 +52,8 @@ export interface ApprovalInfo {
   detail?: string;
 }
 
-/**
- * The three reply options surfaced to the user when the policy chain asks.
- * We re-declare the literal union locally because `@niuma/schema` may still
- * be mid-migration to Effect v4's `Schema.Literal(value, ...values)` shape.
- */
-export type ApprovalDecisionLiteral = "once" | "always" | "reject";
+/** The three reply options surfaced when the policy chain asks. */
+export type ApprovalDecisionLiteral = ApprovalDecisionType;
 
 export interface ApprovalDecision {
   decision: ApprovalDecisionLiteral;
@@ -133,16 +133,6 @@ export interface Tool<I = unknown> {
 
 // ---- Pipeline input/output ----
 
-/**
- * Local mirror of the schema package's `Decision` type. We redeclare it
- * because `@niuma/schema` may not have fully migrated to Effect v4's
- * `Schema.Union([...])` shape yet; the runtime values interop fine.
- */
-export type Decision =
-  | { decision: "allow" }
-  | { decision: "deny"; reason?: string }
-  | { decision: "ask" };
-
 export interface PreparedCall<I = unknown> {
   callId: string;
   name: string;
@@ -172,9 +162,8 @@ export interface ToolCallRecord {
 
 // ---- Permission engine contract ----
 //
-// The tools package consumes a `PermissionEngine`. Concrete implementations
-// live in @niuma/permission; this is the seam the pipeline depends on so the
-// engine can be swapped (CLI vs TUI vs tests) without touching tool code.
+// The pipeline depends on this narrow port so tests and runtime policy stores
+// can vary without changing tool execution.
 
 export interface PermissionEngine {
   /**
@@ -188,11 +177,9 @@ export interface PermissionEngine {
     name: string;
     pattern: string;
   }): Promise<Decision>;
-  /** Persist a session-scoped allow/deny rule (from an `always` reply). */
-  remember(rule: PermissionRule): Promise<void>;
-  /** Return the tool's normalisation string for a given input (uses Tool.normalize). */
-  patternFor(name: string, input: unknown): string;
+  /** Persist an allow/deny rule for exactly one session. */
+  remember(sessionId: string, rule: PermissionRule): Promise<void>;
 }
 
 // ---- Schema helpers (re-exported for the registry) ----
-export type { PermissionRule, ToolResultContent } from "@niuma/schema";
+export type { Decision, PermissionRule, ToolResultContent } from "@niuma/schema";

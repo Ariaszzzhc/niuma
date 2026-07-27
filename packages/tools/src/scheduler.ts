@@ -34,9 +34,9 @@ export interface SchedulerOptions {
  * another → sequential. Reads-only jobs against disjoint files run in
  * parallel. Network/process jobs conflict with everything (single-flight).
  *
- * The wait between waves is a real Promise (per-job completion + an abort
- * watcher), never a microtask busy-loop — macrotask-driven work (timers,
- * I/O, the abort grace clock) progresses normally while we wait.
+ * The wait between waves uses per-job completion Promises, never a microtask
+ * busy-loop, so macrotask-driven work (timers, I/O, the abort grace clock)
+ * progresses normally.
  */
 export async function schedule<R>(
   jobs: ReadonlyArray<ScheduledJob<R>>,
@@ -70,15 +70,6 @@ export async function schedule<R>(
       completionResolvers[i] = resolve;
     })
   );
-
-  // Watcher that fires when the parent signal aborts. tryStart checks
-  // opts.signal.aborted synchronously, so once abort fires tryStart becomes
-  // a no-op and in-flight jobs drain via their per-job grace timer.
-  // (Kept as a parked promise for symmetry with future cancellation hooks.)
-  void new Promise<void>((resolve) => {
-    if (opts.signal.aborted) resolve();
-    else opts.signal.addEventListener("abort", () => resolve(), { once: true });
-  });
 
   const ready = (i: number): boolean =>
     !started.has(i) && blockers[i].every((b) => completed.has(b));
@@ -114,10 +105,8 @@ export async function schedule<R>(
   // Wait for everything to finish. We only ever await *pending* completion
   // promises (or break when no job can make progress), so the runtime is
   // free to drain macrotasks — I/O, the abort grace timer, etc. — between
-  // waves. Racing against an already-resolved abort watcher would
-  // microtask-loop and starve the macrotask queue, which is the bug we just
-  // fixed; abort instead simply makes `tryStart` a no-op, so once the
-  // in-flight jobs drain (via their grace timer) we fall out of the loop.
+  // waves. Abort makes `tryStart` a no-op; once in-flight jobs drain via
+  // their grace timers, the loop exits.
   while (completed.size < jobs.length) {
     if (inflight.size === 0) {
       // Nothing running — try to start the next wave, or bail.
@@ -152,39 +141,34 @@ async function runJob<R>(
   if (parentSignal.aborted) {
     return synthesiseAbortError(job.id, "aborted before run") as R;
   }
-  // Per-job signal that fires when parent aborts OR after grace.
-  const ctrl = new AbortController();
-  const onParent = () => ctrl.abort(parentSignal.reason);
-  parentSignal.addEventListener("abort", onParent, { once: true });
-
   let graceTimer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
-  const result = await new Promise<R>((resolve, reject) => {
-    job.run().then(
-      (r) => resolve(r),
-      (e) => reject(e),
-    );
-    if (parentSignal.aborted) {
-      ctrl.abort(parentSignal.reason);
-    } else {
-      ctrl.signal.addEventListener("abort", () => {
-        // Give the tool a grace period to honour the signal.
-        graceTimer = setTimeout(() => {
-          timedOut = true;
-          resolve(
-            synthesiseAbortError(job.id, "tool ignored abort signal") as R,
-          );
-        }, grace);
-      });
-    }
+  const execution = Promise.resolve().then(() => job.run());
+  let onParent: (() => void) | undefined;
+  const aborted = new Promise<R>((resolve) => {
+    onParent = () => {
+      // Give the tool a grace period to honour the signal.
+      graceTimer = setTimeout(() => {
+        timedOut = true;
+        resolve(
+          synthesiseAbortError(job.id, "tool ignored abort signal") as R,
+        );
+      }, grace);
+    };
+    parentSignal.addEventListener("abort", onParent, { once: true });
+    if (parentSignal.aborted) onParent();
   });
 
-  if (graceTimer !== undefined) clearTimeout(graceTimer);
-  parentSignal.removeEventListener("abort", onParent);
-  if (!timedOut && parentSignal.aborted) {
-    return synthesiseAbortError(job.id, "aborted") as R;
+  try {
+    const result = await Promise.race([execution, aborted]);
+    if (!timedOut && parentSignal.aborted) {
+      return synthesiseAbortError(job.id, "aborted") as R;
+    }
+    return result;
+  } finally {
+    if (graceTimer !== undefined) clearTimeout(graceTimer);
+    if (onParent) parentSignal.removeEventListener("abort", onParent);
   }
-  return result;
 }
 
 export function synthesiseAbortError<R>(_id: string, reason: string): R {

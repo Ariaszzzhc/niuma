@@ -7,7 +7,6 @@ import {
   editTool,
   globTool,
   grepTool,
-  matchWildcard,
   MemoryPermissionEngine,
   parsePatch,
   questionTool,
@@ -151,6 +150,18 @@ Deno.test("grep walks JS fallback when rg absent", async () => {
   assertStringIncludes(out.content, "bar");
 });
 
+Deno.test("grep maxResults is a global result cap", async () => {
+  const tmp = await Deno.makeTempDir();
+  await Deno.writeTextFile(`${tmp}/a.txt`, "hit a1\nhit a2\nhit a3\n");
+  await Deno.writeTextFile(`${tmp}/b.txt`, "hit b1\nhit b2\nhit b3\n");
+  const out = await grepTool.execute(
+    { pattern: "hit", path: ".", maxResults: 2 },
+    mkCtx({ cwd: tmp }),
+  );
+  assertEquals(out.isError, undefined);
+  assertEquals(out.content.split("\n").length, 2);
+});
+
 Deno.test("glob walks JS fallback and sorts by mtime desc", async () => {
   const tmp = await Deno.makeTempDir();
   await Deno.writeTextFile(`${tmp}/old.txt`, "x");
@@ -256,15 +267,9 @@ Deno.test("scheduler queues conflicting writes", async () => {
   assertEquals(maxActive, 1, "conflicting writes should serialise");
 });
 
-Deno.test({
-  name: "scheduler aborts in-flight jobs and synthesises error after grace",
-  // The stub run() deliberately ignores the abort signal (simulating a
-  // misbehaving tool) and schedules a 5s timer that the synthetic-error
-  // path never cleans up — that's the whole point of the grace mechanism.
-  // Suppress the ops sanitizer rather than weaken the stub.
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+Deno.test(
+  "scheduler aborts in-flight jobs and synthesises error after grace",
+  async () => {
     const ctrl = new AbortController();
     const job = schedule(
       [
@@ -272,10 +277,7 @@ Deno.test({
           index: 0,
           id: "stubborn",
           accesses: {},
-          run: async () => {
-            await new Promise((r) => setTimeout(r, 5000));
-            return { content: "should not happen" };
-          },
+          run: () => new Promise(() => {}),
         },
       ],
       { signal: ctrl.signal, abortGraceMs: 50 },
@@ -286,11 +288,11 @@ Deno.test({
     assertEquals(errRes.isError, true);
     assertStringIncludes(errRes.content, "ignored abort");
   },
-});
+);
 
 Deno.test("engine remembers always rules and applies them", async () => {
   const engine = new MemoryPermissionEngine();
-  await engine.remember({
+  await engine.remember("s", {
     tool: "bash",
     pattern: "echo *",
     action: "allow",
@@ -302,12 +304,14 @@ Deno.test("engine remembers always rules and applies them", async () => {
     pattern: "echo hello",
   });
   assertEquals(d.decision, "allow");
-});
 
-Deno.test("matchWildcard handles * and ?", () => {
-  assertEquals(matchWildcard("npm run *", "npm run test"), true);
-  assertEquals(matchWildcard("npm run *", "echo npm run test"), false);
-  assertEquals(matchWildcard("file?.txt", "file1.txt"), true);
+  const other = await engine.evaluate({
+    callId: "2",
+    sessionId: "other",
+    name: "bash",
+    pattern: "echo hello",
+  });
+  assertEquals(other.decision, "ask");
 });
 
 Deno.test("pipeline runs prepare/authorize/schedule/execute end-to-end", async () => {
@@ -315,7 +319,6 @@ Deno.test("pipeline runs prepare/authorize/schedule/execute end-to-end", async (
   const engine: PermissionEngine = {
     evaluate: () => Promise.resolve({ decision: "allow" }),
     remember: () => Promise.resolve(),
-    patternFor: (n) => n,
   };
   const tmp = await Deno.makeTempDir();
   const calls: ToolCallRecord[] = [
@@ -334,7 +337,7 @@ Deno.test("pipeline runs prepare/authorize/schedule/execute end-to-end", async (
 
 Deno.test("pipeline surfaces Ask routing via ctx.ask", async () => {
   const reg = new ToolRegistry();
-  const engine = new MemoryPermissionEngine({ sensitiveTools: ["bash"] });
+  const engine = new MemoryPermissionEngine();
   const asks: ApprovalInfo[] = [];
   const c = mkCtx({
     cwd: Deno.cwd(),
@@ -361,7 +364,6 @@ Deno.test("pipeline surfaces unknown tool as isError", async () => {
   const engine: PermissionEngine = {
     evaluate: () => Promise.resolve({ decision: "allow" }),
     remember: () => Promise.resolve(),
-    patternFor: (n) => n,
   };
   const out = await runPipeline(
     [{ callId: "x", name: "nope", input: {} }],
@@ -415,7 +417,8 @@ Deno.test(
 
 Deno.test("truncate spills to disk when output > 30KB", async () => {
   const big = "x".repeat(40 * 1024);
-  const r = await toolOutput(big, "smoke-call-1");
+  const spillDirectory = await Deno.makeTempDir();
+  const r = await toolOutput(big, "smoke-call-1", { spillDirectory });
   assert(r.spillPath !== undefined, "spillPath should be set");
   const onDisk = await Deno.readTextFile(r.spillPath!);
   assertEquals(onDisk.length, big.length);
@@ -438,7 +441,10 @@ Deno.test("safeCallId strips path separators and shell-meaningful chars", () => 
 
 Deno.test("truncate spills safely when callId contains slashes", async () => {
   const big = "x".repeat(40 * 1024);
-  const r = await toolOutput(big, "read:sess:/etc/foo/bar.txt");
+  const spillDirectory = await Deno.makeTempDir();
+  const r = await toolOutput(big, "read:sess:/etc/foo/bar.txt", {
+    spillDirectory,
+  });
   assertEquals(r.spillPath !== undefined, true);
   const onDisk = await Deno.readTextFile(r.spillPath!);
   assertEquals(onDisk.length, big.length);
@@ -465,7 +471,6 @@ Deno.test("pipeline read-only mode short-circuits mutating tools", async () => {
   const engine: PermissionEngine = {
     evaluate: () => Promise.resolve({ decision: "allow" }),
     remember: () => Promise.resolve(),
-    patternFor: (n) => n,
   };
   const tmp = await Deno.makeTempDir();
   const out = await runPipeline(
@@ -528,7 +533,6 @@ Deno.test("pipeline records durationMs and callId on every result", async () => 
   const engine: PermissionEngine = {
     evaluate: () => Promise.resolve({ decision: "allow" }),
     remember: () => Promise.resolve(),
-    patternFor: (n) => n,
   };
   const tmp = await Deno.makeTempDir();
   const out = await runPipeline(
@@ -550,8 +554,16 @@ Deno.test("pipeline records durationMs and callId on every result", async () => 
 
 Deno.test("MemoryPermissionEngine honours deny rules over allow rules", async () => {
   const engine = new MemoryPermissionEngine();
-  await engine.remember({ tool: "bash", pattern: "rm *", action: "allow" });
-  await engine.remember({ tool: "bash", pattern: "rm -rf *", action: "deny" });
+  await engine.remember("s", {
+    tool: "bash",
+    pattern: "rm *",
+    action: "allow",
+  });
+  await engine.remember("s", {
+    tool: "bash",
+    pattern: "rm -rf *",
+    action: "deny",
+  });
   const deny = await engine.evaluate({
     callId: "1",
     sessionId: "s",

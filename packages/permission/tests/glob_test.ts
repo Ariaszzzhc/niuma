@@ -6,17 +6,21 @@ function assertEquals<T>(actual: T, expected: T, msg?: string): void {
   }
 }
 
-Deno.test("globToRegex: * matches anything including /", () => {
+Deno.test("globToRegex: * matches any characters including path separators", () => {
   const re = globToRegex("*");
   assertEquals(re.test("foo"), true);
   assertEquals(re.test("foo/bar/baz"), true);
   assertEquals(re.test(""), true);
 });
 
-Deno.test("globToRegex: ** is identical to *", () => {
-  const re = globToRegex("src/**");
-  assertEquals(re.test("src/a/b/c.ts"), true);
-  assertEquals(re.test("notsrc/x"), false);
+Deno.test("globToRegex: ** is rejected", () => {
+  let threw = false;
+  try {
+    globToRegex("src/**");
+  } catch {
+    threw = true;
+  }
+  assertEquals(threw, true);
 });
 
 Deno.test("globToRegex: ? matches single non-slash character", () => {

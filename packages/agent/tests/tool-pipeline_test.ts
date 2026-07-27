@@ -7,11 +7,10 @@ import { resultContentToString } from "../src/context.ts";
 import type { ApprovalOutcome, ToolMode, ToolRunContext } from "../src/deps.ts";
 
 const approvingEngine = (): PermissionEngine => {
-  const inner = new MemoryPermissionEngine({ sensitiveTools: [] });
+  const inner = new MemoryPermissionEngine();
   return {
     evaluate: (req) => inner.evaluate(req),
-    remember: (r) => inner.remember(r),
-    patternFor: (n, i) => inner.patternFor(n, i),
+    remember: (sessionId, rule) => inner.remember(sessionId, rule),
   };
 };
 
@@ -26,11 +25,11 @@ const approvingCtx = (
   ask: (_req) => Effect.succeed<ApprovalOutcome>({ decision: "once" }),
 });
 
-Deno.test("tool-pipeline: defs drop bash/write/edit/apply_patch in read-only mode", () => {
+Deno.test("tool-pipeline: defs expose only the shared read-only allowlist", () => {
   const pipe = makeToolPipeline({ engine: approvingEngine() });
   const full = pipe.defs("full").map((d) => d.name);
   const ro = pipe.defs("read-only").map((d) => d.name);
-  for (const n of ["bash", "write", "edit", "apply_patch"]) {
+  for (const n of ["bash", "write", "edit", "apply_patch", "spawn_subagent"]) {
     assertEquals(full.includes(n), true);
     assertEquals(ro.includes(n), false);
   }

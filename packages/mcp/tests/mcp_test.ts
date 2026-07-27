@@ -35,9 +35,13 @@ const makeConnectedClient = async (
 };
 
 Deno.test("sanitizeNameComponent / mcpToolName", () => {
-  assertEquals(sanitizeNameComponent("my server!"), "my_server_");
-  assertEquals(sanitizeNameComponent("plain-ok_1"), "plain-ok_1");
-  assertEquals(mcpToolName("fs", "read file"), "mcp__fs__read_file");
+  assertEquals(sanitizeNameComponent("my server!"), "my_20_server_21_");
+  assertEquals(sanitizeNameComponent("plain-ok_1"), "plain-ok_5f_1");
+  assertEquals(mcpToolName("fs", "read file"), "mcp__2_fs__read_20_file");
+  assertEquals(
+    mcpToolName("fs", "read file") === mcpToolName("fs", "read$file"),
+    false,
+  );
 });
 
 Deno.test("mcpToolToNiumaTool: def, description fallback, parameters passthrough", async () => {
@@ -62,8 +66,8 @@ Deno.test("mcpToolToNiumaTool: def, description fallback, parameters passthrough
         accesses: {},
       },
     );
-    assertEquals(echo.name, "mcp__test__echo");
-    assertEquals(echo.def.name, "mcp__test__echo");
+    assertEquals(echo.name, "mcp__4_test__echo");
+    assertEquals(echo.def.name, "mcp__4_test__echo");
     assertEquals(echo.def.description, "Echo the message.");
     // The server's own JSON Schema reaches the LLM untranslated.
     const params = echo.def.parameters as {
@@ -72,7 +76,7 @@ Deno.test("mcpToolToNiumaTool: def, description fallback, parameters passthrough
     };
     assertEquals(params.type, "object");
     assertEquals(params.properties.msg.type, "string");
-    assertEquals(echo.normalize!({}), "mcp__test__echo");
+    assertEquals(echo.normalize!({}), "mcp__4_test__echo");
 
     const undocumented = mcpToolToNiumaTool(
       tools.find((t: McpTool) => t.name === "undocumented")!,
@@ -153,4 +157,30 @@ Deno.test("mcpToolToNiumaTool: transport failure wraps into an isError result", 
   assertEquals(out.isError, true);
   assertStringIncludes(out.content, "mcp error:");
   await server.close();
+});
+
+Deno.test("mcpToolToNiumaTool: forwards turn cancellation to callTool", async () => {
+  const { server, client } = await makeConnectedClient((s) => {
+    s.registerTool("slow", {}, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      return { content: [{ type: "text", text: "too late" }] };
+    });
+  });
+  try {
+    const { tools } = await client.listTools();
+    const slow = mcpToolToNiumaTool(tools[0]!, {
+      serverId: "test",
+      client,
+      accesses: {},
+    });
+    const controller = new AbortController();
+    const result = slow.execute({}, { ...stubCtx, signal: controller.signal });
+    controller.abort();
+    const out = await result;
+    assertEquals(out.isError, true);
+    assertStringIncludes(out.content, "mcp error:");
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });

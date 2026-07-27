@@ -5,15 +5,9 @@ import { niumaPaths } from "@niuma/config";
 const OUTPUT_LIMIT_BYTES = 30 * 1024;
 const OUTPUT_DIR = "output";
 
-let _resolvedRoot: string | null = null;
-
-/** ~/.niuma — the user-level data root (niumaPaths().data). */
+/** Current user-level data root (normally ~/.niuma). */
 export function dataDir(): string {
-  if (_resolvedRoot) return _resolvedRoot;
-  const root = niumaPaths().data;
-  ensureDirSync(root);
-  _resolvedRoot = root;
-  return root;
+  return niumaPaths().data;
 }
 
 export function outputDir(): string {
@@ -54,13 +48,15 @@ export function safeCallId(callId: string): string {
 export async function truncateForModel(
   text: string,
   callId: string,
+  spillDirectory: string = outputDir(),
 ): Promise<TruncateResult> {
   const enc = new TextEncoder().encode(text);
   if (enc.byteLength <= OUTPUT_LIMIT_BYTES) {
     return { content: text, truncated: false };
   }
 
-  const spillPath = join(outputDir(), `${safeCallId(callId)}.log`);
+  ensureDirSync(spillDirectory);
+  const spillPath = join(spillDirectory, `${safeCallId(callId)}.log`);
   await Deno.writeTextFile(spillPath, text);
 
   // Keep the head and a tail sample so the model can still locate context,
@@ -83,11 +79,12 @@ export async function truncateForModel(
 export async function toolOutput(
   text: string,
   callId: string,
-  opts: { isError?: boolean } = {},
+  opts: { isError?: boolean; spillDirectory?: string } = {},
 ): Promise<import("./types.ts").ToolOutput> {
   const { content, spillPath, truncated } = await truncateForModel(
     text,
     callId,
+    opts.spillDirectory,
   );
   return {
     content,

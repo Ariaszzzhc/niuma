@@ -49,34 +49,40 @@ const connectServer = async (
 ): Promise<McpServerHandle> => {
   const client = new Client({ name: "niuma", version: VERSION });
   const { transport, accesses } = makeTransport(server);
-  await client.connect(transport);
-
-  // TODO(mcp): also adapt resources/prompts when the server advertises them
-  // via client.getServerCapabilities(). See the TODO in tool.ts.
-  const { tools } = await client.listTools();
-  const seen = new Set<string>();
-  const adapted: Tool[] = [];
-  for (const t of tools) {
-    const tool = mcpToolToNiumaTool(t, {
-      serverId: server.id,
-      client,
-      accesses,
-    });
-    if (seen.has(tool.name)) {
-      logger.warn(
-        "mcp: duplicate tool name {name} from server {id}; skipping",
-        { name: tool.name, id: server.id },
-      );
-      continue;
+  try {
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    const seen = new Set<string>();
+    const adapted: Tool[] = [];
+    for (const t of tools) {
+      const tool = mcpToolToNiumaTool(t, {
+        serverId: server.id,
+        client,
+        accesses,
+      });
+      if (seen.has(tool.name)) {
+        logger.warn(
+          "mcp: duplicate tool name {name} from server {id}; skipping",
+          { name: tool.name, id: server.id },
+        );
+        continue;
+      }
+      seen.add(tool.name);
+      adapted.push(tool);
     }
-    seen.add(tool.name);
-    adapted.push(tool);
+    logger.info("mcp: server {id} connected, {count} tool(s)", {
+      id: server.id,
+      count: adapted.length,
+    });
+    return { id: server.id, tools: adapted, close: () => client.close() };
+  } catch (error) {
+    try {
+      await client.close();
+    } catch {
+      // Preserve the connection/listing failure that made this server unusable.
+    }
+    throw error;
   }
-  logger.info("mcp: server {id} connected, {count} tool(s)", {
-    id: server.id,
-    count: adapted.length,
-  });
-  return { id: server.id, tools: adapted, close: () => client.close() };
 };
 
 const makeTransport = (

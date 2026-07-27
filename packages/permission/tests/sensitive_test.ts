@@ -30,7 +30,7 @@ Deno.test("normalizePath: relative paths are joined with cwd", () => {
 
 Deno.test("normalizePath: collapses . and .. segments", () => {
   // Security-relevant: without collapsing, a target like `foo/./bar/id_rsa`
-  // could slip past the `**/id_rsa` sensitive guard.
+  // could slip past the `*/id_rsa` sensitive guard.
   assertEquals(normalizePath("./a", "/work"), R("/work/a"));
   assertEquals(normalizePath("a/./b", "/work"), R("/work/a/b"));
   assertEquals(normalizePath("a/b/../c", "/work"), R("/work/a/c"));
@@ -55,8 +55,8 @@ Deno.test("normalizePath: ~ expands to HOME", () => {
 
 Deno.test("normalizePattern: expands ~ at start", () => {
   if (HOME.length === 0) return;
-  assertEquals(normalizePattern("~/.ssh/**"), S(HOME) + "/.ssh/**");
-  assertEquals(normalizePattern("/etc/**"), "/etc/**");
+  assertEquals(normalizePattern("~/.ssh/*"), S(HOME) + "/.ssh/*");
+  assertEquals(normalizePattern("/etc/*"), "/etc/*");
 });
 
 Deno.test("isSensitivePath: Windows backslash paths are normalised before matching", () => {

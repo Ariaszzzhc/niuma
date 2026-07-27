@@ -100,9 +100,9 @@ Deno.test("compile cache: same pattern string reused across calls stays consiste
   }
 });
 
-Deno.test("compile cache: parser-level '!' negation reaches the matcher coherently", () => {
-  // parseRule("!Bash(*)") yields pattern "!*"; the matcher's compile() must
-  // interpret that leading "!" as negation regardless of cache state.
+Deno.test("compile cache: leading '!' negation stays coherent", () => {
+  // The matcher's compile() must interpret a leading "!" as negation
+  // regardless of cache state.
   // Repeating the call exercises the cached CompiledPattern branch.
   const target = "rm -rf /";
   for (let i = 0; i < 3; i++) {

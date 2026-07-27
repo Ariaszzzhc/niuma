@@ -71,7 +71,7 @@ Deno.test("policy: deny step beats allow step regardless of order in list", () =
 Deno.test("policy: sensitive path forces Ask even when allow rule matches", () => {
   if (HOME.length === 0) return;
   const v = runPolicy(
-    [r("write", "/**", "allow")],
+    [r("write", "/*", "allow")],
     "write",
     HOME + "/.ssh/id_rsa",
     CWD,
@@ -204,10 +204,10 @@ Deno.test("policy: sensitive guard fires for read tools touching .git", () => {
 
 Deno.test("policy: explicit deny on a sensitive path still returns Deny (deny > sensitive)", () => {
   // Deny is stricter than the sensitive Ask, so an effective deny wins. The
-  // pattern uses a `**/` suffix match rather than `/**` so it also matches
-  // Windows home paths (C:\...) that have no leading slash.
+  // A leading wildcard also matches Windows home paths (C:\...) that have no
+  // leading slash.
   const v = runPolicy(
-    [r("write", "**/.ssh/id_rsa", "deny")],
+    [r("write", "*/.ssh/id_rsa", "deny")],
     "write",
     HOME + "/.ssh/id_rsa",
     CWD,

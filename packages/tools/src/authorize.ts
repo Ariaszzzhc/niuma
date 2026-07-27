@@ -77,7 +77,7 @@ export async function authorize(
       pattern: call.pattern,
       action: "allow",
     };
-    await auth.engine.remember(rule);
+    await auth.engine.remember(auth.ctx.sessionId, rule);
     return { verdict: "allow", rule };
   }
   // reject

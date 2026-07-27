@@ -34,7 +34,7 @@ export const readTool: Tool<ReadInput> = {
   def: {
     name: "read",
     description:
-      "Read a file. Text files are returned with a 2000-line cap and an offset continuation hint. Binary/image files return a placeholder in v0.",
+      "Read a file. Text files are returned with a 2000-line cap and an offset continuation hint. Binary/image attachments are unsupported.",
     parameters: zodToJsonSchema(ReadInput),
   },
   accesses: { files: { read: [] } },
@@ -69,7 +69,7 @@ export const readTool: Tool<ReadInput> = {
     const ext = extOf(input.path);
     if (IMAGE_EXTS.has(ext)) {
       return {
-        content: `[image attachment not supported in v0] (${input.path})`,
+        content: `[image attachment not supported] (${input.path})`,
       };
     }
 

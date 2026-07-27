@@ -1,7 +1,7 @@
 import { resolve } from "@std/path";
 import { matchPattern } from "./matcher.ts";
 
-/**
+/*
  * Tools whose target is a filesystem path. The sensitive-path guard applies
  * only to these; bash uses the rule DSL and the raw command string.
  */
@@ -14,23 +14,22 @@ export const FILE_TOOLS: ReadonlySet<string> = new Set([
   "glob",
 ]);
 
-/**
+/*
  * Glob patterns considered sensitive. Touching a path that matches any of
  * these (after normalisation) forces an `Ask` verdict, even if a more
- * permissive allow rule is present. The list mirrors kimi / opencode
- * defaults; extend with care.
+ * permissive allow rule is present.
  */
 export const SENSITIVE_PATTERNS: ReadonlyArray<string> = [
-  "~/.ssh/**",
-  "**/.ssh/**",
-  "**/.env",
-  "**/.env.*",
-  "**/id_rsa",
-  "**/id_rsa.*",
-  "**/.git/**",
+  "~/.ssh/*",
+  "*/.ssh/*",
+  "*/.env",
+  "*/.env.*",
+  "*/id_rsa",
+  "*/id_rsa.*",
+  "*/.git/*",
 ];
 
-/**
+/*
  * Matching happens in forward-slash space: every glob pattern in this file
  * (and every rule users write) uses `/` as the separator, and the matcher
  * escapes `\` literally — so a Windows path like `C:\work\.env` would never
@@ -49,7 +48,7 @@ function expandHome(p: string): string {
   return p;
 }
 
-/**
+/*
  * Normalise a target path so that rule/guard matching is stable.
  *
  * `~` and `~/...` are expanded to the user's home directory first; then the
@@ -70,7 +69,7 @@ export function normalizePath(p: string, cwd: string): string {
   return toSlashes(resolve(cwd, expanded));
 }
 
-/** Normalise a glob pattern's leading `~/` so it can be matched against absolute paths. */
+/* Normalise a glob pattern's leading `~/` so it can be matched against absolute paths. */
 export function normalizePattern(pattern: string): string {
   if (pattern === "~" || pattern.startsWith("~/")) {
     const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "";
@@ -80,10 +79,10 @@ export function normalizePattern(pattern: string): string {
   return pattern;
 }
 
-/**
+/*
  * Decide whether a path target touches a sensitive location. Both the
  * raw target and its cwd-relative/absolute form are checked against the
- * expanded patterns — this lets rules written as `~/.ssh/**` match against
+ * expanded patterns — this lets rules written as `~/.ssh/*` match against
  * either form of the target string.
  */
 export function isSensitivePath(target: string, cwd: string): boolean {
