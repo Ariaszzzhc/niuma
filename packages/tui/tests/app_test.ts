@@ -26,7 +26,14 @@ import type { RecordedEvent, SessionInfo } from "@niuma/schema";
 import { buildProgram } from "../src/app.ts";
 import type { ClientResult, TuiClient } from "../src/client.ts";
 import type { SseEvent } from "../src/reduce_event.ts";
-import { darkTheme } from "../src/theme.ts";
+import {
+  darkTheme,
+  fullColorCaps,
+  pickTheme,
+  type Theme,
+} from "../src/theme.ts";
+
+const lightTheme = pickTheme("light", fullColorCaps);
 
 // Warm the native lib at module load (scroll path reaches stringWidth).
 stringWidth("niuma");
@@ -97,9 +104,43 @@ const newProgram = (): Built =>
     version: "test",
     workspace: "/w",
     // Tiny viewport so even a short transcript overflows it (banner 3 +
-    // statusline 1 + editor 3 => transcriptH = rows - 7).
+    // footer 2 + editor 3 leaves a short transcript viewport).
     size: { cols: 40, rows: 8 },
   });
+
+const sizedProgram = (
+  cols: number,
+  rows: number,
+  theme: Theme = darkTheme,
+): Built =>
+  buildProgram({
+    client: fakeClient,
+    theme,
+    version: "test",
+    workspace: "/workspace/测试-niuma",
+    size: { cols, rows },
+  });
+
+const assertViewFits = (
+  program: Built,
+  model: Model,
+  cols: number,
+  rows: number,
+): void => {
+  const view = program.view(model);
+  assertEquals(view.lines.length, rows, "view fills terminal height");
+  for (const line of view.lines) {
+    const width = line.spans.reduce(
+      (sum, span) => sum + stringWidth(span.text),
+      0,
+    );
+    assert(width <= cols, `row width ${width} must fit ${cols}`);
+  }
+  if (view.cursor !== undefined) {
+    assert(view.cursor.row >= 0 && view.cursor.row < rows);
+    assert(view.cursor.col >= 0 && view.cursor.col < cols);
+  }
+};
 
 /** `update` wrapper that yields just the next model (drops the cmd tail). */
 const step = (update: Built["update"]) => (m: Model, msg: Msg): Model =>
@@ -148,6 +189,83 @@ Deno.test("app surfaces approval and interrupt response details", () => {
 // scroll / followTail
 // ---------------------------------------------------------------------------
 
+Deno.test("app layout: welcome/editor/footer fit target sizes in dark and light themes", () => {
+  const sizes = [
+    [24, 20],
+    [30, 20],
+    [40, 20],
+    [80, 24],
+    [120, 40],
+  ] as const;
+  for (const theme of [darkTheme, lightTheme]) {
+    for (const [cols, rows] of sizes) {
+      const program = sizedProgram(cols, rows, theme);
+      const model = program.init()[0];
+      assertViewFits(program, model, cols, rows);
+      const output = program.view(model).lines
+        .map((line) => line.spans.map((span) => span.text).join(""))
+        .join("\n");
+      assert(output.includes("niuma"), `${cols}x${rows} welcome shows identity`);
+    }
+  }
+});
+
+Deno.test("app layout: CJK editor, palette, approval and question surfaces fit 40x20", () => {
+  const program = sizedProgram(40, 20);
+  const u = step(program.update);
+
+  let editorModel = program.init()[0];
+  editorModel = u(
+    editorModel,
+    textMsg("请分析这个很长的项目路径并保留emoji👨‍👩‍👧以及输入法光标"),
+  );
+  assertViewFits(program, editorModel, 40, 20);
+
+  let paletteModel = program.init()[0];
+  paletteModel = u(paletteModel, textMsg("p", { ctrl: true }));
+  assertEquals(paletteModel.palette.open, true);
+  assertViewFits(program, paletteModel, 40, 20);
+
+  let approvalModel = program.init()[0];
+  approvalModel = u(
+    approvalModel,
+    sse("approval.requested", {
+      approvalId: "fit-approval",
+      callId: "fit-call",
+      name: "bash",
+      input: { command: "echo 一个很长的命令用于审批预览" },
+    }),
+  );
+  assertViewFits(program, approvalModel, 40, 20);
+
+  let questionModel = program.init()[0];
+  questionModel = u(
+    questionModel,
+    sse("approval.requested", {
+      approvalId: "fit-question",
+      callId: "fit-question-call",
+      name: "question",
+      input: {
+        question: "请选择接下来要采用的实现路径？",
+        options: ["保持现状", "采用新布局", "先做一个原型再决定"],
+      },
+    }),
+  );
+  assertViewFits(program, questionModel, 40, 20);
+});
+
+Deno.test("app layout: resize recomputes wrapping and hardware cursor bounds", () => {
+  const program = sizedProgram(80, 24);
+  const u = step(program.update);
+  let model = program.init()[0];
+  for (const ch of "a long line ".repeat(12)) model = u(model, textMsg(ch));
+  model = u(model, {
+    type: "tuikit:resize",
+    size: { cols: 30, rows: 20 },
+  } as Msg);
+  assertViewFits(program, model, 30, 20);
+});
+
 Deno.test("app scroll: scrolling up breaks follow and survives an SSE event", () => {
   const program = newProgram();
   const u = step(program.update);
@@ -187,7 +305,7 @@ Deno.test("app transcript: finalizing streaming text preserves tool-call order",
   let model = program.init()[0];
 
   const assertOrder = (label: string): void => {
-    const text = program.view(model)
+    const text = program.view(model).lines
       .map((line) => line.spans.map((span) => span.text).join(""))
       .join("\n");
     const before = text.indexOf("BEFORE_TOOL");
@@ -371,6 +489,121 @@ Deno.test("app priority: a non-decision key is swallowed while the approval moda
     ["x"],
     "non-decision key did not reach the editor",
   );
+});
+
+Deno.test("question tool uses a separate bottom editor and preserves the main draft", () => {
+  const program = newProgram();
+  const u = step(program.update);
+  let model = program.init()[0];
+
+  for (const ch of "main draft") model = u(model, textMsg(ch));
+  const draft = model.editor.lines.join("\n");
+
+  model = u(
+    model,
+    sse("approval.requested", {
+      approvalId: "q1",
+      callId: "call-q1",
+      name: "question",
+      input: {
+        question: "Which path?",
+        options: ["Current", "New"],
+      },
+    }),
+  );
+  assertEquals(model.question?.question, "Which path?");
+  assertEquals(model.approval, null);
+  assertEquals(model.editor.lines.join("\n"), draft);
+
+  for (const ch of "Custom") model = u(model, textMsg(ch));
+  assertEquals(model.question?.answer.lines.join("\n"), "Custom");
+  assertEquals(model.editor.lines.join("\n"), draft);
+
+  const viewText = program.view(model).lines
+    .map((line) => line.spans.map((span) => span.text).join(""))
+    .join("\n");
+  assert(viewText.includes("Which path?"));
+
+  model = u(model, keyMsg(key("enter")));
+  assertEquals(model.question, null);
+  assertEquals(model.editor.lines.join("\n"), draft);
+});
+
+Deno.test("malformed question input falls back to approval", () => {
+  const program = newProgram();
+  const u = step(program.update);
+  let model = program.init()[0];
+  model = u(
+    model,
+    sse("approval.requested", {
+      approvalId: "q2",
+      callId: "call-q2",
+      name: "question",
+      input: "legacy question payload",
+    }),
+  );
+  assertEquals(model.question, null);
+  assertEquals(model.approval?.toolName, "question");
+});
+
+Deno.test("ctrl+o toggles recent-turn detail mode without mutating tool data", () => {
+  const program = newProgram();
+  const u = step(program.update);
+  let model = program.init()[0];
+  model = u(
+    model,
+    sse("tool.call.requested", {
+      callId: "detail-call",
+      name: "bash",
+      input: { command: "echo hello" },
+    }),
+  );
+  const before = model.state.toolCalls;
+  model = u(model, textMsg("o", { ctrl: true }));
+  assertEquals(model.detailsExpanded, true);
+  assertEquals(model.state.toolCalls, before);
+  model = u(model, textMsg("o", { ctrl: true }));
+  assertEquals(model.detailsExpanded, false);
+});
+
+Deno.test("ctrl+o expands details for only the most recent three turns", () => {
+  const program = sizedProgram(60, 200);
+  const u = step(program.update);
+  let model = program.init()[0];
+  for (let turn = 1; turn <= 4; turn++) {
+    model = u(
+      model,
+      sse("user.message", {
+        parts: [{ type: "text", text: `question ${turn}` }],
+      }),
+    );
+    model = u(
+      model,
+      sse("assistant.message", {
+        parts: [
+          {
+            type: "thinking",
+            text: `${
+              Array.from({ length: 50 }, (_, i) => `t${turn}-${i}`).join(" ")
+            } TURN${turn}_TAIL`,
+          },
+          { type: "text", text: `answer ${turn}` },
+        ],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      }),
+    );
+  }
+  model = u(model, textMsg("o", { ctrl: true }));
+  const output = program.view(model).lines
+    .map((line) => line.spans.map((span) => span.text).join(""))
+    .join("\n");
+  assertEquals(output.includes("TURN1_TAIL"), false);
+  for (const turn of [2, 3, 4]) {
+    assert(
+      output.includes(`TURN${turn}_TAIL`),
+      `turn ${turn} is within the expanded recent window`,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------

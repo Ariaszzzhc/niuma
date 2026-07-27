@@ -3,6 +3,7 @@ import type {
   PermissionEngine,
   PreparedCall,
   Tool,
+  ToolBatchCtx,
   ToolCallRecord,
   ToolCtx,
   ToolMode,
@@ -20,7 +21,7 @@ export interface PipelineOptions {
   /** Permission engine instance. */
   engine: PermissionEngine;
   /** Tool ctx (cwd, sessionId, signal, ask, ...). */
-  ctx: ToolCtx;
+  ctx: ToolBatchCtx;
   /**
    * Filesystem root for path normalisation. Defaults to `ctx.cwd`. Tools
    * that escape this root are detected AND forced through Ask even when
@@ -146,7 +147,8 @@ export async function runPipeline(
       run: async () => {
         const t0 = Date.now();
         try {
-          const out = await tool.execute(input as never, ctxRef);
+          const callCtx: ToolCtx = { ...ctxRef, callId };
+          const out = await tool.execute(input as never, callCtx);
           return {
             ...out,
             callId,

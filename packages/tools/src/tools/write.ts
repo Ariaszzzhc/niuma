@@ -27,7 +27,7 @@ export const writeTool: Tool<WriteInput> = {
   normalize: (i) => i.path,
   paths: (i) => ({ write: [i.path] }),
   async execute(input, ctx): Promise<ToolOutput> {
-    const callId = `write:${ctx.sessionId}:${input.path}`;
+    const spillId = `${ctx.sessionId}:${ctx.callId}`;
     let resolved;
     try {
       resolved = resolvePath(ctx.cwd, input.path);
@@ -44,11 +44,14 @@ export const writeTool: Tool<WriteInput> = {
         .catch(() => {/* ignore — mkdir on existing dir is fine */});
       await Deno.writeTextFile(resolved.abs, input.content);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, {
+      return await toolOutput(`error: ${(e as Error).message}`, spillId, {
         isError: true,
       });
     }
     const bytes = new TextEncoder().encode(input.content).byteLength;
-    return await toolOutput(`wrote ${bytes} bytes to ${resolved.rel}`, callId);
+    return await toolOutput(
+      `wrote ${bytes} bytes to ${resolved.rel}`,
+      spillId,
+    );
   },
 };

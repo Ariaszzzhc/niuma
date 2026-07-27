@@ -6,6 +6,7 @@ import type {
   PermissionEngine,
   SubagentResult,
   Tool,
+  ToolBatchCtx,
   ToolOutput,
 } from "@niuma/tools";
 import { READ_ONLY_ALLOWED, runPipeline, ToolRegistry } from "@niuma/tools";
@@ -162,7 +163,7 @@ async function executeBatch(
     ...(opts.spawnSubagent !== undefined
       ? { spawnSubagent: opts.spawnSubagent }
       : {}),
-  } satisfies import("@niuma/tools").ToolCtx;
+  } satisfies ToolBatchCtx;
 
   const pipelineOpts: import("@niuma/tools").PipelineOptions = {
     tools: toolMap,
@@ -188,7 +189,7 @@ async function executeBatch(
       callId: c.callId,
       content: out.content,
       isError: out.isError === true,
-      durationMs: Date.now() - start,
+      durationMs: out.durationMs ?? Date.now() - start,
     } satisfies ToolRunResult;
   });
 }

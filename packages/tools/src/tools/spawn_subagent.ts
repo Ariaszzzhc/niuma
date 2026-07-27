@@ -27,11 +27,11 @@ export const spawnSubagentTool: Tool<SpawnSubagentInput> = {
   normalize: (i) =>
     `subagent(${i.mode ?? "default"}): ${truncate(i.prompt, 60)}`,
   async execute(input, ctx): Promise<ToolOutput> {
-    const callId = `spawn_subagent:${ctx.sessionId}`;
+    const spillId = `${ctx.sessionId}:${ctx.callId}`;
     if (!ctx.spawnSubagent) {
       return await toolOutput(
         "error: subagent spawning is not wired in this context",
-        callId,
+        spillId,
         { isError: true },
       );
     }
@@ -41,9 +41,9 @@ export const spawnSubagentTool: Tool<SpawnSubagentInput> = {
         mode: input.mode ?? "default",
         parentSessionId: ctx.sessionId,
       });
-      return await toolOutput(r.text || "(empty)", callId);
+      return await toolOutput(r.text || "(empty)", spillId);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, {
+      return await toolOutput(`error: ${(e as Error).message}`, spillId, {
         isError: true,
       });
     }

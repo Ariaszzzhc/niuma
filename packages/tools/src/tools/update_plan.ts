@@ -34,21 +34,24 @@ export const updatePlanTool: Tool<UpdatePlanInput> = {
   inputSchema: UpdatePlanInput,
   normalize: (i) => `plan(${i.items.length} items)`,
   async execute(input, ctx): Promise<ToolOutput> {
-    const callId = `update_plan:${ctx.sessionId}`;
+    const spillId = `${ctx.sessionId}:${ctx.callId}`;
     // Basic invariant checks.
     const inProgress =
       input.items.filter((i) => i.status === "in_progress").length;
     if (inProgress > 1) {
       return await toolOutput(
         `error: at most one item may be in_progress; got ${inProgress}`,
-        callId,
+        spillId,
         { isError: true },
       );
     }
-    ctx.emitProgress?.(callId, `plan updated: ${input.items.length} items`);
+    ctx.emitProgress?.(
+      ctx.callId,
+      `plan updated: ${input.items.length} items`,
+    );
     const summary = input.items.map((i) => `[${i.status}] ${i.title}`).join(
       "\n",
     );
-    return await toolOutput(summary, callId);
+    return await toolOutput(summary, spillId);
   },
 };

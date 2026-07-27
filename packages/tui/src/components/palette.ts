@@ -1,7 +1,7 @@
 // ===========================================================================
-// @niuma/tui — command palette overlay (INPUT half)
+// @niuma/tui — command palette bottom surface
 // ---------------------------------------------------------------------------
-// ctrl+p opens a centered command palette that fuzzy-filters the palette
+// ctrl+p opens a bottom command surface that fuzzy-filters the palette
 // items, navigates with up/down (or ctrl+p/ctrl+n), executes on enter and
 // closes on esc. `paletteReducer` is pure and returns the next state plus an
 // optional `PaletteAction` the app acts on (`execute` / `close`).
@@ -13,15 +13,18 @@
 // expands; the palette seeds the editor with `/name ` so the user can
 // supply arguments). `paletteItems()` builds the combined list.
 //
-// Rendering mirrors the approval overlay: `renderPalette` returns the modal
-// lines + (top, left); the app composites them over a dimmed base scene.
-// Local `PaletteTheme` keeps the renderer's dependency surface small.
+// Rendering returns declarative rows plus a relative hardware cursor. The app
+// installs it in the mutually-exclusive bottom input slot, preserving the main
+// editor draft underneath. Local `PaletteTheme` keeps this independent of the
+// product Theme.
 // ===========================================================================
 
 import {
   type Color,
+  type Cursor,
   type InputEvent,
   matchesKey,
+  selectionWindow,
   stringWidth,
   type StyledLine,
   type StyledSpan,
@@ -29,6 +32,7 @@ import {
 } from "@niuma/tuikit";
 
 import { BUILTIN_COMMANDS } from "../commands.ts";
+import { SELECTION_MARKER, USER_MARKER } from "../symbols.ts";
 
 // ---------------------------------------------------------------------------
 // Types + constants
@@ -85,7 +89,7 @@ export const paletteItems = (
 export interface PaletteState {
   readonly open: boolean;
   readonly query: string;
-  /** Caret within the query (for a block cursor in the input). */
+  /** Grapheme-cluster caret within the query. */
   readonly caret: number;
   /** Index into the filtered list; clamped by the reducer on every change. */
   readonly selected: number;
@@ -95,7 +99,7 @@ export type PaletteAction =
   | { readonly type: "execute"; readonly item: PaletteItem }
   | { readonly type: "close" };
 
-/** Focused color interface needed by the palette. */
+/** Colors the palette needs. Decoupled from the product `Theme`. */
 export interface PaletteTheme {
   readonly border: Color;
   readonly accent: Color;
@@ -166,6 +170,19 @@ export const paletteFiltered = (
 
 const clamp = (n: number, lo: number, hi: number): number =>
   n < lo ? lo : n > hi ? hi : n;
+
+const segmenter = /* @__PURE__ */ new Intl.Segmenter("en", {
+  granularity: "grapheme",
+});
+
+const graphemes = (value: string): string[] =>
+  Array.from(segmenter.segment(value), (part) => part.segment);
+
+const graphemeCount = (value: string): number => {
+  let count = 0;
+  for (const _ of segmenter.segment(value)) count++;
+  return count;
+};
 
 // ---------------------------------------------------------------------------
 // Reducer
@@ -249,25 +266,27 @@ export const paletteReducer = (
     case "right":
       return [{
         ...state,
-        caret: clamp(state.caret + 1, 0, state.query.length),
+        caret: clamp(state.caret + 1, 0, graphemeCount(state.query)),
       }, undefined];
     case "home":
       return [{ ...state, caret: 0 }, undefined];
     case "end":
-      return [{ ...state, caret: state.query.length }, undefined];
+      return [{ ...state, caret: graphemeCount(state.query) }, undefined];
     case "backspace": {
       if (state.caret === 0) return [state, undefined];
-      const q = state.query.slice(0, state.caret - 1) +
-        state.query.slice(state.caret);
+      const query = graphemes(state.query);
+      query.splice(state.caret - 1, 1);
+      const q = query.join("");
       return [
         resetSelection({ ...state, query: q, caret: state.caret - 1 }),
         undefined,
       ];
     }
     case "delete": {
-      if (state.caret === state.query.length) return [state, undefined];
-      const q = state.query.slice(0, state.caret) +
-        state.query.slice(state.caret + 1);
+      const query = graphemes(state.query);
+      if (state.caret === query.length) return [state, undefined];
+      query.splice(state.caret, 1);
+      const q = query.join("");
       return [{ ...state, query: q }, undefined];
     }
     case "tab": {
@@ -297,12 +316,16 @@ const resetSelection = (state: PaletteState): PaletteState => ({
 
 const appendToQuery = (state: PaletteState, text: string): PaletteState => {
   if (text === "") return state;
-  const q = state.query.slice(0, state.caret) + text +
-    state.query.slice(state.caret);
+  const query = graphemes(state.query);
+  const q = [
+    ...query.slice(0, state.caret),
+    text,
+    ...query.slice(state.caret),
+  ].join("");
   return resetSelection({
     ...state,
     query: q,
-    caret: state.caret + text.length,
+    caret: state.caret + graphemeCount(text),
   });
 };
 
@@ -314,130 +337,156 @@ const TOP_LEFT = "╭";
 const TOP_RIGHT = "╮";
 const BOTTOM_LEFT = "╰";
 const BOTTOM_RIGHT = "╯";
+const T_LEFT = "├";
+const T_RIGHT = "┤";
 const HBAR = "─";
 const VBAR = "│";
-const PROMPT = "❯ ";
 
 const repeat = (s: string, n: number): string => s.repeat(Math.max(0, n));
 const span = (
   text: string,
   fg: Color,
-  extra: { dim?: boolean; bold?: boolean; reverse?: boolean } = {},
+  extra: { dim?: boolean; bold?: boolean } = {},
 ): StyledSpan => ({ text, style: { fg, ...extra } });
 const blank = (text: string): StyledSpan => ({ text, style: {} });
 
-export interface RenderedOverlay {
+export interface PaletteSurface {
   readonly lines: readonly StyledLine[];
-  readonly top: number;
-  readonly left: number;
+  readonly cursor?: Cursor;
 }
 
 /**
- * Render the palette modal: an input row (❯ query with a block cursor) on top,
- * the filtered items below (name + muted description, selection reversed).
- * Returns the lines and the (top, left) where the app stamps them.
+ * Render the palette input surface: search row, a compact results divider and
+ * a windowed selectable list. Selection uses Niuma's marker rather than a
+ * reverse-video row.
  */
 export const renderPalette = (
   state: PaletteState,
   items: readonly PaletteItem[],
   screenW: number,
-  screenH: number,
   theme: PaletteTheme,
-): RenderedOverlay => {
+  maxVisible = 8,
+): PaletteSurface => {
   const filtered = paletteFiltered(state, items);
-  const maxBoxW = Math.max(24, screenW - 2);
-  const minBoxW = 28;
-  const longest = items.reduce(
-    (m, c) =>
-      Math.max(
-        m,
-        stringWidth(c.name) +
-          (c.description !== undefined ? stringWidth(c.description) + 2 : 0),
-      ),
-    0,
-  );
-  const queryW = stringWidth(PROMPT + state.query);
-  const contentW = Math.max(longest, queryW);
-  const boxW = Math.max(minBoxW, Math.min(maxBoxW, contentW + 6));
+  const boxW = Math.max(8, screenW);
   const innerW = Math.max(1, boxW - 4);
-
   const lines: StyledLine[] = [];
 
-  // top border
+  // top border with a persistent mode label
+  const title = truncateToWidth(" commands ", Math.max(0, boxW - 2));
+  const titleFill = Math.max(0, boxW - 2 - stringWidth(title));
   lines.push({
-    spans: [span(TOP_LEFT + repeat(HBAR, boxW - 2) + TOP_RIGHT, theme.border)],
+    spans: [
+      span(TOP_LEFT, theme.border),
+      span(title, theme.accent, { bold: true }),
+      span(repeat(HBAR, titleFill), theme.border),
+      span(TOP_RIGHT, theme.border),
+    ],
   });
 
-  // input row: ❯ <query with block cursor>
+  // Search input. Keep the part immediately before the caret visible.
+  let cursorCol = 4;
   {
-    const spans: StyledSpan[] = [span(`${VBAR} ${PROMPT}`, theme.prompt)];
-    const before = state.query.slice(0, state.caret);
+    const prompt = `${USER_MARKER} `;
+    const queryBudget = Math.max(1, innerW - stringWidth(prompt));
+    const spans: StyledSpan[] = [
+      span(`${VBAR} `, theme.border),
+      span(prompt, theme.prompt, { bold: true }),
+    ];
+    const query = graphemes(state.query);
+    const before = query.slice(0, state.caret).join("");
+    const after = query.slice(state.caret).join("");
     const beforeW = stringWidth(before);
-    if (beforeW >= innerW - stringWidth(PROMPT)) {
-      // caret off-screen: show plain truncated query
-      spans.push(
-        span(
-          truncateToWidth(
-            state.query,
-            Math.max(1, innerW - stringWidth(PROMPT)),
-          ),
-          theme.text,
-        ),
-      );
-    } else {
+    let used = 0;
+    if (beforeW < queryBudget) {
       spans.push(span(before, theme.text));
-      const cursorChar = state.caret < state.query.length
-        ? state.query[state.caret]
-        : " ";
-      spans.push(span(cursorChar, theme.text, { reverse: true }));
-      const used = beforeW + Math.max(1, stringWidth(cursorChar));
-      const remain = innerW - stringWidth(PROMPT) - used;
-      if (remain > 0) {
-        const after = state.caret < state.query.length
-          ? state.query.slice(state.caret + 1)
-          : "";
-        const t = truncateToWidth(after, remain);
-        spans.push(span(t, theme.text));
-        const pad = remain - stringWidth(t);
-        if (pad > 0) spans.push(blank(repeat(" ", pad)));
+      used = beforeW;
+      cursorCol += beforeW;
+      const shownAfter = truncateToWidth(after, queryBudget - used);
+      spans.push(span(shownAfter, theme.text));
+      used += stringWidth(shownAfter);
+    } else {
+      const tailBudget = Math.max(0, queryBudget - 1);
+      const clusters = graphemes(before);
+      let tail = "";
+      for (let i = clusters.length - 1; i >= 0; i--) {
+        const next = clusters[i] + tail;
+        if (stringWidth(next) > tailBudget) break;
+        tail = next;
       }
+      const shown = `…${tail}`;
+      spans.push(span(shown, theme.text));
+      used = stringWidth(shown);
+      cursorCol += used;
     }
+    if (used < queryBudget) spans.push(blank(repeat(" ", queryBudget - used)));
     spans.push(span(` ${VBAR}`, theme.border));
     lines.push({ spans });
   }
 
-  // item rows: name left, description right-padded after it (muted)
-  for (let i = 0; i < filtered.length; i++) {
-    const item = filtered[i];
-    const selected = i === state.selected;
-    const name = `  ${item.name}`;
+  const count = ` ${filtered.length} match${
+    filtered.length === 1 ? "" : "es"
+  } `;
+  const countShown = truncateToWidth(count, Math.max(0, boxW - 2));
+  lines.push({
+    spans: [
+      span(T_LEFT, theme.border),
+      span(countShown, theme.muted, { dim: true }),
+      span(
+        repeat(HBAR, Math.max(0, boxW - 2 - stringWidth(countShown))),
+        theme.border,
+      ),
+      span(T_RIGHT, theme.border),
+    ],
+  });
+
+  const window = selectionWindow(
+    { selected: state.selected },
+    filtered.length,
+    Math.max(1, maxVisible),
+  );
+  const visible = filtered.slice(window.start, window.end);
+
+  // item rows: marker + command + muted description
+  for (let i = 0; i < visible.length; i++) {
+    const item = visible[i];
+    const selected = window.start + i === window.selected;
+    const marker = selected ? `${SELECTION_MARKER} ` : "  ";
+    const name = item.name;
     const desc = item.description ?? "";
-    const nameW = stringWidth(name);
-    const descW = stringWidth(desc);
-    const gap = 2;
     const spans: StyledSpan[] = [span(`${VBAR} `, theme.border)];
-    if (selected) {
-      const label = truncateToWidth(
-        desc === "" ? name : `${name}${repeat(" ", gap)}${desc}`,
-        innerW,
-      );
-      spans.push(span(label, theme.accent, { reverse: true }));
-      const pad = innerW - stringWidth(label);
-      if (pad > 0) {
-        spans.push(span(repeat(" ", pad), theme.accent, { reverse: true }));
-      }
-    } else {
-      spans.push(span(truncateToWidth(name, innerW), theme.text));
-      if (desc !== "" && nameW + gap + descW <= innerW) {
-        spans.push(blank(repeat(" ", innerW - nameW - descW)));
-        spans.push(span(desc, theme.muted, { dim: true }));
-      } else {
-        const pad = innerW - Math.min(nameW, innerW);
-        if (pad > 0) spans.push(blank(repeat(" ", pad)));
+    spans.push(span(marker, selected ? theme.accent : theme.muted, {
+      bold: selected,
+    }));
+    let used = stringWidth(marker);
+    const shownName = truncateToWidth(name, Math.max(0, innerW - used));
+    spans.push(span(shownName, selected ? theme.accent : theme.text, {
+      bold: selected,
+    }));
+    used += stringWidth(shownName);
+    if (desc !== "" && used + 2 < innerW) {
+      const shownDesc = truncateToWidth(desc, innerW - used - 2);
+      if (shownDesc.length > 0) {
+        spans.push(blank("  "));
+        spans.push(span(shownDesc, theme.muted, { dim: true }));
+        used += 2 + stringWidth(shownDesc);
       }
     }
+    if (used < innerW) spans.push(blank(repeat(" ", innerW - used)));
     spans.push(span(` ${VBAR}`, theme.border));
     lines.push({ spans });
+  }
+
+  if (visible.length === 0) {
+    const message = truncateToWidth("No matching commands", innerW);
+    lines.push({
+      spans: [
+        span(`${VBAR} `, theme.border),
+        span(message, theme.muted, { dim: true }),
+        blank(repeat(" ", innerW - stringWidth(message))),
+        span(` ${VBAR}`, theme.border),
+      ],
+    });
   }
 
   // bottom border
@@ -447,9 +496,8 @@ export const renderPalette = (
     ],
   });
 
-  const boxH = lines.length;
-  const top = Math.max(0, Math.floor((screenH - boxH) / 3)); // biased toward upper third
-  const left = Math.max(0, Math.floor((screenW - boxW) / 2));
-
-  return { lines, top, left };
+  return {
+    lines,
+    cursor: { row: 1, col: Math.min(boxW - 2, cursorCol), shape: "bar" },
+  };
 };

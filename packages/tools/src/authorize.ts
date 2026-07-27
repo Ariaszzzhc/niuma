@@ -5,12 +5,12 @@ import type {
   PermissionEngine,
   PreparedCall,
   Tool,
-  ToolCtx,
+  ToolBatchCtx,
 } from "./types.ts";
 
 export interface AuthorizeContext {
   engine: PermissionEngine;
-  ctx: ToolCtx;
+  ctx: ToolBatchCtx;
 }
 
 /**

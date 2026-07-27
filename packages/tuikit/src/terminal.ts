@@ -39,6 +39,7 @@ const LEAVE_ALT = enc("\x1b[?1049l");
 /** Cursor visibility. */
 const HIDE_CURSOR = enc("\x1b[?25l");
 const SHOW_CURSOR = enc("\x1b[?25h");
+const RESET_CURSOR_SHAPE = enc("\x1b[0 q");
 /** Bracketed paste. */
 const PASTE_ON = enc("\x1b[?2004h");
 const PASTE_OFF = enc("\x1b[?2004l");
@@ -342,6 +343,7 @@ export class Terminal {
     if (this.#pushedKitty) Deno.stdout.writeSync(KITTY_POP);
     if (this.#enabledMouse) Deno.stdout.writeSync(MOUSE_OFF);
     if (this.#enabledPaste) Deno.stdout.writeSync(PASTE_OFF);
+    Deno.stdout.writeSync(RESET_CURSOR_SHAPE);
     Deno.stdout.writeSync(SHOW_CURSOR);
     if (this.#enteredAlt) Deno.stdout.writeSync(LEAVE_ALT);
 

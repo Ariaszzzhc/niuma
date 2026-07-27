@@ -24,7 +24,13 @@ import type { StyledLine, StyledSpan } from "@niuma/tuikit";
 import { stringWidth, truncateToWidth } from "@niuma/tuikit";
 import type { Theme } from "../theme.ts";
 import { renderMarkdown } from "../markdown.ts";
-import { renderToolCall, type ToolCallView } from "./tool_call.ts";
+import {
+  isReadTool,
+  renderReadToolGroup,
+  renderToolCall,
+  type ToolCallView,
+} from "./tool_call.ts";
+import { SPINNER_FRAMES, THINKING_MARKER, USER_MARKER } from "../symbols.ts";
 
 // ---------------------------------------------------------------------------
 // Model
@@ -38,6 +44,8 @@ export type ChatMessage =
     readonly text: string;
     /** Reasoning/thinking text, rendered dimmed above the body. */
     readonly thinking?: string;
+    /** Reveal the complete reasoning block (ctrl+o, recent turns only). */
+    readonly detailsExpanded?: boolean;
   }
   | { readonly role: "tool"; readonly call: ToolCallView }
   /** Local command output / system notices (/help, /model, errors…).
@@ -119,7 +127,7 @@ const renderUserMessage = (
   width: number,
   theme: Theme,
 ): StyledLine[] => {
-  const prefix = "❯ ";
+  const prefix = `${USER_MARKER} `;
   const prefixW = stringWidth(prefix);
   const contentW = Math.max(1, width - prefixW);
   const prompt: StyledSpan = {
@@ -209,8 +217,13 @@ const renderThinking = (
   text: string,
   width: number,
   theme: Theme,
+  options: {
+    readonly streaming: boolean;
+    readonly expanded: boolean;
+    readonly spinnerFrame: number;
+  },
 ): StyledLine[] => {
-  const prefix = "⋮ ";
+  const prefix = `${THINKING_MARKER} `;
   const prefixW = stringWidth(prefix);
   const contentW = Math.max(1, width - prefixW);
   const gutter: StyledSpan = {
@@ -220,12 +233,53 @@ const renderThinking = (
   const indent: StyledSpan = { text: " ".repeat(prefixW), style: {} };
   const wrapped = wrapPlain(text, contentW);
   if (wrapped.length === 0) return [{ spans: [gutter] }];
-  return wrapped.map((line, idx) => ({
-    spans: [
-      idx === 0 ? gutter : indent,
-      { text: line, style: { fg: theme.textDim, dim: true, italic: true } },
-    ],
-  }));
+  const body = (lines: readonly string[]): StyledLine[] =>
+    lines.map((line, idx) => ({
+      spans: [
+        idx === 0 ? gutter : indent,
+        {
+          text: line,
+          style: { fg: theme.textDim, dim: true, italic: true },
+        },
+      ],
+    }));
+
+  if (options.streaming) {
+    const spinner =
+      SPINNER_FRAMES[options.spinnerFrame % SPINNER_FRAMES.length] ??
+        SPINNER_FRAMES[0];
+    return [
+      {
+        spans: [
+          { text: `${spinner} `, style: { fg: theme.accent } },
+          {
+            text: "Thinking",
+            style: { fg: theme.textDim, dim: true, italic: true },
+          },
+        ],
+      },
+      ...body(wrapped.slice(-2)),
+    ];
+  }
+
+  if (options.expanded || wrapped.length <= 2) return body(wrapped);
+
+  const hidden = wrapped.length - 2;
+  return [
+    ...body(wrapped.slice(0, 2)),
+    {
+      spans: [
+        indent,
+        {
+          text: truncateToWidth(
+            `ctrl+o to expand · ${hidden} more line${hidden === 1 ? "" : "s"}`,
+            contentW,
+          ),
+          style: { fg: theme.textMuted, dim: true },
+        },
+      ],
+    },
+  ];
 };
 
 /**
@@ -306,26 +360,63 @@ export const renderTranscriptContent = (
       case "assistant":
         if (msg.thinking && msg.thinking.length > 0) {
           out.push(
-            ...indentLines(renderThinking(msg.thinking, contentW, theme)),
+            ...indentLines(
+              renderThinking(msg.thinking, contentW, theme, {
+                streaming: streaming && isLast,
+                expanded: msg.detailsExpanded === true,
+                spinnerFrame,
+              }),
+            ),
           );
         }
-        out.push(
-          ...indentLines(
-            renderMarkdown(msg.text, {
-              width: contentW,
-              // Only the trailing assistant message can still be streaming.
-              streaming: streaming && isLast,
-              theme,
-            }),
-          ),
-        );
+        if (msg.text.length > 0) {
+          out.push(
+            ...indentLines(
+              renderMarkdown(msg.text, {
+                width: contentW,
+                // Only the trailing assistant message can still be streaming.
+                streaming: streaming && isLast,
+                theme,
+              }),
+            ),
+          );
+        }
         break;
       case "tool":
-        out.push(
-          ...indentLines(
-            renderToolCall(msg.call, contentW, theme, spinnerFrame),
-          ),
-        );
+        if (isReadTool(msg.call)) {
+          const group = [msg.call];
+          let nextIndex = m + 1;
+          while (nextIndex < state.messages.length) {
+            const next = state.messages[nextIndex];
+            if (
+              next.role !== "tool" ||
+              !isReadTool(next.call) ||
+              next.call.batchId !== msg.call.batchId
+            ) break;
+            group.push(next.call);
+            nextIndex++;
+          }
+          if (group.length > 1) {
+            out.push(
+              ...indentLines(
+                renderReadToolGroup(group, contentW, theme, spinnerFrame),
+              ),
+            );
+            m = nextIndex - 1;
+          } else {
+            out.push(
+              ...indentLines(
+                renderToolCall(msg.call, contentW, theme, spinnerFrame),
+              ),
+            );
+          }
+        } else {
+          out.push(
+            ...indentLines(
+              renderToolCall(msg.call, contentW, theme, spinnerFrame),
+            ),
+          );
+        }
         break;
       case "notice":
         out.push(
@@ -333,8 +424,14 @@ export const renderTranscriptContent = (
         );
         break;
     }
-    // One blank row between top-level messages for breathing room.
-    if (m < state.messages.length - 1) out.push(blankLine(safeWidth));
+    // Consecutive tool calls form a compact execution batch. Other top-level
+    // transitions keep one row of breathing room.
+    if (m < state.messages.length - 1) {
+      const next = state.messages[m + 1];
+      if (!(msg.role === "tool" && next.role === "tool")) {
+        out.push(blankLine(safeWidth));
+      }
+    }
   }
   return out;
 };

@@ -8,9 +8,8 @@
 //   - tool_call: collapsed status glyphs (spinner/done/error), name+summary,
 //     expanded tree indent ("⎿ " first / "  " rest), 8-line cap + footer,
 //     duration formatting;
-//   - statusline: exact width fit at several widths, gradient activity
-//     cluster, token compact formatting;
-//   - approval modal: header label truncation at narrow widths.
+//   - footer: two-row width discipline and information hierarchy;
+//   - approval panel: header label truncation at narrow widths.
 // Only tuikit width/gradient (built) is required.
 // ===========================================================================
 
@@ -27,13 +26,10 @@ import {
   renderToolCall,
   type ToolCallView,
 } from "../src/components/tool_call.ts";
-import {
-  renderStatusline,
-  type StatusView,
-} from "../src/components/statusline.ts";
+import { type FooterView, renderFooter } from "../src/components/footer.ts";
 import {
   type ApprovalTheme,
-  renderApprovalOverlay,
+  renderApprovalPanel,
 } from "../src/components/approval.ts";
 import {
   type ChatMessage,
@@ -169,6 +165,57 @@ Deno.test("transcript: thinking wraps with a hanging indent", () => {
   for (const l of lines) assertGreaterOrEqual(24, lineWidth(l));
 });
 
+Deno.test("transcript: finalized thinking shows two rows and an expansion hint", () => {
+  const long = Array.from({ length: 40 }, (_, i) => `thought-${i}`).join(" ");
+  const state: TranscriptState = {
+    messages: [{ role: "assistant", text: "", thinking: long }],
+    scrollOffset: 0,
+    followTail: true,
+  };
+  const lines = renderTranscriptContent(state, 36, THEME);
+  assertEquals(lines.length, 3);
+  assertEquals(lineText(lines[2]).includes("ctrl+o"), true);
+});
+
+Deno.test("transcript: expanded thinking reveals the complete block", () => {
+  const long = Array.from({ length: 40 }, (_, i) => `thought-${i}`).join(" ");
+  const collapsed: TranscriptState = {
+    messages: [{ role: "assistant", text: "", thinking: long }],
+    scrollOffset: 0,
+    followTail: true,
+  };
+  const expanded: TranscriptState = {
+    ...collapsed,
+    messages: [{
+      role: "assistant",
+      text: "",
+      thinking: long,
+      detailsExpanded: true,
+    }],
+  };
+  const collapsedLines = renderTranscriptContent(collapsed, 36, THEME);
+  const expandedLines = renderTranscriptContent(expanded, 36, THEME);
+  assertEquals(expandedLines.length > collapsedLines.length, true);
+  assertEquals(allText(expandedLines).includes("ctrl+o"), false);
+});
+
+Deno.test("transcript: live thinking shows a spinner and only the two-line tail", () => {
+  const thinking = Array.from({ length: 30 }, (_, i) => `live-${i}`).join(" ");
+  const state: TranscriptState = {
+    messages: [{ role: "assistant", text: "", thinking }],
+    scrollOffset: 0,
+    followTail: true,
+  };
+  const lines = renderTranscriptContent(state, 32, THEME, {
+    streaming: true,
+    spinnerFrame: 2,
+  });
+  assertEquals(lines.length, 3);
+  assertEquals(lineText(lines[0]).includes("⠹ Thinking"), true);
+  assertEquals(allText(lines).includes("live-0"), false);
+  assertEquals(allText(lines).includes("live-29"), true);
+});
+
 Deno.test("transcript: scroll up breaks follow and moves the window up", () => {
   const state: TranscriptState = {
     messages: alphaTranscript(8),
@@ -289,7 +336,7 @@ Deno.test("tool_call: running shows a braille spinner at the given frame", () =>
   assertEquals(lines.length, 1);
   const text = lineText(lines[0]);
   assertEquals(text.startsWith("│ ⠹"), true); // bar + SPINNER_FRAMES[2]
-  assertEquals(text.includes("read_file"), true);
+  assertEquals(text.includes("Read"), true);
   assertEquals(text.includes("src/main.ts"), true);
 });
 
@@ -299,9 +346,9 @@ Deno.test("tool_call: done shows ● in the success colour", () => {
   assertEquals(hasFg(lines, THEME.success), true);
 });
 
-Deno.test("tool_call: error shows ✗ in the error colour", () => {
+Deno.test("tool_call: error shows × in the error colour", () => {
   const lines = renderToolCall(baseCall({ status: "error" }), 40, THEME);
-  assertEquals(lineText(lines[0]).startsWith("│ ✗"), true);
+  assertEquals(lineText(lines[0]).startsWith("│ ×"), true);
   assertEquals(hasFg(lines, THEME.error), true);
 });
 
@@ -329,7 +376,7 @@ Deno.test("tool_call: collapsed hides result lines", () => {
   assertEquals(allText(lines).includes("one"), false);
 });
 
-Deno.test("tool_call: expanded tree-indents results (⎿ first, rest)", () => {
+Deno.test("tool_call: expanded tree-indents result rows", () => {
   const lines = renderToolCall(
     baseCall({
       status: "done",
@@ -341,23 +388,26 @@ Deno.test("tool_call: expanded tree-indents results (⎿ first, rest)", () => {
   );
   // header + 3 result rows
   assertEquals(lines.length, 4);
-  assertEquals(lineText(lines[1]).startsWith("│ ⎿"), true);
+  assertEquals(lineText(lines[1]).startsWith("│ ├"), true);
   assertEquals(lineText(lines[1]).includes("one"), true);
-  assertEquals(lineText(lines[2]).startsWith("│   "), true);
-  assertFalse(lineText(lines[2]).startsWith("│ ⎿"));
-  assertEquals(lineText(lines[3]).startsWith("│   "), true);
+  assertEquals(lineText(lines[2]).startsWith("│ ├"), true);
+  assertFalse(lineText(lines[2]).startsWith("│ └"));
+  assertEquals(lineText(lines[3]).startsWith("│ └"), true);
 });
 
-Deno.test("tool_call: expanded caps at 8 lines with a +N footer", () => {
-  const results = Array.from({ length: 12 }, (_, i) => `line${i}`);
+Deno.test("tool_call: expanded caps at 24 visual rows with a +N footer", () => {
+  const results = Array.from({ length: 30 }, (_, i) => `line${i}`);
   const lines = renderToolCall(
     baseCall({ status: "done", resultLines: results, expanded: true }),
     40,
     THEME,
   );
-  // header + 8 shown + 1 footer
-  assertEquals(lines.length, 1 + 8 + 1);
-  assertEquals(lineText(lines[lines.length - 1]).includes("+4 lines"), true);
+  // header + 24 shown + 1 footer
+  assertEquals(lines.length, 1 + 24 + 1);
+  assertEquals(
+    lineText(lines[lines.length - 1]).includes("+6 more lines"),
+    true,
+  );
 });
 
 Deno.test("tool_call: duration formatting (ms / s)", () => {
@@ -389,12 +439,52 @@ Deno.test("tool_call: never overflows the given width", () => {
   }
 });
 
+Deno.test("transcript: only reads from the same assistant batch are grouped", () => {
+  const state: TranscriptState = {
+    messages: [
+      {
+        role: "tool",
+        call: baseCall({
+          name: "read",
+          input: { path: "a.ts" },
+          batchId: 1,
+        }),
+      },
+      {
+        role: "tool",
+        call: baseCall({
+          name: "read",
+          input: { path: "b.ts" },
+          batchId: 1,
+        }),
+      },
+      {
+        role: "tool",
+        call: baseCall({
+          name: "read",
+          input: { path: "c.ts" },
+          batchId: 2,
+        }),
+      },
+    ],
+    scrollOffset: 0,
+    followTail: true,
+  };
+  const output = renderTranscriptContent(state, 60, THEME)
+    .map(lineText)
+    .join("\n");
+  assertEquals((output.match(/Read/g) ?? []).length, 2);
+  assertEquals(output.includes("2 files"), true);
+  assertEquals(output.includes("c.ts"), true);
+});
+
 // ===========================================================================
-// statusline
+// footer
 // ===========================================================================
 
-const baseStatus = (over: Partial<StatusView> = {}): StatusView => ({
+const baseFooter = (over: Partial<FooterView> = {}): FooterView => ({
   model: "",
+  effort: undefined,
   tokensIn: 0,
   tokensOut: 0,
   lastInputTokens: 0,
@@ -404,153 +494,82 @@ const baseStatus = (over: Partial<StatusView> = {}): StatusView => ({
   mcpServers: [],
   activity: null,
   spinnerFrame: 0,
+  hints: [],
   ...over,
 });
 
-Deno.test("statusline: fits exactly to width at several widths (with activity)", () => {
-  const view = baseStatus({
+Deno.test("footer: both rows fit exactly at several widths", () => {
+  const view = baseFooter({
     model: "claude-sonnet-4.5",
+    effort: "high",
     tokensIn: 1234,
     tokensOut: 500,
     activity: "thinking",
+    hints: ["ctrl+p commands", "ctrl+o details"],
   });
-  for (const w of [80, 60, 40, 28]) {
-    const line = renderStatusline(view, w, THEME);
-    assertEquals(lineWidth(line), w, `width ${w} should fit exactly`);
+  for (const width of [100, 80, 60, 40, 28]) {
+    const lines = renderFooter(view, width, THEME);
+    assertEquals(lines.length, 2);
+    assertEquals(
+      lines.every((line) => lineWidth(line) === width),
+      true,
+      `width ${width} should fit exactly`,
+    );
   }
 });
 
-Deno.test("statusline: idle (no activity) still fits width with metrics only", () => {
-  const view = baseStatus({
-    model: "claude-sonnet-4.5",
-    tokensIn: 99,
-  });
-  const line = renderStatusline(view, 60, THEME);
-  assertEquals(lineWidth(line), 60);
-  const text = lineText(line);
-  assertEquals(text.includes("claude-sonnet-4.5"), true);
-  assertEquals(text.includes("↑99"), true);
-  assertEquals(text.includes("↓0"), true);
-  // no spinner glyph when idle
-  assertFalse(text.includes("⠋"));
-});
-
-Deno.test("statusline: activity cluster is gradient-painted (many spans)", () => {
-  const view = baseStatus({ model: "m", activity: "working", spinnerFrame: 3 });
-  const line = renderStatusline(view, 40, THEME);
-  // gradient returns one span per cluster -> several spans for "⠼ working"
-  assert(
-    line.spans.length > 2,
-    "expected gradient to split the activity into spans",
-  );
-  assertEquals(lineText(line).includes("working"), true);
-});
-
-Deno.test("statusline: token counts compact-format k / M", () => {
-  const view = baseStatus({ tokensIn: 1500, tokensOut: 1_500_000 });
-  const text = lineText(renderStatusline(view, 60, THEME));
-  assertEquals(text.includes("↑1.5k"), true);
-  assertEquals(text.includes("↓1.5M"), true);
-});
-
-Deno.test("statusline: context fullness renders as ctx n%", () => {
-  const view = baseStatus({
+Deno.test("footer: preserves activity and metrics hierarchy", () => {
+  const view = baseFooter({
+    model: "kimi-k3",
+    effort: "medium",
+    tokensIn: 1500,
+    tokensOut: 1_500_000,
     lastInputTokens: 24_000,
     contextWindow: 200_000,
+    activity: "generating",
+    hints: ["ctrl+p commands"],
   });
-  const text = lineText(renderStatusline(view, 80, THEME));
+  const text = allText(renderFooter(view, 100, THEME));
+  assertEquals(text.includes("kimi-k3"), true);
+  assertEquals(text.includes("medium"), true);
+  assertEquals(text.includes("↑1.5k"), true);
+  assertEquals(text.includes("↓1.5M"), true);
   assertEquals(text.includes("ctx 12%"), true);
+  assertEquals(text.includes("generating"), true);
+  assertEquals(text.includes("ctrl+p commands"), true);
 });
 
-Deno.test("statusline: no ctx slot when the window is unknown", () => {
-  const view = baseStatus({ lastInputTokens: 25_000, contextWindow: null });
-  const text = lineText(renderStatusline(view, 80, THEME));
-  assertFalse(text.includes("ctx"));
-});
-
-Deno.test("statusline: cwd is home-abbreviated, git branch + dirty mark shown", () => {
+Deno.test("footer: abbreviates cwd and renders git/MCP state", () => {
   const home = Deno.env.get("HOME") ?? "/home/u";
-  const view = baseStatus({
+  const view = baseFooter({
     cwd: `${home}/Projects/niuma`,
     git: { branch: "main", dirty: true },
+    mcpServers: [
+      { id: "context7", toolCount: 2 },
+      { id: "grep", toolCount: 1 },
+    ],
   });
-  const line = renderStatusline(view, 100, THEME);
-  const text = lineText(line);
+  const lines = renderFooter(view, 100, THEME);
+  const text = allText(lines);
   assertEquals(text.includes("~/Projects/niuma"), true);
   assertEquals(text.includes("main"), true);
-  // dirty mark painted in the warning colour
-  const dirty = line.spans.find((s) => s.text === "±");
-  assert(dirty !== undefined, "expected a dirty ± span");
+  assertEquals(text.includes("mcp 2"), true);
+  const dirty = lines.flatMap((line) => line.spans).find((span) =>
+    span.text.includes("±")
+  );
+  assert(dirty !== undefined, "expected a dirty marker");
   assertEquals(colorEq(dirty.style.fg, THEME.warning), true);
 });
 
-Deno.test("statusline: mcp spins while pending, counts when connected", () => {
-  const pending = lineText(
-    renderStatusline(
-      baseStatus({ mcpServers: null, spinnerFrame: 0 }),
-      80,
-      THEME,
-    ),
+Deno.test("footer: MCP handshake spins while pending", () => {
+  const pending = allText(
+    renderFooter(baseFooter({ mcpServers: null, spinnerFrame: 0 }), 80, THEME),
   );
   assertEquals(pending.includes("⠋ mcp"), true);
-
-  const connected = lineText(
-    renderStatusline(
-      baseStatus({
-        mcpServers: [
-          { id: "context7", toolCount: 2 },
-          { id: "grep", toolCount: 1 },
-        ],
-      }),
-      80,
-      THEME,
-    ),
-  );
-  assertEquals(connected.includes("mcp 2"), true);
-  assertFalse(connected.includes("⠋ mcp"));
-});
-
-Deno.test("statusline: full row composes and fits at a realistic width", () => {
-  const view = baseStatus({
-    model: "kimi-k3",
-    tokensIn: 12_345,
-    tokensOut: 678,
-    lastInputTokens: 100_000,
-    contextWindow: 1_000_000,
-    cwd: "/Users/arias/Projects/niuma",
-    git: { branch: "feat/status", dirty: false },
-    mcpServers: [{ id: "context7", toolCount: 2 }],
-    activity: "generating",
-    spinnerFrame: 2,
-  });
-  const line = renderStatusline(view, 100, THEME);
-  assertEquals(lineWidth(line), 100);
-  const text = lineText(line);
-  assertEquals(text.includes("kimi-k3"), true);
-  assertEquals(text.includes("ctx 10%"), true);
-  assertEquals(text.includes("feat/status"), true);
-  assertEquals(text.includes("mcp 1"), true);
-  assertEquals(text.includes("generating"), true);
-});
-
-Deno.test("statusline: clusters drop gracefully at narrow widths", () => {
-  const view = baseStatus({
-    model: "a-very-long-model-name-here",
-    tokensIn: 999,
-    tokensOut: 999,
-    cwd: "/some/deeply/nested/workspace/path",
-    git: { branch: "long-branch-name", dirty: true },
-    mcpServers: [{ id: "x", toolCount: 1 }],
-    activity: "working",
-  });
-  for (const w of [30, 24, 16]) {
-    const line = renderStatusline(view, w, THEME);
-    assertEquals(lineWidth(line), w, `width ${w} should fit exactly`);
-  }
 });
 
 // ===========================================================================
-// approval modal — header label truncation
+// approval panel — header label truncation
 // ===========================================================================
 
 const approvalTheme: ApprovalTheme = {
@@ -564,7 +583,7 @@ const approvalTheme: ApprovalTheme = {
 Deno.test("approval: header row never exceeds the box width (narrow screen, long name)", () => {
   // Repro from the issue: screenW 30 < minBoxW 40, and a long tool name. The
   // top-border label used to overflow boxW; it must now equal the border width.
-  const overlay = renderApprovalOverlay(
+  const panel = renderApprovalPanel(
     {
       approvalId: "a",
       toolName: "a_very_long_tool_name_here",
@@ -572,11 +591,10 @@ Deno.test("approval: header row never exceeds the box width (narrow screen, long
       selection: 0,
     },
     30,
-    10,
     approvalTheme,
   );
-  const headerW = lineWidth(overlay.lines[0]);
-  const borderW = lineWidth(overlay.lines[overlay.lines.length - 1]);
+  const headerW = lineWidth(panel.lines[0]);
+  const borderW = lineWidth(panel.lines[panel.lines.length - 1]);
   assertEquals(
     headerW,
     borderW,
@@ -586,7 +604,7 @@ Deno.test("approval: header row never exceeds the box width (narrow screen, long
 
 Deno.test("approval: header fits the border at several narrow widths", () => {
   for (const w of [20, 24, 30, 36, 42, 50, 80]) {
-    const overlay = renderApprovalOverlay(
+    const panel = renderApprovalPanel(
       {
         approvalId: "a",
         toolName: "Write_Tools_Read_Files_ExecBash",
@@ -594,22 +612,20 @@ Deno.test("approval: header fits the border at several narrow widths", () => {
         selection: 0,
       },
       w,
-      12,
       approvalTheme,
     );
-    const headerW = lineWidth(overlay.lines[0]);
-    const borderW = lineWidth(overlay.lines[overlay.lines.length - 1]);
+    const headerW = lineWidth(panel.lines[0]);
+    const borderW = lineWidth(panel.lines[panel.lines.length - 1]);
     assertEquals(headerW, borderW, `width ${w}: header must match border`);
   }
 });
 
 Deno.test("approval: short name on a wide screen keeps the full label", () => {
-  const overlay = renderApprovalOverlay(
+  const panel = renderApprovalPanel(
     { approvalId: "a", toolName: "bash", preview: [], selection: 0 },
     80,
-    12,
     approvalTheme,
   );
-  const header = lineText(overlay.lines[0]);
-  assertEquals(header.includes("approval required: bash"), true);
+  const header = lineText(panel.lines[0]);
+  assertEquals(header.includes("approval required · bash"), true);
 });

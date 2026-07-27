@@ -34,21 +34,27 @@ export {
   editorReducer,
   editorText,
   renderEditor,
+  renderEditorSurface,
   setEditorText,
 } from "./src/components/editor.ts";
 export type {
   EditorAction,
   EditorCursor,
   EditorState,
+  EditorSurface,
   EditorTheme,
 } from "./src/components/editor.ts";
 
 export {
   makeApprovalPreview,
-  renderApprovalOverlay,
+  renderApprovalPanel,
   stringifyInput,
 } from "./src/components/approval.ts";
-export type { ApprovalTheme, ApprovalView } from "./src/components/approval.ts";
+export type {
+  ApprovalSurface,
+  ApprovalTheme,
+  ApprovalView,
+} from "./src/components/approval.ts";
 
 export {
   BUILTIN_PALETTE_ITEMS,
@@ -65,8 +71,22 @@ export type {
   PaletteCommandInfo,
   PaletteItem,
   PaletteState,
+  PaletteSurface,
   PaletteTheme,
 } from "./src/components/palette.ts";
+
+export {
+  createQuestionState,
+  parseQuestionInput,
+  questionReducer,
+  renderQuestionPanel,
+} from "./src/components/question.ts";
+export type {
+  QuestionAction,
+  QuestionState,
+  QuestionSurface,
+  QuestionTheme,
+} from "./src/components/question.ts";
 
 export { createTuiClient, parseSseStream } from "./src/client.ts";
 export type {

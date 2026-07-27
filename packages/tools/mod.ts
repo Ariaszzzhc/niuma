@@ -9,6 +9,7 @@ export type {
   PreparedCall,
   SubagentResult,
   Tool,
+  ToolBatchCtx,
   ToolCallRecord,
   ToolCtx,
   ToolDefLike,

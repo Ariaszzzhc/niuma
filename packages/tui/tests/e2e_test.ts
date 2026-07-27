@@ -213,9 +213,9 @@ Deno.test("e2e: prompt -> read -> bash approval -> final text", async (t) => {
     await t.step("approval modal appears for bash", async () => {
       await waitFor(() => probe().approval !== null, "approval modal raised");
       // view should show the modal chrome
-      const v = program.view(probe() as never);
+      const v = program.view(probe() as never).lines;
       assert(
-        viewShows(v as readonly StyledLine[], "approval required"),
+        viewShows(v, "approval required"),
         "modal painted",
       );
       // press y -> approve once
@@ -240,7 +240,7 @@ Deno.test("e2e: prompt -> read -> bash approval -> final text", async (t) => {
           JSON.stringify(calls.map((c) => c.status))
         }`,
       );
-      const v = program.view(probe() as never) as readonly StyledLine[];
+      const v = program.view(probe() as never).lines;
       assert(viewShows(v, "smoke done"), "final text painted in transcript");
     });
 

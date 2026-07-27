@@ -72,19 +72,19 @@ export const applyPatchTool: Tool<ApplyPatchInput> = {
     return { read, write };
   },
   async execute(input, ctx): Promise<ToolOutput> {
-    const callId = `apply_patch:${ctx.sessionId}:${shortHash(input.patch)}`;
+    const spillId = `${ctx.sessionId}:${ctx.callId}:${shortHash(input.patch)}`;
     let hunks: Hunk[];
     try {
       hunks = parsePatch(input.patch);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, {
+      return await toolOutput(`error: ${(e as Error).message}`, spillId, {
         isError: true,
       });
     }
     if (hunks.length === 0) {
       return await toolOutput(
         "error: patch contained no file operations",
-        callId,
+        spillId,
         {
           isError: true,
         },
@@ -98,7 +98,7 @@ export const applyPatchTool: Tool<ApplyPatchInput> = {
         resolved = resolvePath(ctx.cwd, h.path);
       } catch (e) {
         if (e instanceof PathError) {
-          return await toolOutput(`error: ${e.message}`, callId, {
+          return await toolOutput(`error: ${e.message}`, spillId, {
             isError: true,
           });
         }
@@ -129,12 +129,12 @@ export const applyPatchTool: Tool<ApplyPatchInput> = {
       } catch (e) {
         return await toolOutput(
           `error applying to ${h.path}: ${(e as Error).message}`,
-          callId,
+          spillId,
           { isError: true },
         );
       }
     }
-    return await toolOutput(summary.join("\n"), callId);
+    return await toolOutput(summary.join("\n"), spillId);
   },
 };
 

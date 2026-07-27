@@ -2,7 +2,8 @@
 // @niuma/tui — prompt editor component (INPUT half)
 // ---------------------------------------------------------------------------
 // A small multi-line text editor with a rounded border, dim placeholder and a
-// block-cursor cell. Pure: `editorReducer(state, ev)` returns a new state
+// declarative hardware-cursor position. Pure: `editorReducer(state, ev)`
+// returns a new state
 // (plus an optional `EditorAction` the app acts on — currently only `submit`).
 //
 // The reducer accepts an `InputEvent` (KeyEvent | PasteEvent) rather than a
@@ -28,16 +29,19 @@
 //     first (coalescing when unchanged since the last checkpoint, so typing
 //     after an undo never resurrects the undone text). Recall/submit don't.
 //
-// Block cursor: the cell under the caret is drawn in reverse video (rather
-// than driving the terminal's hardware cursor, which the loop hides). This
-// composes cleanly with the alt-screen / CSI-2026 diff path.
+// Rendering returns an optional relative hardware cursor. `app.ts` offsets it
+// into the final screen View, while tuikit owns the escape sequences. This is
+// important for IME candidate placement and avoids painting a wide grapheme as
+// a fake reverse-video caret.
 //
 // Theme: this component defines its OWN `EditorTheme` shape (the few colors it
-// needs). `app.ts` adapts the application theme to this focused interface.
+// needs) so it is independent of the product `Theme`. `app.ts` adapts the
+// real `Theme` to it — see `editorThemeFromTheme` interlock note.
 // ===========================================================================
 
 import {
   type Color,
+  type Cursor,
   type InputEvent,
   matchesKey,
   stringWidth,
@@ -45,6 +49,7 @@ import {
   type StyledSpan,
   truncateToWidth,
 } from "@niuma/tuikit";
+import { USER_MARKER } from "../symbols.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -91,7 +96,7 @@ const MAX_UNDO = 100;
 
 export type EditorAction = { readonly type: "submit"; readonly text: string };
 
-/** Focused color interface needed by the editor. */
+/** Colors the editor needs. Decoupled from the product `Theme`. */
 export interface EditorTheme {
   readonly border: Color;
   /** Border colour while the editor owns keyboard focus. */
@@ -139,7 +144,10 @@ export const setEditorText = (
   return {
     ...state,
     lines,
-    cursor: { row: lines.length - 1, col: lines[lines.length - 1].length },
+    cursor: {
+      row: lines.length - 1,
+      col: graphemeCount(lines[lines.length - 1]),
+    },
     historyCursor: null,
     savedDraft: "",
   };
@@ -627,7 +635,7 @@ const VBAR = "│";
 const span = (
   text: string,
   fg: Color,
-  extra: { reverse?: boolean; dim?: boolean } = {},
+  extra: { dim?: boolean; bold?: boolean } = {},
 ): StyledSpan => ({
   text,
   style: { fg, ...extra },
@@ -638,22 +646,107 @@ const plain = (text: string): StyledSpan => ({ text, style: {} });
 const repeatStr = (s: string, n: number): string => s.repeat(Math.max(0, n));
 
 /**
- * Render the editor as a rounded box. `width` is the full screen width the box
- * may occupy (including borders). The box height adapts to the buffer.
+ * Relative editor surface. The cursor coordinates are zero-based inside
+ * `lines`; the app offsets them after composing transcript/input/footer.
  */
-export const renderEditor = (
+export interface EditorSurface {
+  readonly lines: readonly StyledLine[];
+  readonly cursor?: Cursor;
+}
+
+interface VisualEditorRow {
+  readonly text: string;
+  readonly logicalRow: number;
+  readonly startCol: number;
+  readonly endCol: number;
+}
+
+const wrapLogicalLine = (
+  text: string,
+  logicalRow: number,
+  width: number,
+): VisualEditorRow[] => {
+  const gs = graphemes(text);
+  if (gs.length === 0) {
+    return [{ text: "", logicalRow, startCol: 0, endCol: 0 }];
+  }
+
+  const budget = Math.max(1, width);
+  const rows: VisualEditorRow[] = [];
+  let start = 0;
+  let used = 0;
+  let chunk: string[] = [];
+
+  for (let i = 0; i < gs.length; i++) {
+    const cluster = gs[i];
+    const clusterWidth = Math.max(0, stringWidth(cluster));
+    if (chunk.length > 0 && used + clusterWidth > budget) {
+      rows.push({
+        text: chunk.join(""),
+        logicalRow,
+        startCol: start,
+        endCol: i,
+      });
+      start = i;
+      used = 0;
+      chunk = [];
+    }
+    chunk.push(cluster);
+    used += clusterWidth;
+  }
+
+  rows.push({
+    text: chunk.join(""),
+    logicalRow,
+    startCol: start,
+    endCol: gs.length,
+  });
+  return rows;
+};
+
+const findCursorVisualRow = (
+  rows: readonly VisualEditorRow[],
+  state: EditorState,
+): number => {
+  const logicalLength = graphemeCount(state.lines[state.cursor.row] ?? "");
+  const index = rows.findIndex((row) =>
+    row.logicalRow === state.cursor.row &&
+    (state.cursor.col < row.endCol ||
+      (state.cursor.col === logicalLength &&
+        state.cursor.col === row.endCol))
+  );
+  return index >= 0 ? index : Math.max(0, rows.length - 1);
+};
+
+/**
+ * Render the editor as a rounded, visually-wrapped box. `width` includes the
+ * border. `maxRows` limits content rows only and keeps the caret visible.
+ */
+export const renderEditorSurface = (
   state: EditorState,
   width: number,
   focused: boolean,
   theme: EditorTheme,
-): StyledLine[] => {
-  const boxW = Math.max(4, width);
-  const innerW = Math.max(0, boxW - 4); // "│ " + content + " │"
+  maxRows = 8,
+): EditorSurface => {
+  const boxW = Math.max(8, width);
+  // "│ " + "❯ " + content + " │"
+  const innerW = Math.max(1, boxW - 6);
   // Focus feedback: the border switches to the dedicated focused colour while
   // the editor owns the keyboard (in the app it always does).
   const borderFg = focused ? theme.borderFocused : theme.border;
-  const lines = state.lines.length > 0 ? state.lines : [""];
   const out: StyledLine[] = [];
+  const visualRows = (state.lines.length > 0 ? state.lines : [""]).flatMap(
+    (line, row) => wrapLogicalLine(line, row, innerW),
+  );
+  const cursorVisualRow = findCursorVisualRow(visualRows, state);
+  const visibleRows = Math.max(1, Math.min(maxRows, visualRows.length));
+  const maxOffset = Math.max(0, visualRows.length - visibleRows);
+  const rowOffset = Math.min(
+    maxOffset,
+    Math.max(0, cursorVisualRow - Math.floor(visibleRows / 2)),
+  );
+  const rows = visualRows.slice(rowOffset, rowOffset + visibleRows);
 
   // top border
   out.push({
@@ -664,20 +757,20 @@ export const renderEditor = (
 
   const empty = editorIsEmpty(state);
 
-  for (let r = 0; r < lines.length; r++) {
-    const line = lines[r];
-    const isCursorRow = focused && r === state.cursor.row && !empty;
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
     const spans: StyledSpan[] = [span(`${VBAR} `, borderFg)];
+    const absoluteVisualRow = rowOffset + r;
+    const prompt = absoluteVisualRow === 0 ? USER_MARKER : " ";
+    spans.push(span(`${prompt} `, theme.accent, { bold: true }));
 
-    if (empty && r === 0) {
+    if (empty && absoluteVisualRow === 0) {
       const ph = truncateToWidth(state.placeholder, innerW);
       spans.push(span(ph, theme.placeholder, { dim: true }));
       const pad = innerW - stringWidth(ph);
       if (pad > 0) spans.push(plain(repeatStr(" ", pad)));
-    } else if (isCursorRow) {
-      appendCursorContent(spans, line, state.cursor.col, innerW, theme);
     } else {
-      const txt = truncateToWidth(line, innerW);
+      const txt = truncateToWidth(row.text, innerW);
       spans.push(span(txt, theme.text));
       const pad = innerW - stringWidth(txt);
       if (pad > 0) spans.push(plain(repeatStr(" ", pad)));
@@ -694,45 +787,40 @@ export const renderEditor = (
     ],
   });
 
-  return out;
+  if (!focused) return { lines: out };
+
+  const cursorRow = visualRows[cursorVisualRow];
+  const relativeVisualRow = cursorVisualRow - rowOffset;
+  if (
+    cursorRow === undefined ||
+    relativeVisualRow < 0 ||
+    relativeVisualRow >= rows.length
+  ) {
+    return { lines: out };
+  }
+  const logical = state.lines[state.cursor.row] ?? "";
+  const before = graphemes(logical)
+    .slice(cursorRow.startCol, state.cursor.col)
+    .join("");
+  return {
+    lines: out,
+    cursor: {
+      row: 1 + relativeVisualRow,
+      // border + space + marker + space
+      col: 4 + Math.min(innerW, stringWidth(before)),
+      shape: "bar",
+    },
+  };
 };
 
 /**
- * Append the content spans of one cursor row, stamping the caret's whole
- * grapheme cluster in reverse video. If the caret is beyond the visible inner
- * width, fall back to a plain render; the editor does not scroll horizontally.
- *
- * Cluster granularity matters here: the caret cell is the full cluster (an
- * emoji or a base+combining chain), so reverse video never splits a wide glyph
- * across two cells. `col` is a grapheme-cluster index into `line`.
+ * Compatibility wrapper for tests and callers that only need line content.
  */
-const appendCursorContent = (
-  spans: StyledSpan[],
-  line: string,
-  col: number,
-  innerW: number,
+export const renderEditor = (
+  state: EditorState,
+  width: number,
+  focused: boolean,
   theme: EditorTheme,
-): void => {
-  const gs = graphemes(line);
-  const before = gs.slice(0, col).join("");
-  const beforeW = stringWidth(before);
-  if (beforeW >= innerW) {
-    const txt = truncateToWidth(line, innerW);
-    spans.push(span(txt, theme.text));
-    const pad = innerW - stringWidth(txt);
-    if (pad > 0) spans.push(plain(repeatStr(" ", pad)));
-    return;
-  }
-  spans.push(span(before, theme.text));
-  const cursorCluster = col < gs.length ? gs[col] : " ";
-  spans.push(span(cursorCluster, theme.text, { reverse: true }));
-  const used = beforeW + Math.max(1, stringWidth(cursorCluster));
-  const remain = innerW - used;
-  if (remain > 0) {
-    const after = gs.slice(col + 1).join("");
-    const tAfter = truncateToWidth(after, remain);
-    spans.push(span(tAfter, theme.text));
-    const pad = remain - stringWidth(tAfter);
-    if (pad > 0) spans.push(plain(repeatStr(" ", pad)));
-  }
-};
+  maxRows = 8,
+): readonly StyledLine[] =>
+  renderEditorSurface(state, width, focused, theme, maxRows).lines;

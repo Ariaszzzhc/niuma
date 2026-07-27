@@ -1,22 +1,18 @@
 // ===========================================================================
-// @niuma/tui — approval modal overlay (INPUT half)
+// @niuma/tui — approval bottom panel
 // ---------------------------------------------------------------------------
-// When an `approval.requested` event arrives the app raises a centered modal
-// over a dimmed base scene. This module owns:
+// When an `approval.requested` event arrives the app replaces the bottom input
+// slot with a focused approval panel. This module owns:
 //   - `ApprovalView` (the view-model the app composes): approvalId + toolName
 //     + a pre-rendered input preview (StyledLine[]).
 //   - `makeApprovalPreview(input, width, theme)`: builds a shell-ish preview
-//     from the raw tool input (stringified, truncated to fit the modal).
-//   - `renderApprovalOverlay(view, screenW, screenH, theme)`: returns the
-//     modal's lines plus the (top, left) position where the app should stamp
-//     them. The dimming + compositing lives in `app.ts` (it has the base
-//     scene); this module only renders the modal chrome.
+//     from the raw tool input (stringified, truncated to fit the panel).
+//   - `renderApprovalPanel(view, screenW, theme)`: returns the panel rows.
 //
-// The modal is a rounded box centered on screen. Tool name is shown in a
-// warning color; the option row lists the decisions (y/a/n shortcuts plus
-// ↑/↓ + enter navigation — the selected item is reverse-video). Local
-// `ApprovalTheme` keeps the renderer independent of the application theme;
-// `app.ts` adapts between them.
+// Tool name is shown in a warning color; decisions are a vertical selectable
+// list (y/a/n shortcuts plus ↑/↓ + enter). Local
+// `ApprovalTheme` keeps this independent of the product `Theme` — `app.ts`
+// adapts.
 // ===========================================================================
 
 import {
@@ -25,7 +21,9 @@ import {
   type StyledLine,
   type StyledSpan,
   truncateToWidth,
+  wrapLine,
 } from "@niuma/tuikit";
+import { SELECTION_MARKER } from "../symbols.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,16 +38,16 @@ export interface ApprovalView {
 }
 
 /**
- * The three decisions the modal offers, in display order. `key` is the
- * single-letter shortcut that also works while the modal is up.
+ * The three decisions the panel offers, in display order. `key` is the
+ * single-letter shortcut that also works while the panel is active.
  */
 export const APPROVAL_OPTIONS = [
-  { key: "y", label: "yes, once", decision: "once" },
-  { key: "a", label: "yes, always", decision: "always" },
-  { key: "n", label: "no, reject", decision: "reject" },
+  { key: "y", label: "Allow once", decision: "once" },
+  { key: "a", label: "Always allow", decision: "always" },
+  { key: "n", label: "Reject", decision: "reject" },
 ] as const;
 
-/** Focused color interface needed by the approval modal. */
+/** Colors the approval panel needs. Decoupled from the product `Theme`. */
 export interface ApprovalTheme {
   readonly border: Color;
   readonly warning: Color;
@@ -66,6 +64,8 @@ const TOP_LEFT = "╭";
 const TOP_RIGHT = "╮";
 const BOTTOM_LEFT = "╰";
 const BOTTOM_RIGHT = "╯";
+const T_LEFT = "├";
+const T_RIGHT = "┤";
 const HBAR = "─";
 const VBAR = "│";
 
@@ -74,7 +74,7 @@ const repeat = (s: string, n: number): string => s.repeat(Math.max(0, n));
 const span = (
   text: string,
   fg: Color,
-  extra: { dim?: boolean; bold?: boolean; reverse?: boolean } = {},
+  extra: { dim?: boolean; bold?: boolean } = {},
 ): StyledSpan => ({ text, style: { fg, ...extra } });
 
 // ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ const span = (
 /**
  * Stringify the raw tool input into a shell-ish preview, capped at `maxChars`.
  * Returns "" for empty input. Objects are JSON-stringified on one line so the
- * modal stays compact (multi-line JSON would blow the height budget).
+ * panel stays compact (multi-line JSON would blow the height budget).
  */
 export const stringifyInput = (input: unknown, maxChars = 480): string => {
   let text: string;
@@ -107,7 +107,7 @@ export const stringifyInput = (input: unknown, maxChars = 480): string => {
 };
 
 /**
- * Build a pre-rendered preview for the modal body. The input is stringified,
+ * Build a pre-rendered preview for the panel body. The input is stringified,
  * hard-wrapped to `innerW` cells per line, and capped to a few lines so a huge
  * input never overflows the screen. Each line is a single muted-fg span.
  */
@@ -143,13 +143,11 @@ export const makeApprovalPreview = (
 };
 
 // ---------------------------------------------------------------------------
-// Overlay render
+// Panel render
 // ---------------------------------------------------------------------------
 
-export interface RenderedOverlay {
+export interface ApprovalSurface {
   readonly lines: readonly StyledLine[];
-  readonly top: number;
-  readonly left: number;
 }
 
 const EMPTY_PREVIEW: StyledLine = {
@@ -157,47 +155,30 @@ const EMPTY_PREVIEW: StyledLine = {
 };
 
 /**
- * Render the approval modal. Returns the modal lines (border + header + preview
- * + footer) and the (top, left) screen cell where the first line goes. The
- * caller (`app.ts`) composites these over the dimmed base scene.
- *
- * Layout: width = clamp(content + padding, 40, screenW - 2); height adapts.
+ * Render the approval bottom panel. Input detail is compact and the three
+ * decisions remain visible as a vertical list even on narrow terminals.
  */
-export const renderApprovalOverlay = (
+export const renderApprovalPanel = (
   view: ApprovalView,
   screenW: number,
-  screenH: number,
   theme: ApprovalTheme,
-): RenderedOverlay => {
-  const maxBoxW = Math.max(20, screenW - 2);
-  const minBoxW = 40;
-
-  // Determine content width from the header + options + preview.
-  const headerText = ` approval required: ${view.toolName} `;
-  const optionsW = APPROVAL_OPTIONS.reduce(
-    (w, o, i) => w + stringWidth(o.label) + 6 + (i > 0 ? 3 : 0),
-    0,
-  );
-  const headerW = stringWidth(headerText);
-  let previewInner = 0;
-  for (const line of view.preview) {
-    for (const s of line.spans) {
-      previewInner = Math.max(previewInner, stringWidth(s.text));
-    }
-  }
-  const contentW = Math.max(headerW - 2, optionsW, previewInner);
-  const boxW = Math.max(minBoxW, Math.min(maxBoxW, contentW + 4));
+  maxPreviewRows = 5,
+): ApprovalSurface => {
+  const boxW = Math.max(8, screenW);
   const innerW = Math.max(1, boxW - 4);
-
-  // Re-wrap preview to the final inner width if it differs.
-  const preview = view.preview.length > 0 ? view.preview : [EMPTY_PREVIEW];
+  const sourcePreview = view.preview.length > 0
+    ? view.preview
+    : [EMPTY_PREVIEW];
+  const wrappedPreview = sourcePreview.flatMap((line) =>
+    wrapLine(line, innerW)
+  );
+  const preview = wrappedPreview.slice(0, Math.max(1, maxPreviewRows));
+  const previewTruncated = wrappedPreview.length > preview.length;
 
   const lines: StyledLine[] = [];
 
-  // top border with header label. The label is truncated to the inner border
-  // budget (boxW - 2) so a long tool name on a narrow screen can never make
-  // the header row wider than the modal's left/right corners + bottom border.
-  const label = ` approval required: ${view.toolName} `;
+  // top border with header label
+  const label = ` approval required · ${view.toolName} `;
   const labelBudget = Math.max(0, boxW - 2);
   const shownLabel = truncateToWidth(label, labelBudget);
   const topFill = labelBudget - stringWidth(shownLabel);
@@ -210,18 +191,12 @@ export const renderApprovalOverlay = (
     ],
   });
 
-  // a blank padding row
-  lines.push({
-    spans: [
-      span(`${VBAR} `, theme.border),
-      span(repeat(" ", innerW), theme.text),
-      span(` ${VBAR}`, theme.border),
-    ],
-  });
-
-  // preview body (truncated to innerW)
-  for (const line of preview) {
-    const text = line.spans.map((s) => s.text).join("");
+  // preview body
+  for (let i = 0; i < preview.length; i++) {
+    const line = preview[i];
+    const text = previewTruncated && i === preview.length - 1
+      ? "…"
+      : line.spans.map((s) => s.text).join("");
     const shown = truncateToWidth(text, innerW);
     const pad = innerW - stringWidth(shown);
     lines.push({
@@ -234,38 +209,50 @@ export const renderApprovalOverlay = (
     });
   }
 
-  // blank padding row
+  const dividerLabel = " choose ";
+  const dividerBudget = Math.max(0, boxW - 2);
   lines.push({
     spans: [
-      span(`${VBAR} `, theme.border),
-      span(repeat(" ", innerW), theme.text),
-      span(` ${VBAR}`, theme.border),
+      span(T_LEFT, theme.border),
+      span(dividerLabel, theme.muted, { dim: true }),
+      span(
+        repeat(
+          HBAR,
+          Math.max(0, dividerBudget - stringWidth(dividerLabel)),
+        ),
+        theme.border,
+      ),
+      span(T_RIGHT, theme.border),
     ],
   });
 
-  // option row: one item per decision; the selected item is stamped in
-  // reverse video so ↑/↓ navigation is visible at a glance.
-  {
-    const optionSpans: StyledSpan[] = [span(`${VBAR} `, theme.border)];
-    let used = 0;
-    APPROVAL_OPTIONS.forEach((o, i) => {
-      if (i > 0) {
-        optionSpans.push(span("   ", theme.muted));
-        used += 3;
-      }
-      const item = `${o.key}  ${o.label}`;
-      const selected = i === view.selection;
-      optionSpans.push(
-        selected
-          ? span(item, theme.accent, { reverse: true, bold: true })
-          : span(item, theme.text),
-      );
-      used += stringWidth(item);
+  for (let i = 0; i < APPROVAL_OPTIONS.length; i++) {
+    const option = APPROVAL_OPTIONS[i];
+    const selected = i === view.selection;
+    const marker = selected ? `${SELECTION_MARKER} ` : "  ";
+    const label = `${option.key}  ${option.label}`;
+    const shown = truncateToWidth(
+      `${marker}${label}`,
+      innerW,
+    );
+    const used = stringWidth(shown);
+    lines.push({
+      spans: [
+        span(`${VBAR} `, theme.border),
+        span(
+          shown.slice(0, marker.length),
+          selected ? theme.accent : theme.muted,
+          { bold: selected },
+        ),
+        span(
+          shown.slice(marker.length),
+          selected ? theme.accent : theme.text,
+          { bold: selected },
+        ),
+        span(repeat(" ", Math.max(0, innerW - used)), theme.text),
+        span(` ${VBAR}`, theme.border),
+      ],
     });
-    const pad = innerW - used;
-    if (pad > 0) optionSpans.push(span(repeat(" ", pad), theme.border));
-    optionSpans.push(span(` ${VBAR}`, theme.border));
-    lines.push({ spans: optionSpans });
   }
 
   // bottom border
@@ -275,9 +262,5 @@ export const renderApprovalOverlay = (
     ],
   });
 
-  const boxH = lines.length;
-  const top = Math.max(0, Math.floor((screenH - boxH) / 2));
-  const left = Math.max(0, Math.floor((screenW - boxW) / 2));
-
-  return { lines, top, left };
+  return { lines };
 };

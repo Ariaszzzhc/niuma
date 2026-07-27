@@ -68,6 +68,14 @@ export interface SubagentResult {
 }
 
 export interface ToolCtx {
+  /**
+   * The provider-issued tool call id for the call currently executing.
+   *
+   * This is the correlation key used by tool.progress, approval.requested,
+   * tool.result, and the TUI. Tools must not invent a second id for those
+   * channels. Spill files may still prefix this with the session id.
+   */
+  callId: string;
   cwd: string;
   sessionId: string;
   signal: AbortSignal;
@@ -82,6 +90,12 @@ export interface ToolCtx {
     parentSessionId: string;
   }): Promise<SubagentResult>;
 }
+
+/**
+ * Context shared while preparing/authorising a batch. `runPipeline` adds the
+ * concrete provider call id immediately before invoking each tool.
+ */
+export type ToolBatchCtx = Omit<ToolCtx, "callId">;
 
 // ---- Tool definition + output ----
 

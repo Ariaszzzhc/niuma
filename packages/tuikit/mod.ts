@@ -43,6 +43,46 @@ export {
 
 // -- implemented primitives --------------------------------------------------
 export { Frame } from "./src/frame.ts";
+export { screen } from "./src/view.ts";
+export type { Cursor, CursorShape, View } from "./src/view.ts";
+export {
+  alignLine,
+  blankLine,
+  cropLines,
+  fitLine,
+  joinHorizontal,
+  joinVertical,
+  lineWidth,
+  measureLines,
+  padLines,
+  wrapLine,
+  wrapText,
+} from "./src/layout.ts";
+export type {
+  HorizontalAlign,
+  Padding,
+  Size,
+  VerticalAlign,
+} from "./src/layout.ts";
+export { LINE_BORDER, renderBlock, ROUNDED_BORDER } from "./src/block.ts";
+export type { BlockOptions, Border } from "./src/block.ts";
+export {
+  initialViewport,
+  renderViewport,
+  updateViewport,
+} from "./src/viewport.ts";
+export type {
+  ViewportGeometry,
+  ViewportMsg,
+  ViewportState,
+} from "./src/viewport.ts";
+export {
+  clampSelection,
+  initialSelectList,
+  moveSelection,
+  selectionWindow,
+} from "./src/select_list.ts";
+export type { SelectListState, SelectWindow } from "./src/select_list.ts";
 export { KeyParser, matchesKey } from "./src/keys.ts";
 export { detectCaps, SYNC_BEGIN, SYNC_END, Terminal } from "./src/terminal.ts";
 export type { TerminalSize } from "./src/terminal.ts";

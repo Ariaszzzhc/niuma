@@ -25,14 +25,14 @@ export const questionTool: Tool<QuestionInput> = {
   inputSchema: QuestionInput,
   normalize: (i) => i.question,
   async execute(input, ctx): Promise<ToolOutput> {
-    const callId = `question:${ctx.sessionId}`;
+    const spillId = `${ctx.sessionId}:${ctx.callId}`;
     const detail = input.options?.length
       ? `${input.question}\n\nOptions:\n${
         input.options.map((o, i) => `  ${i + 1}. ${o}`).join("\n")
       }`
       : input.question;
     const reply = await ctx.ask({
-      callId,
+      callId: ctx.callId,
       name: "question",
       summary: "ask user",
       pattern: input.question,
@@ -42,12 +42,12 @@ export const questionTool: Tool<QuestionInput> = {
     if (reply.decision === "reject") {
       return await toolOutput(
         `error: ${reply.feedback ?? "user declined to answer"}`,
-        callId,
+        spillId,
         { isError: true },
       );
     }
     // The frontend forwards the free-text answer in `feedback`; when no
     // options were provided the prompter echoes it in `feedback` for `once`.
-    return await toolOutput(reply.feedback ?? "(no answer)", callId);
+    return await toolOutput(reply.feedback ?? "(no answer)", spillId);
   },
 };

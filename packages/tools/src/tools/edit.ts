@@ -34,7 +34,7 @@ export const editTool: Tool<EditInput> = {
   normalize: (i) => i.path,
   paths: (i) => ({ read: [i.path], write: [i.path] }),
   async execute(input, ctx): Promise<ToolOutput> {
-    const callId = `edit:${ctx.sessionId}:${input.path}`;
+    const spillId = `${ctx.sessionId}:${ctx.callId}`;
     let resolved;
     try {
       resolved = resolvePath(ctx.cwd, input.path);
@@ -48,7 +48,7 @@ export const editTool: Tool<EditInput> = {
     try {
       original = await Deno.readTextFile(resolved.abs);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, {
+      return await toolOutput(`error: ${(e as Error).message}`, spillId, {
         isError: true,
       });
     }
@@ -64,7 +64,7 @@ export const editTool: Tool<EditInput> = {
       if (occurrences === 0) {
         return await toolOutput(
           `error: edit #${i + 1} did not match (no occurrence of oldText)`,
-          callId,
+          spillId,
           { isError: true },
         );
       }
@@ -73,7 +73,7 @@ export const editTool: Tool<EditInput> = {
           `error: edit #${
             i + 1
           } matched ${occurrences} times — pass replaceAll:true or provide more context`,
-          callId,
+          spillId,
           { isError: true },
         );
       }
@@ -97,11 +97,14 @@ export const editTool: Tool<EditInput> = {
     try {
       await Deno.writeTextFile(resolved.abs, restored);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, {
+      return await toolOutput(`error: ${(e as Error).message}`, spillId, {
         isError: true,
       });
     }
-    return await toolOutput(log.join("\n") + `\nwrote ${resolved.rel}`, callId);
+    return await toolOutput(
+      log.join("\n") + `\nwrote ${resolved.rel}`,
+      spillId,
+    );
   },
 };
 

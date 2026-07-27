@@ -12,6 +12,7 @@ import type { Tool as McpTool } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolCtx } from "@niuma/tools";
 
 const stubCtx: ToolCtx = {
+  callId: "call-test",
   cwd: ".",
   sessionId: "test",
   signal: new AbortController().signal,

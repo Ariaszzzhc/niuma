@@ -28,7 +28,7 @@ export const bashTool: Tool<BashInput> = {
   inputSchema: BashInput,
   normalize: (i) => i.command,
   async execute(input, ctx): Promise<ToolOutput> {
-    const callId = `bash:${ctx.sessionId}:${shortId(input.command)}`;
+    const spillId = `${ctx.sessionId}:${ctx.callId}:${shortId(input.command)}`;
     const res = await execCapture(input.command, {
       cwd: ctx.cwd,
       timeoutMs: input.timeout_ms ?? DEFAULT_TIMEOUT_MS,
@@ -52,11 +52,11 @@ export const bashTool: Tool<BashInput> = {
     if (res.code !== 0 && !res.timedOut && !res.aborted) {
       const out = await toolOutput(
         body ? `${body}\n[exit ${res.code}]` : `[exit ${res.code}]`,
-        callId,
+        spillId,
       );
       return { ...out, isError: true };
     }
-    return await toolOutput(body || "[no output]", callId);
+    return await toolOutput(body || "[no output]", spillId);
   },
 };
 

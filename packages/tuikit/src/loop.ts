@@ -30,7 +30,8 @@
 // (a bag of mutable state, which is what classes are for).
 // ===========================================================================
 
-import type { InputEvent, StyledLine } from "./binding_contract.ts";
+import type { InputEvent } from "./binding_contract.ts";
+import type { View } from "./view.ts";
 import { Frame } from "./frame.ts";
 import {
   SYNC_BEGIN,
@@ -98,8 +99,8 @@ export interface Sub<Msg> {
 export interface Program<Model, Msg> {
   readonly init: () => readonly [Model, ...Cmd<Msg>[]];
   readonly update: (model: Model, msg: Msg) => readonly [Model, ...Cmd<Msg>[]];
-  /** Produces the full screen as styled lines (rows 0..). */
-  readonly view: (model: Model) => readonly StyledLine[];
+  /** Produces the full screen and optional hardware cursor. */
+  readonly view: (model: Model) => View;
   readonly subscriptions?: (model: Model) => readonly Sub<Msg>[];
   readonly shouldQuit?: (model: Model, msg: Msg) => boolean;
 }
@@ -185,6 +186,26 @@ const concatBytes = (parts: readonly Uint8Array[]): Uint8Array => {
   return out;
 };
 
+const encoder = new TextEncoder();
+
+/** ANSI needed to reconcile the terminal's hardware cursor with a View. */
+const renderCursor = (
+  cursor: View["cursor"],
+  size: TerminalSize,
+): Uint8Array => {
+  if (cursor === undefined) return encoder.encode("\x1b[?25l");
+  const row = Math.max(0, Math.min(size.rows - 1, cursor.row));
+  const col = Math.max(0, Math.min(size.cols - 1, cursor.col));
+  const shape = cursor.shape === "bar"
+    ? 6
+    : cursor.shape === "underline"
+    ? 4
+    : 2;
+  return encoder.encode(
+    `\x1b[${shape} q\x1b[${row + 1};${col + 1}H\x1b[?25h`,
+  );
+};
+
 // ---------------------------------------------------------------------------
 // run
 // ---------------------------------------------------------------------------
@@ -233,13 +254,23 @@ export const run = async <Model, Msg>(
   const renderNow = (): void => {
     try {
       next.clear();
-      const lines: readonly StyledLine[] = program.view(model);
+      const view = program.view(model);
+      const lines = view.lines;
       const maxRow = Math.min(lines.length, next.h);
       for (let r = 0; r < maxRow; r++) {
         const spans = lines[r]?.spans;
         if (spans && spans.length > 0) next.writeLine(r, 0, spans);
       }
-      const body = firstRender ? next.renderFull(caps) : prev.diff(next, caps);
+      const frameBody = firstRender
+        ? next.renderFull(caps)
+        : prev.diff(next, caps);
+      const body = concatBytes([
+        frameBody,
+        renderCursor(view.cursor, {
+          cols: next.w,
+          rows: next.h,
+        }),
+      ]);
       firstRender = false;
       writeSerial(wrapSync(body));
       // swap: the just-rendered `next` becomes `prev` (what's on screen); the

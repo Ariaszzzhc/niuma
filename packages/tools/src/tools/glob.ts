@@ -34,7 +34,7 @@ export const globTool: Tool<GlobInput> = {
   normalize: (i) => `${i.pattern} ${i.path ?? "."}`,
   paths: (i) => ({ read: [i.path ?? "."] }),
   async execute(input, ctx): Promise<ToolOutput> {
-    const callId = `glob:${ctx.sessionId}:${input.pattern}`;
+    const spillId = `${ctx.sessionId}:${ctx.callId}`;
     const cap = input.maxResults ?? DEFAULT_CAP;
     let root: string;
     try {
@@ -57,7 +57,7 @@ export const globTool: Tool<GlobInput> = {
         const capped = all.slice(0, cap);
         return await toolOutput(
           capped.join("\n") || "[no matches]",
-          callId,
+          spillId,
         );
       }
     }
@@ -92,7 +92,7 @@ export const globTool: Tool<GlobInput> = {
     acc.sort((a, b) => b.mtime - a.mtime);
     return await toolOutput(
       acc.slice(0, cap).map((x) => x.path).join("\n") || "[no matches]",
-      callId,
+      spillId,
     );
   },
 };

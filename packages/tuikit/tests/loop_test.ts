@@ -13,9 +13,10 @@
 // ===========================================================================
 
 import { assert, assertEquals } from "@std/assert";
-import type { StyledLine, TerminalCaps } from "../src/binding_contract.ts";
+import type { TerminalCaps } from "../src/binding_contract.ts";
 import { openLib } from "../src/ffi.ts";
 import { type LoopMsg, type Program, run } from "../src/loop.ts";
+import { screen } from "../src/view.ts";
 import type { Terminal, TerminalSize } from "../src/terminal.ts";
 
 let LIB_OK = true;
@@ -89,9 +90,10 @@ Deno.test("loop: headless smoke — first paint, coalescing, final flush", async
     shouldQuit: (_model, msg) =>
       msg.type === "tuikit:key" && msg.event.kind === "text" &&
       msg.event.text === "q",
-    view: (model): readonly StyledLine[] => [
-      { spans: [{ text: `keys=${model.keys.join("")}`, style: {} }] },
-    ],
+    view: (model) =>
+      screen([
+        { spans: [{ text: `keys=${model.keys.join("")}`, style: {} }] },
+      ], { row: 1, col: 3, shape: "bar" }),
   };
 
   await run(fake, program);
@@ -107,5 +109,9 @@ Deno.test("loop: headless smoke — first paint, coalescing, final flush", async
   assert(last.endsWith("\x1b[?2026l"), "final write closes the sync block");
   // The update that triggered quit is painted in the final flush.
   assert(last.includes("abq"), "final frame reflects the last model state");
+  assert(
+    last.includes("\x1b[6 q\x1b[2;4H\x1b[?25h"),
+    "final frame declares the hardware cursor",
+  );
   assertEquals(disposed, true, "terminal disposed during teardown");
 });

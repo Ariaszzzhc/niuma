@@ -196,10 +196,15 @@ Deno.test("update_plan renders progress and rejects >1 in_progress", async () =>
 });
 
 Deno.test("question routes through ctx.ask and rejects with feedback", async () => {
+  let askedCallId = "";
   const c = mkCtx({
-    askImpl: () => Promise.resolve({ decision: "reject", feedback: "skip it" }),
+    askImpl: (info) => {
+      askedCallId = info.callId;
+      return Promise.resolve({ decision: "reject", feedback: "skip it" });
+    },
   });
   const out = await questionTool.execute({ question: "continue?" }, c);
+  assertEquals(askedCallId, "call-test");
   assertEquals(out.isError, true);
   assertStringIncludes(out.content, "skip it");
 });
@@ -632,6 +637,7 @@ interface MkOpts {
 
 function mkCtx(overrides: MkOpts = {}): ToolCtx {
   return {
+    callId: "call-test",
     cwd: overrides.cwd ?? Deno.cwd(),
     sessionId: "test-session",
     signal: new AbortController().signal,

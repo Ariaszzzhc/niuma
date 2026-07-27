@@ -13,6 +13,7 @@
 
 import {
   type Color,
+  selectionWindow,
   stringWidth,
   type StyledLine,
   type StyledSpan,
@@ -20,6 +21,7 @@ import {
 } from "@niuma/tuikit";
 
 import type { CompletionCandidate } from "../commands.ts";
+import { SELECTION_MARKER } from "../symbols.ts";
 
 // ---------------------------------------------------------------------------
 // State
@@ -52,7 +54,7 @@ export const moveCompletion = (
 // Render
 // ---------------------------------------------------------------------------
 
-/** Focused color interface needed by the completion menu. */
+/** Colors the menu needs. Decoupled from the product `Theme`. */
 export interface CompletionTheme {
   readonly border: Color;
   readonly accent: Color;
@@ -74,15 +76,14 @@ const repeat = (s: string, n: number): string => s.repeat(Math.max(0, n));
 const span = (
   text: string,
   fg: Color,
-  extra: { dim?: boolean; reverse?: boolean } = {},
+  extra: { dim?: boolean; bold?: boolean } = {},
 ): StyledSpan => ({ text, style: { fg, ...extra } });
 const blank = (text: string): StyledSpan => ({ text, style: {} });
 
 /**
  * Render the completion menu box: one row per candidate (`/name` + muted
- * description), the selected row reversed in the accent colour. Longer lists
- * are windowed around the selection (MAX_VISIBLE rows). Width follows the
- * longest row, capped at `screenW`.
+ * description), with a Niuma selection marker instead of reverse-video fill.
+ * Longer lists are windowed around the selection.
  */
 export const renderCompletionMenu = (
   items: readonly CompletionCandidate[],
@@ -100,17 +101,16 @@ export const renderCompletionMenu = (
       ),
     0,
   );
-  const boxW = Math.max(12, Math.min(screenW, longest + 6));
+  const boxW = Math.max(1, Math.min(screenW, Math.max(12, longest + 6)));
   const innerW = Math.max(1, boxW - 4);
 
-  // window the list around the selection
-  const visible = Math.min(MAX_VISIBLE, items.length);
   const sel = Math.max(0, Math.min(selected, items.length - 1));
-  const start = Math.max(
-    0,
-    Math.min(sel - Math.floor(visible / 2), items.length - visible),
+  const window = selectionWindow(
+    { selected: sel },
+    items.length,
+    MAX_VISIBLE,
   );
-  const windowItems = items.slice(start, start + visible);
+  const windowItems = items.slice(window.start, window.end);
 
   const lines: StyledLine[] = [];
   lines.push({
@@ -119,33 +119,31 @@ export const renderCompletionMenu = (
 
   for (let i = 0; i < windowItems.length; i++) {
     const item = windowItems[i];
-    const isSel = start + i === sel;
-    const name = `  /${item.name}`;
+    const isSel = window.start + i === sel;
+    const marker = isSel ? `${SELECTION_MARKER} ` : "  ";
+    const name = `/${item.name}`;
     const desc = item.description ?? "";
-    const nameW = stringWidth(name);
-    const descW = stringWidth(desc);
-    const gap = 2;
     const spans: StyledSpan[] = [span(`${VBAR} `, theme.border)];
-    if (isSel) {
-      const label = truncateToWidth(
-        desc === "" ? name : `${name}${repeat(" ", gap)}${desc}`,
-        innerW,
-      );
-      spans.push(span(label, theme.accent, { reverse: true }));
-      const pad = innerW - stringWidth(label);
-      if (pad > 0) {
-        spans.push(span(repeat(" ", pad), theme.accent, { reverse: true }));
-      }
-    } else {
-      spans.push(span(truncateToWidth(name, innerW), theme.text));
-      if (desc !== "" && nameW + gap + descW <= innerW) {
-        spans.push(blank(repeat(" ", innerW - nameW - descW)));
-        spans.push(span(desc, theme.muted, { dim: true }));
-      } else {
-        const pad = innerW - Math.min(nameW, innerW);
-        if (pad > 0) spans.push(blank(repeat(" ", pad)));
+    const markerW = stringWidth(marker);
+    spans.push(span(marker, isSel ? theme.accent : theme.muted, {
+      bold: isSel,
+    }));
+    const nameBudget = Math.max(0, innerW - markerW);
+    const shownName = truncateToWidth(name, nameBudget);
+    spans.push(span(shownName, isSel ? theme.accent : theme.text, {
+      bold: isSel,
+    }));
+    let used = markerW + stringWidth(shownName);
+    if (desc !== "" && used + 2 < innerW) {
+      const descBudget = innerW - used - 2;
+      const shownDesc = truncateToWidth(desc, descBudget);
+      if (shownDesc.length > 0) {
+        spans.push(blank("  "));
+        spans.push(span(shownDesc, theme.muted, { dim: true }));
+        used += 2 + stringWidth(shownDesc);
       }
     }
+    if (used < innerW) spans.push(blank(repeat(" ", innerW - used)));
     spans.push(span(` ${VBAR}`, theme.border));
     lines.push({ spans });
   }

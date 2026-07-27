@@ -37,11 +37,19 @@ export interface Theme {
   readonly success: Color;
   readonly warning: Color;
   readonly error: Color;
-  readonly muted: Color;
   readonly border: Color;
+  readonly borderFocus: Color;
   readonly text: Color;
+  readonly textStrong: Color;
   readonly textDim: Color;
+  readonly textMuted: Color;
+  /** Compatibility name for existing components; semantically textMuted. */
+  readonly muted: Color;
   readonly codeBg: Color;
+  readonly roleUser: Color;
+  readonly diffAdd: Color;
+  readonly diffDelete: Color;
+  readonly diffContext: Color;
 }
 
 /** "dark" or "light" background classification. */
@@ -61,11 +69,18 @@ interface RawPalette {
   readonly success: Color;
   readonly warning: Color;
   readonly error: Color;
-  readonly muted: Color;
   readonly border: Color;
+  readonly borderFocus: Color;
   readonly text: Color;
+  readonly textStrong: Color;
   readonly textDim: Color;
+  readonly textMuted: Color;
+  readonly muted: Color;
   readonly codeBg: Color;
+  readonly roleUser: Color;
+  readonly diffAdd: Color;
+  readonly diffDelete: Color;
+  readonly diffContext: Color;
 }
 
 // Dark palette — light text on a dark background. Blue accents (starship /
@@ -77,11 +92,18 @@ const DARK_RAW: RawPalette = {
   success: rgb(80, 220, 140),
   warning: rgb(241, 196, 100),
   error: rgb(255, 110, 110),
-  muted: rgb(120, 130, 150),
   border: rgb(88, 110, 150),
+  borderFocus: rgb(100, 150, 255),
   text: rgb(222, 226, 235),
+  textStrong: rgb(242, 245, 252),
   textDim: rgb(140, 148, 168),
+  textMuted: rgb(112, 122, 144),
+  muted: rgb(112, 122, 144),
   codeBg: rgb(38, 42, 60),
+  roleUser: rgb(136, 190, 255),
+  diffAdd: rgb(80, 220, 140),
+  diffDelete: rgb(255, 110, 110),
+  diffContext: rgb(140, 148, 168),
 };
 
 // Light palette — dark text on a light background. Same semantic slots,
@@ -92,17 +114,24 @@ const LIGHT_RAW: RawPalette = {
   success: rgb(20, 150, 80),
   warning: rgb(170, 110, 0),
   error: rgb(200, 50, 50),
-  muted: rgb(120, 120, 130),
   border: rgb(150, 155, 165),
+  borderFocus: rgb(50, 100, 220),
   text: rgb(40, 44, 52),
+  textStrong: rgb(24, 28, 36),
   textDim: rgb(110, 114, 124),
+  textMuted: rgb(132, 136, 146),
+  muted: rgb(132, 136, 146),
   codeBg: rgb(232, 234, 240),
+  roleUser: rgb(34, 92, 205),
+  diffAdd: rgb(20, 150, 80),
+  diffDelete: rgb(200, 50, 50),
+  diffContext: rgb(110, 114, 124),
 };
 
 /**
  * The most permissive render caps (full truecolor). Used as the default for
  * the optional `caps` argument taken by gradient-painting components
- * (statusline / banner). Keeping the colour as RGB through `gradient` is
+ * (legacy/custom components). Keeping the colour as RGB through a gradient is
  * lossless: the loop's frame layer re-quantises to the REAL caps at SGR emit
  * time, so defaulting to truecolor here never oversells the terminal.
  */
@@ -127,11 +156,18 @@ export const pickTheme = (bg: BgKind, caps: TerminalCaps): Theme => {
     success: quantizeColor(raw.success, caps),
     warning: quantizeColor(raw.warning, caps),
     error: quantizeColor(raw.error, caps),
-    muted: quantizeColor(raw.muted, caps),
     border: quantizeColor(raw.border, caps),
+    borderFocus: quantizeColor(raw.borderFocus, caps),
     text: quantizeColor(raw.text, caps),
+    textStrong: quantizeColor(raw.textStrong, caps),
     textDim: quantizeColor(raw.textDim, caps),
+    textMuted: quantizeColor(raw.textMuted, caps),
+    muted: quantizeColor(raw.muted, caps),
     codeBg: quantizeColor(raw.codeBg, caps),
+    roleUser: quantizeColor(raw.roleUser, caps),
+    diffAdd: quantizeColor(raw.diffAdd, caps),
+    diffDelete: quantizeColor(raw.diffDelete, caps),
+    diffContext: quantizeColor(raw.diffContext, caps),
   };
 };
 

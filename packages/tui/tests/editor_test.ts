@@ -19,6 +19,8 @@ import {
   editorReducer,
   editorText,
   renderEditor,
+  renderEditorSurface,
+  setEditorText,
 } from "../src/components/editor.ts";
 
 // -- event builders ----------------------------------------------------------
@@ -451,23 +453,21 @@ describe("editor: grapheme cursor", () => {
     assertStrictEquals(jumped.cursor.col, 6);
   });
 
-  it("render stamps the whole emoji cluster as the reverse caret cell", () => {
-    // caret on the emoji (col 1 of "a👪b"); the reversed span must be the full
-    // cluster, not a half-width surrogate.
+  it("places the hardware caret before a whole emoji cluster", () => {
+    // caret on the emoji (col 1 of "a👪b"); the cursor cell is after "a".
     const base = feed([text("a"), text("👪"), text("b")]).state;
     const [atEmoji] = editorReducer(base, key("left")); // 3 -> 2
     const [onEmoji] = editorReducer(atEmoji, key("left")); // 2 -> 1
-    const lines = renderEditor(onEmoji, 30, true, {
+    const surface = renderEditorSurface(onEmoji, 30, true, {
       border: "default",
       borderFocused: "default",
       accent: "default",
       text: "default",
       placeholder: "default",
     });
-    const cursorRow = lines[1];
-    const reversed = cursorRow.spans.find((s) => s.style.reverse === true);
-    assert(reversed !== undefined, "a reversed caret cell must exist");
-    assertStrictEquals(reversed!.text, "👪");
+    assertStrictEquals(surface.cursor?.row, 1);
+    assertStrictEquals(surface.cursor?.col, 5);
+    assertStrictEquals(surface.cursor?.shape, "bar");
   });
 
   it("a ZWJ family sequence is one caret step", () => {
@@ -478,5 +478,36 @@ describe("editor: grapheme cursor", () => {
     assertStrictEquals(s1.cursor.col, 2);
     const [after] = editorReducer(s1, key("backspace"));
     assertStrictEquals(editorText(after), "ab");
+  });
+});
+
+describe("editor: visual wrapping", () => {
+  const theme = {
+    border: "default" as const,
+    borderFocused: "default" as const,
+    accent: "default" as const,
+    text: "default" as const,
+    placeholder: "default" as const,
+  };
+
+  it("wraps long input and keeps the caret on the visible row", () => {
+    const state = feed([text("abcdefghijklmnop")]).state;
+    const surface = renderEditorSurface(state, 12, true, theme, 2);
+    // 12 cells leaves 6 content cells, so the editor has three visual rows;
+    // maxRows=2 keeps the last two, including the caret.
+    assertStrictEquals(surface.lines.length, 4);
+    assertStrictEquals(surface.cursor?.row, 2);
+    assertStrictEquals(surface.cursor?.col, 8);
+  });
+
+  it("does not expose a hardware cursor while unfocused", () => {
+    const state = feed([text("hello")]).state;
+    const surface = renderEditorSurface(state, 30, false, theme);
+    assertStrictEquals(surface.cursor, undefined);
+  });
+
+  it("seeds external text using grapheme columns", () => {
+    const state = setEditorText(createEditorState(), "a👨‍👩‍👧");
+    assertStrictEquals(state.cursor.col, 2);
   });
 });

@@ -40,7 +40,7 @@ export const grepTool: Tool<GrepInput> = {
   normalize: (i) => `${i.pattern} ${i.path ?? "."}`,
   paths: (i) => ({ read: [i.path ?? "."] }),
   async execute(input, ctx): Promise<ToolOutput> {
-    const callId = `grep:${ctx.sessionId}:${input.pattern}`;
+    const spillId = `${ctx.sessionId}:${ctx.callId}`;
     const max = input.maxResults ?? MAX_RESULTS_DEFAULT;
     const ln = input.lineNumbers !== false;
     const ci = input.caseInsensitive ? "-i" : "";
@@ -66,10 +66,7 @@ export const grepTool: Tool<GrepInput> = {
       });
       if (r.code === 0 || r.code === 1) {
         const output = takeResultLines(r.stdout, max);
-        return await toolOutput(
-          output || "[no matches]",
-          callId,
-        );
+        return await toolOutput(output || "[no matches]", spillId);
       }
       // rg failed for some other reason — fall through to JS walk.
     }
@@ -111,7 +108,7 @@ export const grepTool: Tool<GrepInput> = {
 
     return await toolOutput(
       out.length ? out.join("\n") : "[no matches]",
-      callId,
+      spillId,
     );
   },
 };

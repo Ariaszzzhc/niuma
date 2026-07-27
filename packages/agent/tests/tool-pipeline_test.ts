@@ -72,3 +72,66 @@ Deno.test("tool-pipeline: read tool round-trip executes via runPipeline", async 
     true,
   );
 });
+
+Deno.test("tool-pipeline: question preserves provider call id and structured input", async () => {
+  const pipe = makeToolPipeline({ engine: approvingEngine() });
+  const input = {
+    question: "Which option?",
+    options: ["alpha", "beta"],
+  };
+  let asked:
+    | {
+      readonly callId: string;
+      readonly name: string;
+      readonly input: unknown;
+    }
+    | undefined;
+  const ctx: ToolRunContext = {
+    sessionId: "s",
+    workspace: "/tmp",
+    mode: "full",
+    ask: (req) => {
+      asked = req;
+      return Effect.succeed<ApprovalOutcome>({
+        decision: "once",
+        feedback: "beta",
+      });
+    },
+  };
+
+  const results = await Effect.runPromise(pipe.run(
+    [{ callId: "call-question-1", name: "question", input }],
+    ctx,
+  ));
+
+  assertEquals(asked, {
+    callId: "call-question-1",
+    name: "question",
+    input,
+  });
+  assertEquals(resultContentToString(results[0]!.content), "beta");
+});
+
+Deno.test("tool-pipeline: progress uses the provider call id", async () => {
+  const pipe = makeToolPipeline({ engine: approvingEngine() });
+  const progress: Array<{ callId: string; message?: string }> = [];
+  const ctx: ToolRunContext = {
+    ...approvingCtx("s", "/tmp", "full"),
+    emitProgress: (callId, message) => progress.push({ callId, message }),
+  };
+
+  const results = await Effect.runPromise(pipe.run(
+    [{
+      callId: "call-plan-1",
+      name: "update_plan",
+      input: { items: [{ title: "Implement TUI", status: "in_progress" }] },
+    }],
+    ctx,
+  ));
+
+  assertEquals(results[0]!.isError, false);
+  assertEquals(progress, [{
+    callId: "call-plan-1",
+    message: "plan updated: 1 items",
+  }]);
+});

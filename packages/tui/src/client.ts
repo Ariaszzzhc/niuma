@@ -126,7 +126,7 @@ export interface TuiClient {
    * newSession/resume). */
   readonly sessionId: string;
   /** Resolved context window for the current session's model, when the server
-   * knows it (drives the status line's context-usage percentage). */
+   * knows it (drives the footer's context-usage percentage). */
   readonly contextWindow: number | null;
   /** MCP servers the server connected at boot (id + contributed tool count).
    * Empty when none are configured. */

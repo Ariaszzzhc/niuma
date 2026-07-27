@@ -23,6 +23,7 @@ import type {
 } from "./binding_contract.ts";
 import { gradient } from "./style.ts";
 import { type LoopMsg, type Program, run, tick } from "./loop.ts";
+import { screen } from "./view.ts";
 import { stringWidth } from "./width.ts";
 import { Terminal, type TerminalSize } from "./terminal.ts";
 
@@ -151,7 +152,7 @@ const makeProgram = (
 
   shouldQuit: (model) => model.quit,
 
-  view: (model) => view(model, caps),
+  view: (model) => screen(view(model, caps)),
 });
 
 const main = async (): Promise<void> => {

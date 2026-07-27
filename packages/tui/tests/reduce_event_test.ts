@@ -203,6 +203,35 @@ describe("reduce_event: streaming thinking accumulation", () => {
 });
 
 describe("reduce_event: tool call lifecycle", () => {
+  it("derives one batch id for calls from the same assistant step", () => {
+    const m = reduceEventSequence([
+      ev("assistant.message", {
+        parts: [
+          { type: "tool_call", id: "c1", name: "read", input: {} },
+          { type: "tool_call", id: "c2", name: "read", input: {} },
+        ],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      }),
+      ev("tool.call.requested", { callId: "c1", name: "read" }),
+      ev("tool.call.requested", { callId: "c2", name: "read" }),
+      ev("assistant.message", {
+        parts: [{
+          type: "tool_call",
+          id: "c3",
+          name: "read",
+          input: {},
+        }],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      }),
+      ev("tool.call.requested", { callId: "c3", name: "read" }),
+    ]);
+    assertStrictEquals(m.toolCalls[0].batchId, m.toolCalls[1].batchId);
+    assertStrictEquals(
+      m.toolCalls[2].batchId > m.toolCalls[1].batchId,
+      true,
+    );
+  });
+
   it("requested -> progress -> result", () => {
     const m = reduceEventSequence([
       ev("tool.call.requested", {

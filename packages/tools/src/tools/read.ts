@@ -42,7 +42,7 @@ export const readTool: Tool<ReadInput> = {
   normalize: (i) => i.path,
   paths: (i) => ({ read: [i.path] }),
   async execute(input, ctx): Promise<ToolOutput> {
-    const callId = `read:${ctx.sessionId}:${input.path}`;
+    const spillId = `${ctx.sessionId}:${ctx.callId}`;
     let resolved;
     try {
       resolved = resolvePath(ctx.cwd, input.path);
@@ -56,7 +56,7 @@ export const readTool: Tool<ReadInput> = {
     try {
       stat = await Deno.stat(resolved.abs);
     } catch (e) {
-      return await toolOutput(`error: ${(e as Error).message}`, callId, {
+      return await toolOutput(`error: ${(e as Error).message}`, spillId, {
         isError: true,
       });
     }
@@ -88,7 +88,7 @@ export const readTool: Tool<ReadInput> = {
         total - (startLine + limit)
       } more lines — re-call with offset=${startLine + limit + 1}]`;
     }
-    return await toolOutput(body, callId);
+    return await toolOutput(body, spillId);
   },
 };
 

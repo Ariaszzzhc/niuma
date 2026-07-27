@@ -4,14 +4,14 @@
 // `reduceEvent(model, ev)` is the single place that turns a server event
 // envelope into model state. It is exhaustively table-driven over every event
 // type the server emits (recorded + live), and PURE: no IO, no rendering, no
-// imports from view components. That keeps it unit-testable in
+// imports from display components. That keeps it unit-testable in
 // isolation — `reduce_event_test.ts` feeds canned event sequences and asserts
 // on the model without touching the terminal or the native lib.
 //
 // The model carries the raw conversation data (messages, streaming text, tool
 // calls, notices) plus turn/approval state. The `app.ts` view layer
 // adapts this model into the shapes `renderTranscript` / `renderToolCall` /
-// `renderStatusline` expect (interlock note: `TuiToolCall` / `TuiMessage` are
+// `renderFooter` expect (interlock note: `TuiToolCall` / `TuiMessage` are
 // the structural source of truth the view reads).
 //
 // Event envelope shape: the closed RecordedEvent | LiveEvent union from
@@ -51,8 +51,8 @@ export interface TuiToolCall {
   readonly resultLines: readonly string[];
   readonly isError: boolean;
   readonly durationMs: number;
-  /** ctrl+o expands the latest call in the transcript (toggled by app). */
-  readonly expanded: boolean;
+  /** Derived assistant-sampling step; groups parallel calls without schema IO. */
+  readonly batchId: number;
 }
 
 /** In-flight streaming assistant text (accumulated from text.delta). */
@@ -71,7 +71,7 @@ export interface TuiNotice {
   readonly text: string;
 }
 
-/** A pending approval.requested (raw); app.ts builds the rendered overlay. */
+/** A pending approval.requested (raw); app.ts selects the bottom panel. */
 export interface PendingApproval {
   readonly approvalId: string;
   readonly callId: string;
@@ -83,7 +83,7 @@ export interface TuiModelState {
   readonly sessionId: string | null;
   readonly workspace: string | null;
   readonly model: string | null;
-  /** Resolved context window from session.created (drives the status line's
+  /** Resolved context window from session.created (drives the footer's
    * context-usage percentage); null until/ unless the server reports it. */
   readonly contextWindow: number | null;
   /** MCP servers connected at boot (empty until session.created arrives). */
@@ -103,6 +103,8 @@ export interface TuiModelState {
   readonly lastStopReason: string | null;
   readonly lastError: string | null;
   readonly compactionCount: number;
+  /** Monotonic assistant.message count used to tag following tool batches. */
+  readonly toolBatch: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +135,7 @@ export const initialModelState = (): TuiModelState => ({
   lastStopReason: null,
   lastError: null,
   compactionCount: 0,
+  toolBatch: 0,
 });
 
 // ---------------------------------------------------------------------------
@@ -361,6 +364,7 @@ export const reduceEvent = (
       return { ...model, streaming: null };
 
     case "assistant.message": {
+      const toolBatch = model.toolBatch + 1;
       const streamingText = model.streaming?.text ?? "";
       const finalizedText = streamingText.length > 0
         ? streamingText
@@ -370,11 +374,11 @@ export const reduceEvent = (
         ? streamingThinking
         : joinThinkingParts(d["parts"]);
       if (finalizedText.length === 0 && thinking.length === 0) {
-        return { ...model, streaming: null };
+        return { ...model, streaming: null, toolBatch };
       }
       const id = model.streaming?.id ?? nextId("a");
       // Accumulate billed usage; keep the latest inputTokens as the
-      // context-fullness proxy for the status line.
+      // context-fullness proxy for the footer.
       const usage = extractUsage(d["usage"]);
       const tokensIn = model.tokensIn + (usage?.input ?? 0);
       const tokensOut = model.tokensOut + (usage?.output ?? 0);
@@ -384,6 +388,7 @@ export const reduceEvent = (
         tokensIn,
         tokensOut,
         lastInputTokens,
+        toolBatch,
         messages: [
           ...model.messages,
           {
@@ -422,7 +427,7 @@ export const reduceEvent = (
         resultLines: [],
         isError: false,
         durationMs: 0,
-        expanded: false,
+        batchId: model.toolBatch,
       };
       return { ...model, toolCalls: [...model.toolCalls, call] };
     }
