@@ -378,6 +378,44 @@ Deno.test("pipeline surfaces unknown tool as isError", async () => {
   assertStringIncludes(out[0].content, "unknown tool");
 });
 
+Deno.test(
+  "pipeline restores scheduled results after interleaved preflight failures",
+  async () => {
+    const reg = new ToolRegistry();
+    const engine: PermissionEngine = {
+      evaluate: () => Promise.resolve({ decision: "allow" }),
+      remember: () => Promise.resolve(),
+    };
+    const tmp = await Deno.makeTempDir();
+    await Deno.writeTextFile(`${tmp}/a.txt`, "alpha");
+    await Deno.writeTextFile(`${tmp}/b.txt`, "beta");
+
+    const out = await runPipeline(
+      [
+        { callId: "bad-tool", name: "nope", input: {} },
+        { callId: "read-a", name: "read", input: { path: "a.txt" } },
+        { callId: "bad-input", name: "read", input: { path: 42 } },
+        { callId: "read-b", name: "read", input: { path: "b.txt" } },
+      ],
+      {
+        tools: new Map(reg.all().map((t) => [t.name, t])),
+        engine,
+        ctx: mkCtx({ cwd: tmp }),
+      },
+    );
+
+    assertEquals(out.length, 4);
+    assertEquals(out[0].callId, "bad-tool");
+    assertEquals(out[0].isError, true);
+    assertEquals(out[1].callId, "read-a");
+    assertStringIncludes(out[1].content, "alpha");
+    assertEquals(out[2].callId, "bad-input");
+    assertEquals(out[2].isError, true);
+    assertEquals(out[3].callId, "read-b");
+    assertStringIncludes(out[3].content, "beta");
+  },
+);
+
 Deno.test("truncate spills to disk when output > 30KB", async () => {
   const big = "x".repeat(40 * 1024);
   const r = await toolOutput(big, "smoke-call-1");

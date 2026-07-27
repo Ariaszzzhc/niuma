@@ -167,14 +167,17 @@ export async function runPipeline(
   // 3+4. Schedule + execute.
   const executed = await schedule(jobs, { signal: opts.ctx.signal });
 
-  // Stitch back into the original order, filling pre-flight errors.
+  // Stitch scheduled results back into the original model-call order. `jobs`
+  // is dense because pre-flight failures never enter it, so its array index is
+  // not the original call index; ScheduledJob.index carries that mapping.
   const results: ToolOutput[] = new Array(calls.length);
   for (let i = 0; i < calls.length; i++) {
     if (errors[i]) {
       results[i] = errors[i]!;
-    } else {
-      results[i] = executed[i];
     }
+  }
+  for (let i = 0; i < jobs.length; i++) {
+    results[jobs[i].index] = executed[i];
   }
   return results;
 }
