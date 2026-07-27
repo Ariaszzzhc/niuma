@@ -240,7 +240,14 @@ export const bootstrap = async (
       await Effect.runPromise(kernel.append({
         type: "session.created",
         sessionId: childId,
-        data: { workspace, model: defaultModel },
+        data: {
+          workspace,
+          model: defaultModel,
+          mcpServers: mcpServers.map(({ id, tools }) => ({
+            id,
+            toolCount: tools.length,
+          })),
+        },
       }));
       await Effect.runPromise(kernel.append({
         type: "subagent.spawned",

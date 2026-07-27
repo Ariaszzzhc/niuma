@@ -4,6 +4,7 @@ import {
   CreateSessionReq,
   decode,
   PromptReq,
+  type RecordedEvent,
   type SessionInfo,
   SetEffortReq,
   SetModelReq,
@@ -45,7 +46,13 @@ export interface Handlers {
   readonly listSessions: () => Promise<ReadonlyArray<SessionInfo>>;
   readonly getSession: (
     id: string,
-  ) => Promise<{ info: SessionInfo; history: ReadonlyArray<unknown> }>;
+  ) => Promise<{
+    info: SessionInfo;
+    history: ReadonlyArray<RecordedEvent>;
+    contextWindow?: number;
+    mcpServers: ReadonlyArray<{ id: string; toolCount: number }>;
+    commands: ReadonlyArray<CommandInfo>;
+  }>;
   readonly prompt: (id: string, raw: unknown) => Promise<{ accepted: true }>;
   readonly interrupt: (id: string) => Promise<{ ok: true }>;
   readonly setModel: (id: string, raw: unknown) => Promise<SetModelResult>;
@@ -79,11 +86,11 @@ const runEffect = async <A>(
 const collectReplay = (
   runtime: Rt,
   sessionId: string,
-): Promise<unknown[]> =>
+): Promise<RecordedEvent[]> =>
   runtime.runPromise(
     Effect.gen(function* () {
       const k = yield* Kernel;
-      const out: unknown[] = [];
+      const out: RecordedEvent[] = [];
       yield* k.replay(sessionId, 0).pipe(
         Stream.runForEach((e) => {
           out.push(e);
@@ -93,6 +100,24 @@ const collectReplay = (
       return out;
     }),
   );
+
+const requireSession = async (
+  runtime: Rt,
+  id: string,
+): Promise<SessionInfo> => {
+  const info = await runEffect(
+    runtime,
+    Effect.gen(function* () {
+      const sm = yield* SessionManager;
+      return yield* sm.get(id);
+    }),
+    "session_lookup_failed",
+  );
+  if (!info) {
+    throw httpError("session_not_found", `session ${id} not found`);
+  }
+  return info;
+};
 
 // List the custom slash commands a workspace sees (user + project levels).
 // Best-effort: a broken commands dir yields an empty list, never a failed
@@ -161,24 +186,30 @@ export const makeHandlers = (
     ),
 
   getSession: async (id) => {
-    const info = await runEffect(
-      runtime,
-      Effect.gen(function* () {
-        const sm = yield* SessionManager;
-        return yield* sm.get(id);
-      }),
-      "session_lookup_failed",
-    );
-    if (!info) {
-      throw httpError("session_not_found", `session ${id} not found`);
-    }
+    const info = await requireSession(runtime, id);
     const history = await collectReplay(runtime, id);
-    return { info, history };
+    const created = history.find((event) => event.type === "session.created");
+    if (created === undefined) {
+      throw httpError(
+        "session_corrupt",
+        `session ${id} has no session.created event`,
+      );
+    }
+    return {
+      info,
+      history,
+      ...(created.data.contextWindow !== undefined
+        ? { contextWindow: created.data.contextWindow }
+        : {}),
+      mcpServers: created.data.mcpServers,
+      commands: await listCommands(opts, info.workspace),
+    };
   },
 
-  prompt: (id, raw) => {
+  prompt: async (id, raw) => {
     const req = decode(PromptReq)(raw);
-    return runEffect(
+    await requireSession(runtime, id);
+    return await runEffect(
       runtime,
       Effect.gen(function* () {
         const sm = yield* SessionManager;
@@ -204,17 +235,7 @@ export const makeHandlers = (
   // a typo'd id surfaces as session_not_found, not a generic failure code.
   setModel: async (id, raw) => {
     const req = decode(SetModelReq)(raw);
-    const info = await runEffect(
-      runtime,
-      Effect.gen(function* () {
-        const sm = yield* SessionManager;
-        return yield* sm.get(id);
-      }),
-      "session_lookup_failed",
-    );
-    if (!info) {
-      throw httpError("session_not_found", `session ${id} not found`);
-    }
+    await requireSession(runtime, id);
     return await runEffect(
       runtime,
       Effect.gen(function* () {
@@ -227,17 +248,7 @@ export const makeHandlers = (
 
   setEffort: async (id, raw) => {
     const req = decode(SetEffortReq)(raw);
-    const info = await runEffect(
-      runtime,
-      Effect.gen(function* () {
-        const sm = yield* SessionManager;
-        return yield* sm.get(id);
-      }),
-      "session_lookup_failed",
-    );
-    if (!info) {
-      throw httpError("session_not_found", `session ${id} not found`);
-    }
+    await requireSession(runtime, id);
     return await runEffect(
       runtime,
       Effect.gen(function* () {
@@ -252,17 +263,7 @@ export const makeHandlers = (
   // manager itself refuses with TurnInFlightError while a turn is running,
   // which surfaces here as a 409 rather than a generic failure code.
   compact: async (id) => {
-    const info = await runEffect(
-      runtime,
-      Effect.gen(function* () {
-        const sm = yield* SessionManager;
-        return yield* sm.get(id);
-      }),
-      "session_lookup_failed",
-    );
-    if (!info) {
-      throw httpError("session_not_found", `session ${id} not found`);
-    }
+    await requireSession(runtime, id);
     const result = await runEffect(
       runtime,
       Effect.gen(function* () {
@@ -308,6 +309,7 @@ export const makeHandlers = (
   },
 
   history: async (id) => {
+    await requireSession(runtime, id);
     const events = await collectReplay(runtime, id);
     return { events };
   },

@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { StopReason } from "./domain.ts";
 import { ApprovalDecisionType } from "./permission.ts";
-import { LiveEvent, RecordedEvent } from "./event.ts";
+import { LiveEvent, McpServerStatus, RecordedEvent } from "./event.ts";
 
 // ---- Custom slash commands ----
 
@@ -33,9 +33,10 @@ const CreateSessionRes_ = Schema.Struct({
   sessionId: Schema.String,
   workspace: Schema.String,
   model: Schema.String,
-  // Custom slash commands visible to this session's workspace (user +
-  // project `commands/*.md`). Optional so older servers still decode.
-  commands: Schema.optional(Schema.Array(CommandInfo_)),
+  contextWindow: Schema.optional(Schema.Number),
+  mcpServers: Schema.Array(McpServerStatus),
+  // Custom slash commands visible to this session's workspace.
+  commands: Schema.Array(CommandInfo_),
 });
 export type CreateSessionRes = Schema.Schema.Type<typeof CreateSessionRes_>;
 export const CreateSessionRes: Schema.Codec<CreateSessionRes> =
@@ -50,7 +51,7 @@ export const PromptReq: Schema.Codec<PromptReq> = PromptReq_;
 
 // deno-lint-ignore no-slow-types
 const PromptRes_ = Schema.Struct({
-  accepted: Schema.Boolean,
+  accepted: Schema.Literal(true),
 });
 export type PromptRes = Schema.Schema.Type<typeof PromptRes_>;
 export const PromptRes: Schema.Codec<PromptRes> = PromptRes_;
@@ -78,8 +79,8 @@ export const SetModelReq: Schema.Codec<SetModelReq> = SetModelReq_;
 
 // deno-lint-ignore no-slow-types
 const SetModelRes_ = Schema.Struct({
-  ok: Schema.Boolean,
-  model: Schema.optional(Schema.String),
+  ok: Schema.Literal(true),
+  model: Schema.String,
   contextWindow: Schema.optional(Schema.Number),
 });
 export type SetModelRes = Schema.Schema.Type<typeof SetModelRes_>;
@@ -96,8 +97,8 @@ export const SetEffortReq: Schema.Codec<SetEffortReq> = SetEffortReq_;
 
 // deno-lint-ignore no-slow-types
 const SetEffortRes_ = Schema.Struct({
-  ok: Schema.Boolean,
-  effort: Schema.optional(Schema.String),
+  ok: Schema.Literal(true),
+  effort: Schema.String,
 });
 export type SetEffortRes = Schema.Schema.Type<typeof SetEffortRes_>;
 export const SetEffortRes: Schema.Codec<SetEffortRes> = SetEffortRes_;
@@ -129,6 +130,18 @@ const SessionInfo_ = Schema.Struct({
 });
 export type SessionInfo = Schema.Schema.Type<typeof SessionInfo_>;
 export const SessionInfo: Schema.Codec<SessionInfo> = SessionInfo_;
+
+export const SessionListRes = Schema.Array(SessionInfo_);
+export type SessionListRes = Schema.Schema.Type<typeof SessionListRes>;
+
+export const GetSessionRes = Schema.Struct({
+  info: SessionInfo_,
+  history: Schema.Array(RecordedEvent),
+  contextWindow: Schema.optional(Schema.Number),
+  mcpServers: Schema.Array(McpServerStatus),
+  commands: Schema.Array(CommandInfo_),
+});
+export type GetSessionRes = Schema.Schema.Type<typeof GetSessionRes>;
 
 // ---- Event reads & SSE ----
 

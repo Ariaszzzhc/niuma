@@ -86,7 +86,12 @@ import {
   moveCompletion,
   renderCompletionMenu,
 } from "./components/completion.ts";
-import type { RecordedEvent, SessionInfo } from "@niuma/schema";
+import {
+  decode,
+  type RecordedEvent,
+  type SessionInfo,
+  SseEvent as WireSseEvent,
+} from "@niuma/schema";
 
 // -- A-side view layer (parallel agent) --------------------------------------
 // Imported by signature; shapes reconciled against the landed modules.
@@ -331,16 +336,16 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
               if (cancelled) break;
               if (frame.event === "ping") continue;
               if (frame.data.length === 0) continue;
-              let payload: { type?: string; data?: Record<string, unknown> };
+              let event: SseEvent;
               try {
-                payload = JSON.parse(frame.data);
+                const wire = decode(WireSseEvent)({
+                  cursor: Number(frame.id),
+                  event: JSON.parse(frame.data),
+                });
+                event = wire.event;
               } catch {
                 continue;
               }
-              const event: SseEvent = {
-                type: payload.type ?? frame.event ?? "",
-                data: payload.data ?? {},
-              };
               emit({ type: "tui:sse", event });
             }
           } catch {
@@ -1189,14 +1194,9 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
         if (!o.ok || o.info === undefined || o.history === undefined) {
           return [withNotice(model, o.error ?? "resume failed", "error")];
         }
-        // Rebuild the session view from the recorded history. RecordedEvent
-        // carries seq/ts/sessionId on top of the {type, data} envelope the
-        // reducer consumes — strip down to the envelope.
-        const events: SseEvent[] = o.history.map((e) => ({
-          type: e.type,
-          data: e.data as Readonly<Record<string, unknown>>,
-        }));
-        const rebuilt = reduceEventSequence(events);
+        // Recorded history already has the same validated event union the
+        // reducer consumes.
+        const rebuilt = reduceEventSequence(o.history);
         return [{
           ...model,
           state: {

@@ -4,20 +4,15 @@ import {
   ApprovalDecisionType,
   Decision,
   LiveEvent,
-  Message,
   parseEventLine,
   Part,
   RecordedEvent,
-  Role,
   RuleAction,
   SessionStatus,
   SseEvent,
   StopReason,
-  StreamEvent,
   stringifyEventLine,
   ThinkingPart,
-  ToolDef,
-  ToolParameters,
   ToolResultContent,
 } from "../mod.ts";
 
@@ -28,16 +23,6 @@ import {
 
 const dec = Schema.decodeUnknownSync;
 const enc = Schema.encodeUnknownSync;
-
-Deno.test("Role: multi-value Literals enumerates every role, not just the first", () => {
-  // The old variadic Literal("system","user","assistant","tool") silently
-  // validated ONLY "system" (extras dropped). All four must now decode.
-  for (const r of ["system", "user", "assistant", "tool"] as const) {
-    assertEquals(dec(Role)(r), r);
-  }
-  // Bogus values must be rejected — proves the literal is closed.
-  assertRejectsSync(() => dec(Role)("wizard"));
-});
 
 Deno.test("StopReason: all five stop reasons decode", () => {
   for (
@@ -69,15 +54,7 @@ Deno.test("RuleAction / SessionStatus / ApprovalDecisionType: multi-value litera
   assertRejectsSync(() => dec(ApprovalDecisionType)("forever"));
 });
 
-Deno.test("ToolParameters (Schema.Record replacement): arbitrary JSON object accepted", () => {
-  // Replaces the old `Schema.UnknownRecord` which was undefined at runtime.
-  assertEquals(dec(ToolParameters)({ type: "object", properties: {} }), {
-    type: "object",
-    properties: {},
-  });
-});
-
-Deno.test("ToolResultContent / Part / Decision / LiveEvent / SseEvent / RecordedEvent / StreamEvent: array-form Unions decode each member", () => {
+Deno.test("ToolResultContent / Part / Decision / LiveEvent / SseEvent / RecordedEvent: array-form Unions decode each member", () => {
   // Each of these was a variadic Schema.Union(A, B, ...) that crashed at
   // import with `members.map is not a function`. Now they must accept every arm.
   assertEquals(dec(ToolResultContent)("plain string"), "plain string");
@@ -169,56 +146,16 @@ Deno.test("ToolResultContent / Part / Decision / LiveEvent / SseEvent / Recorded
       ts: 1,
       sessionId: "s",
       type: "session.created",
-      data: { workspace: "/w", model: "m" },
+      data: { workspace: "/w", model: "m", mcpServers: [] },
     }),
     {
       seq: 1,
       ts: 1,
       sessionId: "s",
       type: "session.created",
-      data: { workspace: "/w", model: "m" },
+      data: { workspace: "/w", model: "m", mcpServers: [] },
     },
   );
-
-  // StreamEvent: provider-side flat union.
-  assertEquals(dec(StreamEvent)({ type: "text.delta", delta: "x" }), {
-    type: "text.delta",
-    delta: "x",
-  });
-  assertEquals(
-    dec(StreamEvent)({
-      type: "message.done",
-      usage: { inputTokens: 1, outputTokens: 2 },
-      stopReason: "stop",
-    }),
-    {
-      type: "message.done",
-      usage: { inputTokens: 1, outputTokens: 2 },
-      stopReason: "stop",
-    },
-  );
-});
-
-Deno.test("Message: assistant role round-trips (regression for Role Literals bug)", () => {
-  const msg = {
-    role: "assistant" as const,
-    parts: [{ type: "text" as const, text: "hello" }],
-  };
-  const roundtrip = dec(Message)(enc(Message)(msg));
-  assertEquals(roundtrip, msg);
-});
-
-Deno.test("ToolDef: encodes with arbitrary JSON-Schema parameters object", () => {
-  const def = {
-    name: "bash",
-    description: "run a shell command",
-    parameters: {
-      type: "object",
-      properties: { command: { type: "string" } },
-      required: ["command"],
-    },
-  };
-  assertEquals(dec(ToolDef)(def), def);
 });
 
 // One sample per RecordedEvent variant — proves every event arm in the union
@@ -231,7 +168,7 @@ Deno.test("parseEventLine/stringifyEventLine: round-trip every RecordedEvent var
       ts: 1,
       sessionId: "s",
       type: "session.created",
-      data: { workspace: "/w", model: "m" },
+      data: { workspace: "/w", model: "m", mcpServers: [] },
     },
     {
       seq: 2,
@@ -293,7 +230,17 @@ Deno.test("parseEventLine/stringifyEventLine: round-trip every RecordedEvent var
       type: "turn.aborted",
       data: { reason: "user" },
     },
-    { seq: 11, ts: 11, sessionId: "s", type: "compaction.performed", data: {} },
+    {
+      seq: 11,
+      ts: 11,
+      sessionId: "s",
+      type: "compaction.performed",
+      data: {
+        summaryMessageId: "summary-1",
+        mode: "template",
+        summary: "summary",
+      },
+    },
     {
       seq: 12,
       ts: 12,
@@ -372,7 +319,7 @@ Deno.test("ThinkingPart: decodes with the opaque encrypted credential", () => {
   assertEquals(dec(ThinkingPart)(wire), wire);
 });
 
-Deno.test("ThinkingPart: omits encrypted when not present (pre-thinking JSONL compat)", () => {
+Deno.test("ThinkingPart: omits encrypted when not present", () => {
   // Old assistant.message events were written before the thinking feature
   // shipped: their parts only contain text / tool_call / tool_result. The
   // schema treats `encrypted` as optional, so a thinking part authored by a
@@ -396,7 +343,10 @@ Deno.test("Part union: ThinkingPart is selected when type=thinking and decodes t
     encrypted: "e",
   };
   assertEquals(dec(Part)(withEnc), withEnc);
-  const plain: Schema.Schema.Type<typeof Part> = { type: "thinking", text: "t" };
+  const plain: Schema.Schema.Type<typeof Part> = {
+    type: "thinking",
+    text: "t",
+  };
   assertEquals(dec(Part)(plain), plain);
   // Bogus `encrypted` (non-string) is still rejected.
   assertRejectsSync(() =>
@@ -422,21 +372,32 @@ Deno.test("thinking.delta live event round-trips through LiveEvent encode/decode
 Deno.test("LiveEvent: thinking.delta decodes alongside text.delta and text.reset (union intact)", () => {
   // Sanity: the new arm joined an existing union — none of the previously-
   // supported arms regressed.
-  assertEquals(dec(LiveEvent)({
-    ts: 1,
-    sessionId: "s",
-    type: "text.delta",
-    data: { delta: "x" },
-  }), { ts: 1, sessionId: "s", type: "text.delta", data: { delta: "x" } });
-  assertEquals(dec(LiveEvent)({
-    ts: 1,
-    sessionId: "s",
-    type: "text.reset",
-    data: {},
-  }), { ts: 1, sessionId: "s", type: "text.reset", data: {} });
+  assertEquals(
+    dec(LiveEvent)({
+      ts: 1,
+      sessionId: "s",
+      type: "text.delta",
+      data: { delta: "x" },
+    }),
+    { ts: 1, sessionId: "s", type: "text.delta", data: { delta: "x" } },
+  );
+  assertEquals(
+    dec(LiveEvent)({
+      ts: 1,
+      sessionId: "s",
+      type: "text.reset",
+      data: {},
+    }),
+    { ts: 1, sessionId: "s", type: "text.reset", data: {} },
+  );
   // A bogus live type is still rejected.
   assertRejectsSync(() =>
-    dec(LiveEvent)({ ts: 1, sessionId: "s", type: "thinking.bogus", data: { delta: "x" } })
+    dec(LiveEvent)({
+      ts: 1,
+      sessionId: "s",
+      type: "thinking.bogus",
+      data: { delta: "x" },
+    })
   );
 });
 
@@ -462,8 +423,8 @@ Deno.test("parseEventLine/stringifyEventLine: assistant.message with a ThinkingP
   const line = stringifyEventLine(withThinking);
   const back = parseEventLine(line);
   assertEquals(back, withThinking);
-  // Spot-check: pre-thinking JSONL (no thinking parts at all) still parses.
-  const legacy: Schema.Schema.Type<typeof RecordedEvent> = {
+  // Spot-check: a text-only assistant message still parses.
+  const textOnly: Schema.Schema.Type<typeof RecordedEvent> = {
     seq: 1,
     ts: 1,
     sessionId: "s",
@@ -473,22 +434,7 @@ Deno.test("parseEventLine/stringifyEventLine: assistant.message with a ThinkingP
       usage: { inputTokens: 1, outputTokens: 2 },
     },
   };
-  assertEquals(parseEventLine(stringifyEventLine(legacy)), legacy);
-});
-
-Deno.test("Message: assistant turn with ThinkingPart round-trips through Message encode/decode", () => {
-  // Locks the provider-neutral schema at the Message granularity too —
-  // agents and context projections consume Message, so a corrupted thinking
-  // arm would silently lose reasoning.
-  const msg: Schema.Schema.Type<typeof Message> = {
-    role: "assistant",
-    parts: [
-      { type: "thinking", text: "reasoning", encrypted: "sig-z" },
-      { type: "text", text: "answer" },
-    ],
-  };
-  const roundtrip = dec(Message)(enc(Message)(msg));
-  assertEquals(roundtrip, msg);
+  assertEquals(parseEventLine(stringifyEventLine(textOnly)), textOnly);
 });
 
 // deno-lint-ignore no-explicit-any

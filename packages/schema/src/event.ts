@@ -17,10 +17,8 @@ const recordedBase = {
 
 // `contextWindow` is the resolved window for the session's model (the status
 // line shows context usage against it); absent when the server cannot resolve
-// one (injected test infra). `mcpServers` lists the MCP servers that came up
-// at boot — the TUI animates "connecting" until this event arrives with the
-// final list. Both are optional so replays of pre-change event logs still
-// decode.
+// one (injected test infra). `mcpServers` is the final list of MCP servers that
+// came up at boot, including the empty-list case.
 const McpServerStatus_ = Schema.Struct({
   id: Schema.String,
   toolCount: Schema.Number,
@@ -33,7 +31,7 @@ const SessionCreatedData_ = Schema.Struct({
   workspace: Schema.String,
   model: Schema.String,
   contextWindow: Schema.optional(Schema.Number),
-  mcpServers: Schema.optional(Schema.Array(McpServerStatus_)),
+  mcpServers: Schema.Array(McpServerStatus_),
 });
 export type SessionCreatedData = Schema.Schema.Type<typeof SessionCreatedData_>;
 export const SessionCreatedData: Schema.Codec<SessionCreatedData> =
@@ -54,7 +52,7 @@ const UserMessageData_ = Schema.Struct({
   // The text the user actually typed, when it differs from the message
   // content — set when a custom slash command (/name args) was expanded
   // server-side into `parts`. Display surfaces (transcript, session title)
-  // prefer this over the expanded text. Optional so pre-change logs decode.
+  // prefer this over the expanded text. Plain prompts omit it.
   sourceText: Schema.optional(Schema.String),
 });
 export type UserMessageData = Schema.Schema.Type<typeof UserMessageData_>;
@@ -214,19 +212,16 @@ export const TurnAbortedEvent: Schema.Codec<TurnAbortedEvent> =
   TurnAbortedEvent_;
 
 export const CompactionPerformedData = Schema.Struct({
-  summaryMessageId: Schema.optional(Schema.String),
+  summaryMessageId: Schema.String,
   // "llm" = model-generated handoff summary (the summarizer call succeeded
   // and returned non-empty text); "template" = deterministic fallback used
-  // when the summary call failed or returned empty. Optional → old JSONL
-  // logs decode unchanged.
-  mode: Schema.optional(Schema.Literals(["llm", "template"])),
+  // when the summary call failed or returned empty.
+  mode: Schema.Literals(["llm", "template"]),
   // The summary BODY (no SUMMARY_PREFIX — the projection layer re-wraps it
   // when folding the event into the bridge message, so the marker convention
-  // stays single-sourced). Present ⇒ the compaction persists across turns:
-  // replay replaces everything projected so far with the bridge message.
-  // Absent (pre-persistence logs) ⇒ replay ignores the event, matching the
-  // old in-turn-only behavior.
-  summary: Schema.optional(Schema.String),
+  // stays single-sourced). Replay replaces everything projected so far with
+  // the bridge message.
+  summary: Schema.String,
 });
 export type CompactionPerformedData = Schema.Schema.Type<
   typeof CompactionPerformedData

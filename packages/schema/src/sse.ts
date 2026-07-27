@@ -1,4 +1,4 @@
-// Minimal SSE frame parser.
+// Shared incremental SSE frame parser for the CLI and TUI clients.
 //
 // The server's `/events` endpoint emits standard Server-Sent Events frames:
 //

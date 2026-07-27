@@ -37,23 +37,23 @@
 // mcpServers / commands / eventsStream) always reflect the CURRENT session;
 // prompt / approve / interrupt target the current session.
 //
-// Note: `contextWindow` / `mcpServers` / `commands` come from the session
-// CREATE response; `GET /sessions/:id` does not return them, so `resume()`
-// keeps the values from boot (they describe the workspace/boot environment,
-// which a resumed session in the same workspace shares).
-//
 // The app owns the SSE consumption loop (a Sub that drives `reduceEvent`);
 // `parseSseStream` is re-exported here so the app imports both from one
-// place. The SSE parser itself lives in `packages/cli/src/sse.ts` (shared
-// with the one-shot runner).
+// place. The parser lives with the shared wire protocol in @niuma/schema.
 // ===========================================================================
 
-import type { RecordedEvent, SessionInfo } from "@niuma/schema";
+import {
+  CreateSessionRes,
+  decode,
+  GetSessionRes,
+  type RecordedEvent,
+  type SessionInfo,
+  SessionListRes,
+  SetEffortRes as SetEffortResponse,
+  SetModelRes as SetModelResponse,
+} from "@niuma/schema";
 
-// Shared SSE frame parser (also used by the one-shot CLI runner). Imported by
-// relative path so both packages share a single implementation; the app gets
-// it via the re-export below.
-export { parseSseStream, type SseFrame } from "../../cli/src/sse.ts";
+export { parseSseStream, type SseFrame } from "@niuma/schema";
 
 // Fake host used by the tunnel — Hono routes on the path; the host is
 // arbitrary. Re-using the same constant the one-shot runner uses keeps the
@@ -247,41 +247,16 @@ const createSessionOnServer = async (
         `session create failed (${res.status}) ${await safeText(res)}`,
       );
     }
-    const created = (await res.json()) as {
-      sessionId?: string;
-      contextWindow?: number;
-      mcpServers?: Array<{ id: string; toolCount: number }>;
-      commands?: Array<{
-        name?: unknown;
-        description?: unknown;
-        argumentHint?: unknown;
-      }>;
-    };
-    if (typeof created.sessionId !== "string") {
-      throw new Error("session create returned no sessionId");
-    }
-    // Older servers omit these; treat both as "unknown / none" rather than
-    // failing the boot.
+    const created = decode(CreateSessionRes)(await res.json());
     const contextWindow = typeof created.contextWindow === "number" &&
         Number.isFinite(created.contextWindow) && created.contextWindow > 0
       ? created.contextWindow
       : null;
-    const mcpServers = Array.isArray(created.mcpServers)
-      ? created.mcpServers.filter(
-        (s): s is { id: string; toolCount: number } =>
-          typeof s?.id === "string" && typeof s?.toolCount === "number",
-      )
-      : [];
-    const commands = Array.isArray(created.commands)
-      ? created.commands.filter(
-        (c): c is ClientCommand => typeof c?.name === "string",
-      )
-      : [];
     return {
       sessionId: created.sessionId,
       contextWindow,
-      mcpServers,
-      commands,
+      mcpServers: created.mcpServers,
+      commands: created.commands,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -357,8 +332,7 @@ export const createTuiClient = async (
         `niuma: session list failed (${res.status}) ${await safeText(res)}`,
       );
     }
-    const list = (await res.json()) as unknown;
-    return Array.isArray(list) ? list as SessionInfo[] : [];
+    return decode(SessionListRes)(await res.json());
   };
 
   const resume = async (sessionId: string): Promise<ResumeResult> => {
@@ -368,27 +342,19 @@ export const createTuiClient = async (
         `niuma: session resume failed (${res.status}) ${await safeText(res)}`,
       );
     }
-    const payload = (await res.json()) as {
-      info?: SessionInfo;
-      history?: ReadonlyArray<RecordedEvent>;
-    };
-    if (payload.info === undefined || typeof payload.info !== "object") {
-      throw new Error(`niuma: session ${sessionId} not found`);
-    }
-    const history = Array.isArray(payload.history) ? payload.history : [];
+    const payload = decode(GetSessionRes)(await res.json());
+    const history = payload.history;
     // The server replays `seq >= cursor`, so start strictly AFTER the last
     // recorded event to avoid re-delivering history on the new stream.
     const nextCursor = history.reduce(
-      (max, e) =>
-        typeof (e as { seq?: unknown } | null)?.seq === "number"
-          ? Math.max(max, (e as { seq: number }).seq)
-          : max,
+      (max, event) => Math.max(max, event.seq),
       0,
     ) + 1;
     const stream = await openEventStream(fetchImpl, sessionId, nextCursor);
     state.sessionId = sessionId;
-    // contextWindow/mcpServers/commands are boot/workspace-scoped (see the
-    // banner): resume keeps the values captured at create time.
+    state.contextWindow = payload.contextWindow ?? null;
+    state.mcpServers = payload.mcpServers;
+    state.commands = payload.commands;
     state.eventsStream = stream;
     state.streamVersion += 1;
     return { info: payload.info, history };
@@ -443,10 +409,8 @@ export const createTuiClient = async (
           error: message ?? (text || `set model failed (${res.status})`),
         };
       }
-      const body = tryParseJson(text) as
-        | { model?: unknown; contextWindow?: unknown }
-        | undefined;
-      const contextWindow = typeof body?.contextWindow === "number" &&
+      const body = decode(SetModelResponse)(tryParseJson(text));
+      const contextWindow = typeof body.contextWindow === "number" &&
           Number.isFinite(body.contextWindow) && body.contextWindow > 0
         ? body.contextWindow
         : undefined;
@@ -454,7 +418,7 @@ export const createTuiClient = async (
       if (contextWindow !== undefined) state.contextWindow = contextWindow;
       return {
         ok: true,
-        ...(typeof body?.model === "string" ? { model: body.model } : {}),
+        model: body.model,
         ...(contextWindow !== undefined ? { contextWindow } : {}),
       };
     } catch (err) {
@@ -484,11 +448,8 @@ export const createTuiClient = async (
           error: message ?? (text || `set effort failed (${res.status})`),
         };
       }
-      const body = tryParseJson(text) as { effort?: unknown } | undefined;
-      return {
-        ok: true,
-        ...(typeof body?.effort === "string" ? { effort: body.effort } : {}),
-      };
+      const body = decode(SetEffortResponse)(tryParseJson(text));
+      return { ok: true, effort: body.effort };
     } catch (err) {
       return {
         ok: false,

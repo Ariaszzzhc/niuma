@@ -65,8 +65,8 @@ export const ABORTED_TOOL_OUTPUT = "aborted";
 
 // Append the provider-message projection of a single event (when message-
 // relevant) onto `out`. Shared by eventsToMessages (full replay) and the agent
-// loop's incremental mirror (Fix D: replay once per turn, then maintain the
-// message list by mirroring each appended event). Metadata event types
+// loop's incremental mirror (replay once per turn, then maintain the message
+// list by mirroring each appended event). Metadata event types
 // (turn/approval/error/tool.call.requested) hit `default` and are no-ops
 // here — they carry no provider message. compaction.performed is the one
 // metadata event with a projection effect (see its case below).
@@ -118,23 +118,19 @@ export const projectEvent = (
       break;
     }
     case "compaction.performed": {
-      // Cross-turn compaction persistence: a summary-bearing event folds
-      // everything projected so far into a single bridge user message
+      // Cross-turn compaction persistence folds everything projected so far
+      // into a single bridge user message
       // (SUMMARY_PREFIX + "\n" + body, the isSummaryMessage convention) and
-      // projection continues from there. Events without `summary` (written
-      // before compaction was persisted) are ignored — the in-turn
-      // compaction they recorded stays in-turn-only, as before.
+      // projection continues from there.
       //
       // Compaction only fires at a sampling boundary, so no tool_call is
       // pending at this point and nothing is orphaned by the fold; a
       // tool.result for a call cut by the fold is handled by the orphan
       // rules in the tool.result case (dropped unless another call is
       // still pending).
-      const body = ev.data.summary;
-      if (body === undefined) break;
       out.splice(0, out.length, {
         role: "user",
-        content: `${SUMMARY_PREFIX}\n${body}`,
+        content: `${SUMMARY_PREFIX}\n${ev.data.summary}`,
       });
       break;
     }

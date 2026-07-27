@@ -14,7 +14,7 @@
 // All diagnostics (tool call logs, errors, approval prompts) go to stderr
 // so stdout contains exactly the final assistant text.
 
-import { parseSseStream } from "./sse.ts";
+import { decode, parseSseStream, SseEvent as WireSseEvent } from "@niuma/schema";
 import { readStdinLine } from "./stdin.ts";
 
 // Fake host used by the tunnel — Hono routes on the path; the host is
@@ -127,26 +127,15 @@ export const runOneshot = async (
       // Heartbeat from the events handler — ignore.
       if (frame.event === "ping") continue;
 
-      let payload: unknown = undefined;
-      if (frame.data.length > 0) {
-        try {
-          payload = JSON.parse(frame.data);
-        } catch {
-          // Malformed frame; skip. Should not happen for recorded events.
-          continue;
-        }
-      }
-      // The payload is a recorded or live event envelope. We pull fields
-      // out by name; precise typing isn't worth the union-narrowing churn
-      // because we only consume a handful of variants.
-      const ev = payload as
-        | {
-          type?: string;
-          data?: Record<string, unknown>;
-        }
-        | undefined;
-      const type = ev?.type ?? frame.event;
-      const data = ev?.data ?? {};
+      const event = decode(WireSseEvent)({
+        cursor: Number(frame.id),
+        event: JSON.parse(frame.data),
+      }).event;
+      // The frame has been validated against the closed recorded/live event
+      // union. One-shot mode consumes only a few variants and deliberately
+      // ignores the rest below.
+      const type = event.type;
+      const data = event.data as Readonly<Record<string, unknown>>;
 
       switch (type) {
         case "assistant.message": {

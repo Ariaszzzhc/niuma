@@ -161,7 +161,7 @@ Deno.test({
     await Effect.runPromise(kernel.append({
       type: "session.created",
       sessionId: "sse_smoke",
-      data: { workspace: "/tmp", model: "smoke-model" },
+      data: { workspace: "/tmp", model: "smoke-model", mcpServers: [] },
     }));
     await Effect.runPromise(kernel.append({
       type: "user.message",
@@ -210,7 +210,7 @@ Deno.test({
     await Effect.runPromise(kernel.append({
       type: "session.created",
       sessionId: "sse_live",
-      data: { workspace: "/tmp", model: "smoke-model" },
+      data: { workspace: "/tmp", model: "smoke-model", mcpServers: [] },
     }));
 
     const res = await app.fetch(

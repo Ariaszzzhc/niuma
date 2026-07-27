@@ -45,8 +45,8 @@ const pathOf = (input: unknown): string | undefined => {
   return typeof p === "string" ? p : undefined;
 };
 
-// v0 template summary: files touched (from tool.call.requested), notable bash
-// commands, and the last known plan/TODO state (from update_plan calls).
+// Deterministic template summary: files touched (from tool.call.requested),
+// notable bash commands, and the last known plan state (from update_plan calls).
 export function buildSummary(events: ReadonlyArray<RecordedEvent>): string {
   const wrote = new Set<string>();
   const read = new Set<string>();
@@ -84,7 +84,7 @@ export function buildSummary(events: ReadonlyArray<RecordedEvent>): string {
       `Commands run (${bash.length}): ${bash.slice(-8).join(" ; ")}`,
     );
   }
-  if (lastPlan) lines.push(`Current plan/TODO: ${lastPlan}`);
+  if (lastPlan) lines.push(`Current plan: ${lastPlan}`);
   lines.push(
     "Continue the task using the recent messages below and this summary.",
   );

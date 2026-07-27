@@ -2,6 +2,16 @@ import { Hono } from "hono";
 import type { Context as HonoContext } from "hono";
 import { Layer, ManagedRuntime } from "effect";
 import { VERSION } from "@niuma/config";
+import {
+  CreateSessionRes,
+  decode,
+  EventPage,
+  GetSessionRes,
+  PromptRes,
+  SessionListRes,
+  SetEffortRes,
+  SetModelRes,
+} from "@niuma/schema";
 import { Kernel } from "./kernel.ts";
 import { SessionManager } from "./session.ts";
 import { bootstrap, type BootstrapResult } from "./bootstrap.ts";
@@ -93,25 +103,25 @@ export const createServerApp = async (
   app.post("/sessions", async (c) => {
     const raw = await safeJson(c);
     const out = await handlers.createSession(raw);
-    return c.json(out, 201);
+    return c.json(decode(CreateSessionRes)(out), 201);
   });
 
   app.get("/sessions", async (c) => {
     const list = await handlers.listSessions();
-    return c.json(list);
+    return c.json(decode(SessionListRes)(list));
   });
 
   app.get("/sessions/:id", async (c) => {
     const id = ensureSessionId(c.req.param("id"));
     const out = await handlers.getSession(id);
-    return c.json(out);
+    return c.json(decode(GetSessionRes)(out));
   });
 
   app.post("/sessions/:id/prompt", async (c) => {
     const id = ensureSessionId(c.req.param("id"));
     const raw = await safeJson(c);
     const out = await handlers.prompt(id, raw);
-    return c.json(out, 202);
+    return c.json(decode(PromptRes)(out), 202);
   });
 
   app.post("/sessions/:id/interrupt", async (c) => {
@@ -124,14 +134,14 @@ export const createServerApp = async (
     const id = ensureSessionId(c.req.param("id"));
     const raw = await safeJson(c);
     const out = await handlers.setModel(id, raw);
-    return c.json(out);
+    return c.json(decode(SetModelRes)(out));
   });
 
   app.post("/sessions/:id/effort", async (c) => {
     const id = ensureSessionId(c.req.param("id"));
     const raw = await safeJson(c);
     const out = await handlers.setEffort(id, raw);
-    return c.json(out);
+    return c.json(decode(SetEffortRes)(out));
   });
 
   app.post("/sessions/:id/compact", async (c) => {
@@ -154,7 +164,7 @@ export const createServerApp = async (
   app.get("/sessions/:id/history", async (c) => {
     const id = ensureSessionId(c.req.param("id"));
     const out = await handlers.history(id);
-    return c.json(out);
+    return c.json(decode(EventPage)(out));
   });
 
   app.get("/events", (c) => handleEvents(c, runtime));

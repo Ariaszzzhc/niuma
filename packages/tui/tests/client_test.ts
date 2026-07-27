@@ -40,8 +40,11 @@ const userMessage = (sessionId: string, seq: number): RecordedEvent => ({
   ts: seq,
   sessionId,
   type: "user.message",
-  data: { text: `msg ${seq}`, sourceText: `msg ${seq}` },
-} as unknown as RecordedEvent);
+  data: {
+    parts: [{ type: "text", text: `msg ${seq}` }],
+    sourceText: `msg ${seq}`,
+  },
+});
 
 const closedStream = (): ReadableStream<Uint8Array> =>
   new ReadableStream<Uint8Array>({
@@ -74,6 +77,8 @@ const fakeFetch = () => {
         json(
           {
             sessionId: `s${created}`,
+            workspace: "/w",
+            model: "default",
             contextWindow: 100_000 + created,
             mcpServers: [{ id: "fs", toolCount: 3 }],
             commands: [{ name: "review" }],
@@ -93,6 +98,9 @@ const fakeFetch = () => {
         json({
           info: sessionInfo("s_old"),
           history: [userMessage("s_old", 2), userMessage("s_old", 7)],
+          contextWindow: 77_000,
+          mcpServers: [{ id: "old-fs", toolCount: 1 }],
+          commands: [{ name: "old-review" }],
         }),
       );
     }
@@ -217,6 +225,9 @@ Deno.test("resume returns info+history and re-opens the stream after the last se
   assertEquals(history.length, 2);
   assertEquals(client.sessionId, "s_old");
   assertEquals(client.streamVersion, 1);
+  assertEquals(client.contextWindow, 77_000);
+  assertEquals(client.mcpServers, [{ id: "old-fs", toolCount: 1 }]);
+  assertEquals(client.commands, [{ name: "old-review" }]);
   // max(seq) = 7, server replays seq >= cursor => stream opens at cursor 8.
   assertEquals(requests.at(-1), {
     method: "GET",
@@ -238,6 +249,49 @@ Deno.test("a failed resume leaves session and streamVersion untouched", async ()
 
   assertEquals(client.sessionId, "s1");
   assertEquals(client.streamVersion, 0);
+});
+
+Deno.test("session creation rejects success payloads missing required metadata", async () => {
+  const { fetchImpl: baseFetch } = fakeFetch();
+  for (
+    const body of [
+      {
+        sessionId: "bad",
+        workspace: "/w",
+        model: "default",
+        commands: [],
+      },
+      {
+        sessionId: "bad",
+        workspace: "/w",
+        model: "default",
+        mcpServers: [],
+      },
+    ]
+  ) {
+    const malformedFetch = ((
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      if (
+        (init?.method ?? "GET") === "POST" &&
+        String(input) === `${BASE}/sessions`
+      ) {
+        return Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status: 201,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    await assertRejects(
+      () => createTuiClient(malformedFetch, { workspace: "/w" }),
+      Error,
+      "session create error",
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -286,6 +340,37 @@ Deno.test("setEffort posts the effort verbatim", async () => {
     method: "POST",
     url: `${BASE}/sessions/s1/effort`,
   });
+});
+
+Deno.test("model and effort reject malformed success payloads", async () => {
+  const { fetchImpl: baseFetch } = fakeFetch();
+  const malformedFetch = ((
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const url = String(input);
+    if (
+      (init?.method ?? "GET") === "POST" &&
+      (url.endsWith("/model") || url.endsWith("/effort"))
+    ) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  const client = await createTuiClient(malformedFetch, { workspace: "/w" });
+
+  const model = await client.setModel("m2");
+  assertEquals(model.ok, false);
+  assert(model.error !== undefined);
+  assertEquals(client.contextWindow, 100_001);
+
+  const effort = await client.setEffort("high");
+  assertEquals(effort.ok, false);
+  assert(effort.error !== undefined);
 });
 
 Deno.test("compact reports accepted, then turn_in_flight on the busy session", async () => {
