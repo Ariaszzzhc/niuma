@@ -15,8 +15,8 @@
 // The modal is a rounded box centered on screen. Tool name is shown in a
 // warning color; the option row lists the decisions (y/a/n shortcuts plus
 // ↑/↓ + enter navigation — the selected item is reverse-video). Local
-// `ApprovalTheme` keeps this independent of the A-side `Theme` — `app.ts`
-// adapts.
+// `ApprovalTheme` keeps the renderer independent of the application theme;
+// `app.ts` adapts between them.
 // ===========================================================================
 
 import {
@@ -49,7 +49,7 @@ export const APPROVAL_OPTIONS = [
   { key: "n", label: "no, reject", decision: "reject" },
 ] as const;
 
-/** Colors the approval modal needs. Decoupled from the A-side `Theme`. */
+/** Focused color interface needed by the approval modal. */
 export interface ApprovalTheme {
   readonly border: Color;
   readonly warning: Color;

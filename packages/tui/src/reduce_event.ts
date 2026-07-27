@@ -4,20 +4,21 @@
 // `reduceEvent(model, ev)` is the single place that turns a server event
 // envelope into model state. It is exhaustively table-driven over every event
 // type the server emits (recorded + live), and PURE: no IO, no rendering, no
-// imports from the A-side view components. That keeps it unit-testable in
+// imports from view components. That keeps it unit-testable in
 // isolation — `reduce_event_test.ts` feeds canned event sequences and asserts
 // on the model without touching the terminal or the native lib.
 //
 // The model carries the raw conversation data (messages, streaming text, tool
-// calls, notices) plus turn/approval state. The A-side `app.ts` view layer
+// calls, notices) plus turn/approval state. The `app.ts` view layer
 // adapts this model into the shapes `renderTranscript` / `renderToolCall` /
 // `renderStatusline` expect (interlock note: `TuiToolCall` / `TuiMessage` are
 // the structural source of truth the view reads).
 //
-// Event envelope shape: `{ type, data }` — exactly what `client.ts` extracts
-// from each SSE frame (`payload.type ?? frame.event`, `payload.data ?? {}`),
-// matching how `packages/cli/src/run.ts` reads events.
+// Event envelope shape: the closed RecordedEvent | LiveEvent union from
+// @niuma/schema. app.ts validates each wire frame before it reaches this reducer.
 // ===========================================================================
+
+import type { LiveEvent, RecordedEvent } from "@niuma/schema";
 
 // ---------------------------------------------------------------------------
 // Model types
@@ -105,13 +106,10 @@ export interface TuiModelState {
 }
 
 // ---------------------------------------------------------------------------
-// Event envelope type (the shape client.ts delivers)
+// Event envelope type (the validated shape app.ts delivers)
 // ---------------------------------------------------------------------------
 
-export interface SseEvent {
-  readonly type: string;
-  readonly data: Readonly<Record<string, unknown>>;
-}
+export type SseEvent = RecordedEvent | LiveEvent;
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -294,15 +292,14 @@ const flushStreaming = (model: TuiModelState): TuiModelState => {
 // ---------------------------------------------------------------------------
 
 /**
- * Pure reducer over a single SSE event. Returns the next model. Unknown event
- * types are a no-op (forward-compatible: new server events never break the
- * TUI, they just render as "nothing changed" until explicitly handled).
+ * Pure reducer over one schema-validated SSE event. The exhaustive switch
+ * makes a new server event a compile-time obligation.
  */
 export const reduceEvent = (
   model: TuiModelState,
   ev: SseEvent,
 ): TuiModelState => {
-  const d = ev.data;
+  const d = ev.data as Readonly<Record<string, unknown>>;
 
   switch (ev.type) {
     // -- session lifecycle -------------------------------------------------
@@ -490,7 +487,7 @@ export const reduceEvent = (
     case "compaction.performed": {
       // Surface the mode ("llm" / "template"); data.summary is projection
       // material, never display text.
-      const mode = asString(d["mode"]);
+      const mode = ev.data.mode;
       return {
         ...model,
         compactionCount: model.compactionCount + 1,
@@ -499,9 +496,7 @@ export const reduceEvent = (
           {
             id: nextId("n"),
             kind: "compaction",
-            text: mode !== null
-              ? `context compacted (${mode})`
-              : "context compacted",
+            text: `context compacted (${mode})`,
           },
         ],
       };
@@ -543,10 +538,13 @@ export const reduceEvent = (
       };
     }
 
-    // -- subagent / future events: no-op -----------------------------------
+    // -- subagent lifecycle: currently has no dedicated row ----------------
     case "subagent.spawned":
-    default:
       return model;
+    default: {
+      const exhaustive: never = ev;
+      return exhaustive;
+    }
   }
 };
 

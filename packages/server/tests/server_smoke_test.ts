@@ -199,7 +199,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "GET /events live tail delivers text.delta after replay drains",
+  name: "GET /events preserves live events across the replay handoff",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
@@ -236,12 +236,8 @@ Deno.test({
       `replay frame never arrived: ${chunk.slice(0, 200)}`,
     );
 
-    // The bounded PubSub drops events published before the subscriber
-    // attaches, and the handler's `subscribe` runs after replay drains — give
-    // the live tail a tick to attach before emitting. Then emit through the
-    // kernel: if subscribe() merges the live PubSub, the delta shows up as an
-    // SSE frame promptly.
-    await new Promise((r) => setTimeout(r, 100));
+    // The subscription is acquired before replay, so publishing immediately
+    // after observing the replay frame must still reach this response.
     await Effect.runPromise(kernel.live({
       type: "text.delta",
       ts: Date.now(),

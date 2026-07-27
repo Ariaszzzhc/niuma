@@ -71,7 +71,13 @@ impl Cell {
 
     /// Build a cell holding `cluster_bytes` with the given style. Spills when
     /// the cluster exceeds [`INLINE_CAP`].
-    fn with_cluster(cluster_bytes: &[u8], fg: u32, bg: u32, attrs: u16, spills: &mut Vec<String>) -> Self {
+    fn with_cluster(
+        cluster_bytes: &[u8],
+        fg: u32,
+        bg: u32,
+        attrs: u16,
+        spills: &mut Vec<String>,
+    ) -> Self {
         if cluster_bytes.len() <= INLINE_CAP {
             let mut inline = [0u8; INLINE_CAP];
             inline[..cluster_bytes.len()].copy_from_slice(cluster_bytes);
@@ -98,7 +104,6 @@ impl Cell {
             }
         }
     }
-
 }
 
 /// A `w * h` cell grid. Layout is private to this crate; the FFI surface
@@ -219,7 +224,7 @@ impl Frame {
                 let cluster_bytes = &s.as_bytes()[g.start..g.end];
                 let gw = g.width;
                 // Drop a cluster that would straddle the right edge.
-                if cur_col.checked_add(gw).map_or(true, |end| end > w) {
+                if cur_col.checked_add(gw).is_none_or(|end| end > w) {
                     // Leftover single cell at the edge when a width-2 cluster
                     // no longer fits: blank it so no stale glyph remains.
                     if cur_col < w && gw > 1 {
@@ -430,7 +435,11 @@ mod tests {
     #[test]
     fn clear_resets_cells() {
         let mut f = Frame::new(4, 1).unwrap();
-        f.write_line(0, 0, &[span("ab", color_rgb(1, 1, 1), color_default(), ATTR_BOLD)]);
+        f.write_line(
+            0,
+            0,
+            &[span("ab", color_rgb(1, 1, 1), color_default(), ATTR_BOLD)],
+        );
         f.clear();
         assert_eq!(f.cluster_bytes(0, 0), b" ");
         assert_eq!(f.cell(0, 0).fg, color_default());

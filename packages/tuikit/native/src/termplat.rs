@@ -92,7 +92,8 @@ mod imp {
                 Some(mode) => {
                     SAVED_OUT_MODE.store(mode, Ordering::SeqCst);
                     HAVE_OUT_MODE.store(true, Ordering::SeqCst);
-                    let e = write_mode(STD_OUTPUT_HANDLE, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                    let e =
+                        write_mode(STD_OUTPUT_HANDLE, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
                     if err == 0 {
                         err = e;
                     }

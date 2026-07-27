@@ -18,14 +18,13 @@
 //! that to the contract's bit 3 (value 8); numlock (kitty bit 3) is dropped.
 
 use crate::abi::{
-    KeyEventRec, KEY_CODE_BACKSPACE, KEY_CODE_DELETE, KEY_CODE_DOWN, KEY_CODE_END,
-    KEY_CODE_ENTER, KEY_CODE_F1, KEY_CODE_F2, KEY_CODE_F3, KEY_CODE_F4, KEY_CODE_F5,
-    KEY_CODE_F6, KEY_CODE_F7, KEY_CODE_F8, KEY_CODE_F9, KEY_CODE_F10, KEY_CODE_F11,
-    KEY_CODE_F12, KEY_CODE_HOME, KEY_CODE_INSERT, KEY_CODE_LEFT, KEY_CODE_PAGE_DOWN,
-    KEY_CODE_PAGE_UP, KEY_CODE_RIGHT, KEY_CODE_TAB, KEY_CODE_UP, KEY_EVENT_LEGACY,
-    KEY_EVENT_PRESS, KEY_EVENT_RELEASE, KEY_KIND_ESC, KEY_KIND_KEY, KEY_KIND_MOUSE,
-    KEY_KIND_PASTE, MOD_ALT, MOD_CTRL, MOD_SHIFT, MOD_SUPER, MOUSE_WHEEL_DOWN,
-    MOUSE_WHEEL_UP,
+    KeyEventRec, KEY_CODE_BACKSPACE, KEY_CODE_DELETE, KEY_CODE_DOWN, KEY_CODE_END, KEY_CODE_ENTER,
+    KEY_CODE_F1, KEY_CODE_F10, KEY_CODE_F11, KEY_CODE_F12, KEY_CODE_F2, KEY_CODE_F3, KEY_CODE_F4,
+    KEY_CODE_F5, KEY_CODE_F6, KEY_CODE_F7, KEY_CODE_F8, KEY_CODE_F9, KEY_CODE_HOME,
+    KEY_CODE_INSERT, KEY_CODE_LEFT, KEY_CODE_PAGE_DOWN, KEY_CODE_PAGE_UP, KEY_CODE_RIGHT,
+    KEY_CODE_TAB, KEY_CODE_UP, KEY_EVENT_LEGACY, KEY_EVENT_PRESS, KEY_EVENT_RELEASE, KEY_KIND_ESC,
+    KEY_KIND_KEY, KEY_KIND_MOUSE, KEY_KIND_PASTE, MOD_ALT, MOD_CTRL, MOD_SHIFT, MOD_SUPER,
+    MOUSE_WHEEL_DOWN, MOUSE_WHEEL_UP,
 };
 
 // ---------------------------------------------------------------------------
@@ -43,16 +42,40 @@ pub(crate) struct Event {
 
 impl Event {
     fn key(code: u16, mods: u8) -> Self {
-        Event { kind: KEY_KIND_KEY, event_type: KEY_EVENT_LEGACY, key_code: code, mods, payload: Vec::new() }
+        Event {
+            kind: KEY_KIND_KEY,
+            event_type: KEY_EVENT_LEGACY,
+            key_code: code,
+            mods,
+            payload: Vec::new(),
+        }
     }
     fn text(bytes: Vec<u8>, mods: u8) -> Self {
-        Event { kind: KEY_KIND_KEY, event_type: KEY_EVENT_LEGACY, key_code: 0, mods, payload: bytes }
+        Event {
+            kind: KEY_KIND_KEY,
+            event_type: KEY_EVENT_LEGACY,
+            key_code: 0,
+            mods,
+            payload: bytes,
+        }
     }
     fn esc() -> Self {
-        Event { kind: KEY_KIND_ESC, event_type: KEY_EVENT_LEGACY, key_code: 0, mods: 0, payload: Vec::new() }
+        Event {
+            kind: KEY_KIND_ESC,
+            event_type: KEY_EVENT_LEGACY,
+            key_code: 0,
+            mods: 0,
+            payload: Vec::new(),
+        }
     }
     fn paste(body: Vec<u8>) -> Self {
-        Event { kind: KEY_KIND_PASTE, event_type: KEY_EVENT_LEGACY, key_code: 0, mods: 0, payload: body }
+        Event {
+            kind: KEY_KIND_PASTE,
+            event_type: KEY_EVENT_LEGACY,
+            key_code: 0,
+            mods: 0,
+            payload: body,
+        }
     }
     /// SGR mouse report. `pos` is packed into the payload as 4 LE bytes
     /// `[x, y]` (1-based cells) — see `KEY_KIND_MOUSE` in abi.rs.
@@ -60,7 +83,13 @@ impl Event {
         let mut payload = Vec::with_capacity(4);
         payload.extend_from_slice(&x.to_le_bytes());
         payload.extend_from_slice(&y.to_le_bytes());
-        Event { kind: KEY_KIND_MOUSE, event_type, key_code: button, mods, payload }
+        Event {
+            kind: KEY_KIND_MOUSE,
+            event_type,
+            key_code: button,
+            mods,
+            payload,
+        }
     }
 }
 
@@ -77,16 +106,26 @@ enum St {
     /// `ESC O` — awaiting the single SS3 final byte.
     Ss3,
     /// Inside a bracketed paste; `term` counts matched terminator bytes.
-    Paste { body: Vec<u8>, term: u8 },
+    Paste {
+        body: Vec<u8>,
+        term: u8,
+    },
     /// Assembling one multibyte UTF-8 text codepoint (possibly with mods).
-    Utf8 { buf: [u8; 4], need: u8, have: u8, mods: u8 },
+    Utf8 {
+        buf: [u8; 4],
+        need: u8,
+        have: u8,
+        mods: u8,
+    },
     /// Swallowing an OSC sequence (`ESC ] ... BEL|ESC\`) — terminal REPORTS,
     /// not user input. The kernel delivers a terminal's answer to an OSC
     /// query (background colour, clipboard, …) on the same stdin bytes as
     /// keystrokes. Before this state existed the parser fell back to
     /// Alt+char, leaking replies like `11;rgb:2828/2828/2828` into the
     /// editor as if the user had typed them.
-    Osc { esc: bool },
+    Osc {
+        esc: bool,
+    },
 }
 
 /// Incremental keyboard parser. Re-exported as `abi::KeyParser`.
@@ -99,13 +138,19 @@ pub struct KeyParser {
 
 impl Clone for KeyParser {
     fn clone(&self) -> Self {
-        KeyParser { state: self.state.clone(), esc_pending: self.esc_pending }
+        KeyParser {
+            state: self.state.clone(),
+            esc_pending: self.esc_pending,
+        }
     }
 }
 
 impl Default for KeyParser {
     fn default() -> Self {
-        KeyParser { state: St::Ground, esc_pending: false }
+        KeyParser {
+            state: St::Ground,
+            esc_pending: false,
+        }
     }
 }
 
@@ -174,9 +219,12 @@ impl KeyParser {
                 true
             }
             St::Paste { mut body, mut term } => self.step_paste(b, &mut body, &mut term, events),
-            St::Utf8 { mut buf, need, have, mods } => {
-                self.step_utf8(b, &mut buf, need, have, mods, events)
-            }
+            St::Utf8 {
+                mut buf,
+                need,
+                have,
+                mods,
+            } => self.step_utf8(b, &mut buf, need, have, mods, events),
             St::Osc { esc } => {
                 // Swallow until BEL or the \ of a closing ESC \ (ST).
                 match (esc, b) {
@@ -267,9 +315,14 @@ impl KeyParser {
                 self.state = St::Ground;
                 true
             }
-            0xc2..=0xdf | 0xe0..=0xef | 0xf0..=0xf4 => {
+            0xc2..=0xf4 => {
                 let need = utf8_lead_len(b);
-                self.state = St::Utf8 { buf: [b, 0, 0, 0], need, have: 1, mods: 0 };
+                self.state = St::Utf8 {
+                    buf: [b, 0, 0, 0],
+                    need,
+                    have: 1,
+                    mods: 0,
+                };
                 true
             }
         }
@@ -307,7 +360,12 @@ impl KeyParser {
                 // Alt + multibyte char — start UTF-8 with MOD_ALT.
                 if (0xc2..=0xf4).contains(&c) {
                     let need = utf8_lead_len(c);
-                    self.state = St::Utf8 { buf: [c, 0, 0, 0], need, have: 1, mods: MOD_ALT };
+                    self.state = St::Utf8 {
+                        buf: [c, 0, 0, 0],
+                        need,
+                        have: 1,
+                        mods: MOD_ALT,
+                    };
                 } else {
                     events.push(Event::text(vec![c], MOD_ALT));
                     self.state = St::Ground;
@@ -368,9 +426,7 @@ impl KeyParser {
             b'~' => self.dispatch_tilde(&params, events),
             b'u' => self.dispatch_kitty(body, &params, events),
             // SGR mouse: ESC[<b;x;yM (press/wheel) / m (release).
-            b'M' | b'm' if priv_byte == Some(b'<') => {
-                self.dispatch_mouse(&params, finalb, events)
-            }
+            b'M' | b'm' if priv_byte == Some(b'<') => self.dispatch_mouse(&params, finalb, events),
             // Other mouse forms and unknown finals: consume silently.
             _ => {}
         }
@@ -390,17 +446,31 @@ impl KeyParser {
             return; // hover/drag reports carry no app value yet
         }
         let button: u16 = if wheel {
-            if b & 1 == 0 { MOUSE_WHEEL_UP } else { MOUSE_WHEEL_DOWN }
+            if b & 1 == 0 {
+                MOUSE_WHEEL_UP
+            } else {
+                MOUSE_WHEEL_DOWN
+            }
         } else {
             (b & 3) as u16
         };
         let mut mods = 0u8;
-        if b & 4 != 0 { mods |= MOD_SHIFT; }
-        if b & 8 != 0 { mods |= MOD_ALT; }
-        if b & 16 != 0 { mods |= MOD_CTRL; }
+        if b & 4 != 0 {
+            mods |= MOD_SHIFT;
+        }
+        if b & 8 != 0 {
+            mods |= MOD_ALT;
+        }
+        if b & 16 != 0 {
+            mods |= MOD_CTRL;
+        }
         // Wheel events are instantaneous (arrive only as M); button presses
         // distinguish press (M) from release (m).
-        let event_type = if finalb == b'm' { KEY_EVENT_RELEASE } else { KEY_EVENT_PRESS };
+        let event_type = if finalb == b'm' {
+            KEY_EVENT_RELEASE
+        } else {
+            KEY_EVENT_PRESS
+        };
         if wheel && finalb == b'm' {
             return; // wheel "release" is not a real event
         }
@@ -409,10 +479,17 @@ impl KeyParser {
 
     fn dispatch_tilde(&mut self, params: &[u32], events: &mut Vec<Event>) {
         let keynum = params.first().copied().unwrap_or(0);
-        let mods = if params.len() >= 2 { legacy_decode(params[1]) } else { 0 };
+        let mods = if params.len() >= 2 {
+            legacy_decode(params[1])
+        } else {
+            0
+        };
         // Bracketed-paste start: enter Paste state, emit nothing.
         if keynum == 200 {
-            self.state = St::Paste { body: Vec::new(), term: 0 };
+            self.state = St::Paste {
+                body: Vec::new(),
+                term: 0,
+            };
             return;
         }
         if keynum == 201 {
@@ -452,9 +529,20 @@ impl KeyParser {
             return;
         }
         // seg[0] may contain ':' (key:shifted:base); take the first subfield.
-        let key_cp = segs[0].split(|&c| c == b':').next().and_then(parse_u32_opt).unwrap_or(0);
-        let mods = segs.get(1).and_then(|s| parse_u32_opt(s)).map(kitty_decode).unwrap_or(0);
-        let event_type = segs.get(2).and_then(|s| parse_u32_opt(s)).unwrap_or(KEY_EVENT_PRESS as u32) as u8;
+        let key_cp = segs[0]
+            .split(|&c| c == b':')
+            .next()
+            .and_then(parse_u32_opt)
+            .unwrap_or(0);
+        let mods = segs
+            .get(1)
+            .and_then(|s| parse_u32_opt(s))
+            .map(kitty_decode)
+            .unwrap_or(0);
+        let event_type = segs
+            .get(2)
+            .and_then(|s| parse_u32_opt(s))
+            .unwrap_or(KEY_EVENT_PRESS as u32) as u8;
 
         // Optional text codepoints in the last segment (colon-separated), only
         // when present (>= 4 segments).
@@ -477,22 +565,46 @@ impl KeyParser {
             9 => Some(KEY_CODE_TAB),
             127 | 8 => Some(KEY_CODE_BACKSPACE),
             27 => {
-                events.push(Event { kind: KEY_KIND_ESC, event_type, key_code: 0, mods, payload: Vec::new() });
+                events.push(Event {
+                    kind: KEY_KIND_ESC,
+                    event_type,
+                    key_code: 0,
+                    mods,
+                    payload: Vec::new(),
+                });
                 return;
             }
             _ => None,
         };
         if let Some(code) = named {
-            events.push(Event { kind: KEY_KIND_KEY, event_type, key_code: code, mods, payload: Vec::new() });
+            events.push(Event {
+                kind: KEY_KIND_KEY,
+                event_type,
+                key_code: code,
+                mods,
+                payload: Vec::new(),
+            });
             return;
         }
         // Printable: prefer explicit text, else encode the key codepoint.
         if !text.is_empty() {
-            events.push(Event { kind: KEY_KIND_KEY, event_type, key_code: 0, mods, payload: text });
+            events.push(Event {
+                kind: KEY_KIND_KEY,
+                event_type,
+                key_code: 0,
+                mods,
+                payload: text,
+            });
         } else if let Some(c) = char::from_u32(key_cp) {
             let mut b = [0u8; 4];
             let s = c.encode_utf8(&mut b);
-            events.push(Event { kind: KEY_KIND_KEY, event_type, key_code: 0, mods, payload: s.as_bytes().to_vec() });
+            events.push(Event {
+                kind: KEY_KIND_KEY,
+                event_type,
+                key_code: 0,
+                mods,
+                payload: s.as_bytes().to_vec(),
+            });
         }
         // Unknown kitty function-key codepoint → drop.
     }
@@ -512,7 +624,10 @@ impl KeyParser {
                 events.push(Event::paste(payload));
                 self.state = St::Ground;
             } else {
-                self.state = St::Paste { body: std::mem::take(body), term: *term };
+                self.state = St::Paste {
+                    body: std::mem::take(body),
+                    term: *term,
+                };
             }
             // Terminator bytes are not part of the paste body.
             return true;
@@ -525,7 +640,10 @@ impl KeyParser {
         } else {
             body.push(b);
         }
-        self.state = St::Paste { body: std::mem::take(body), term: *term };
+        self.state = St::Paste {
+            body: std::mem::take(body),
+            term: *term,
+        };
         true
     }
 
@@ -546,7 +664,12 @@ impl KeyParser {
                 events.push(Event::text(payload, mods));
                 self.state = St::Ground;
             } else {
-                self.state = St::Utf8 { buf: *buf, need, have: have2, mods };
+                self.state = St::Utf8 {
+                    buf: *buf,
+                    need,
+                    have: have2,
+                    mods,
+                };
             }
             true
         } else {
@@ -599,7 +722,7 @@ fn parse_u32_opt(bytes: &[u8]) -> Option<u32> {
     }
     let mut v = 0u32;
     for &c in bytes {
-        if !(b'0'..=b'9').contains(&c) {
+        if !c.is_ascii_digit() {
             return None;
         }
         v = v.checked_mul(10)?.checked_add((c - b'0') as u32)?;
@@ -761,9 +884,9 @@ pub(crate) fn keys_feed_impl(
 mod tests {
     use super::*;
     use crate::abi::{
-        tuikit_keys_create, tuikit_keys_feed, tuikit_keys_free, KEY_EVENT_PRESS,
-        KEY_EVENT_RELEASE, KEY_KIND_ESC, KEY_KIND_KEY, KEY_KIND_MOUSE, KEY_KIND_PASTE,
-        KEY_CODE_ENTER, MOD_ALT, MOD_CTRL, MOD_SHIFT, MOUSE_WHEEL_DOWN, MOUSE_WHEEL_UP,
+        tuikit_keys_create, tuikit_keys_feed, tuikit_keys_free, KEY_CODE_ENTER, KEY_EVENT_PRESS,
+        KEY_EVENT_RELEASE, KEY_KIND_ESC, KEY_KIND_KEY, KEY_KIND_MOUSE, KEY_KIND_PASTE, MOD_ALT,
+        MOD_CTRL, MOD_SHIFT, MOUSE_WHEEL_DOWN, MOUSE_WHEEL_UP,
     };
 
     /// Feed bytes through a fresh parser; return decoded events.
@@ -845,7 +968,12 @@ mod tests {
         // Every byte in the continuation range 0x80..=0xbf is dropped on its own.
         for byte in [0x80u8, 0xbf, 0xa0, 0x90] {
             let ev = run(std::slice::from_ref(&byte));
-            assert!(ev.is_empty(), "0x{:02x} should be dropped, got {:?}", byte, ev);
+            assert!(
+                ev.is_empty(),
+                "0x{:02x} should be dropped, got {:?}",
+                byte,
+                ev
+            );
         }
     }
 
@@ -855,7 +983,12 @@ mod tests {
         // can never start a valid sequence — drop them silently.
         for byte in [0xc0u8, 0xc1, 0xf5, 0xfb, 0xff] {
             let ev = run(std::slice::from_ref(&byte));
-            assert!(ev.is_empty(), "0x{:02x} should be dropped, got {:?}", byte, ev);
+            assert!(
+                ev.is_empty(),
+                "0x{:02x} should be dropped, got {:?}",
+                byte,
+                ev
+            );
         }
         // And a run of garbage between valid bytes: only the valid bytes emit.
         let ev = run(&[b'x', 0xfe, 0xc0, b'y']);
@@ -1009,7 +1142,12 @@ mod tests {
     #[test]
     fn bracketed_paste_split_every_byte() {
         let mut p = KeyParser::new();
-        let seq: Vec<u8> = [b"\x1b[200~".as_ref(), b"abc".as_ref(), b"\x1b[201~".as_ref()].concat();
+        let seq: Vec<u8> = [
+            b"\x1b[200~".as_ref(),
+            b"abc".as_ref(),
+            b"\x1b[201~".as_ref(),
+        ]
+        .concat();
         let mut got = Vec::new();
         for b in &seq {
             got.extend(p.feed(std::slice::from_ref(b)));
@@ -1050,7 +1188,10 @@ mod tests {
         assert_eq!(ev[0].kind, KEY_KIND_MOUSE);
         assert_eq!(ev[0].key_code, MOUSE_WHEEL_UP);
         assert_eq!(ev[0].event_type, KEY_EVENT_PRESS);
-        assert_eq!(ev[0].payload, [10u16, 5u16].map(|v| v.to_le_bytes()).concat());
+        assert_eq!(
+            ev[0].payload,
+            [10u16, 5u16].map(|v| v.to_le_bytes()).concat()
+        );
 
         let ev = run(b"\x1b[<65;1;1M");
         assert_eq!(ev[0].key_code, MOUSE_WHEEL_DOWN);
@@ -1112,7 +1253,8 @@ mod tests {
     fn feed_ffi(p: *mut crate::abi::KeyParser, bytes: &[u8]) -> Vec<u8> {
         let mut cap = 256u32;
         let mut buf = vec![0u8; cap as usize];
-        let mut total = tuikit_keys_feed(p, bytes.as_ptr(), bytes.len() as u32, buf.as_mut_ptr(), cap);
+        let mut total =
+            tuikit_keys_feed(p, bytes.as_ptr(), bytes.len() as u32, buf.as_mut_ptr(), cap);
         while total as u32 > cap {
             cap = total as u32;
             buf = vec![0u8; cap as usize];
@@ -1161,13 +1303,22 @@ mod tests {
         assert_eq!(buf[4], KEY_KIND_PASTE);
         let text_len = u16::from_le_bytes([buf[4 + 6], buf[4 + 7]]);
         let text_ofs = u32::from_le_bytes([buf[4 + 8], buf[4 + 9], buf[4 + 10], buf[4 + 11]]);
-        assert_eq!(&buf[text_ofs as usize..(text_ofs as usize + text_len as usize)], b"pasted");
+        assert_eq!(
+            &buf[text_ofs as usize..(text_ofs as usize + text_len as usize)],
+            b"pasted"
+        );
         tuikit_keys_free(p);
     }
 
     #[test]
     fn null_handle_returns_neg1() {
-        let r = keys_feed_impl(std::ptr::null_mut(), b"x".as_ptr(), 1, std::ptr::null_mut(), 0);
+        let r = keys_feed_impl(
+            std::ptr::null_mut(),
+            b"x".as_ptr(),
+            1,
+            std::ptr::null_mut(),
+            0,
+        );
         assert_eq!(r, -1);
     }
 
@@ -1196,6 +1347,11 @@ mod tests {
     fn osc_report_then_typing_survives() {
         // The reply must not eat the keystrokes that follow it.
         let ev = run(b"\x1b]11;rgb:2828/2828/2828\x07hi");
-        assert_eq!(ev.len(), 2, "expected the two text events after the report: {:?}", ev);
+        assert_eq!(
+            ev.len(),
+            2,
+            "expected the two text events after the report: {:?}",
+            ev
+        );
     }
 }

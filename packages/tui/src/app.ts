@@ -1,22 +1,13 @@
 // ===========================================================================
-// @niuma/tui — the TEA Program (app.ts, INPUT/ORCHESTRATION half)
+// @niuma/tui — the TEA Program
 // ---------------------------------------------------------------------------
 // Wires the input components (editor / palette / approval / completion menu)
 // and the SSE reducer (`reduce_event.ts`) into one `Program<AppModel, Msg>`
 // for `@niuma/tuikit`'s `run`. Owns the full-screen layout (transcript /
 // statusline / editor), stamps the slash-command completion menu above the
 // editor, and overlays the palette + approval modal on a dimmed base scene.
-//
-// INTERLOCK (A-side, owned by a parallel agent — imported, not stubbed):
-//   - renderTranscript(state: TranscriptState, w, h, theme)       [transcript.ts]
-//   - renderToolCall(call: ToolCallView, w, theme)                [tool_call.ts]
-//   - renderStatusline(view: StatusView, w, theme)                [statusline.ts]
-//   - Theme / pickTheme / detectTerminalBg                        [theme.ts]
-// This file ADAPTS this package's data model (`TuiModelState` from
-// reduce_event.ts) into the view-models those renderers expect. The exact
-// field shapes of `TranscriptState` / `ToolCallView` / `StatusView` are the
-// reconciliation surface; `app.ts` therefore type-checks only once the A-side
-// modules land with matching shapes (expected mid-run friction).
+// This module adapts `TuiModelState` into the focused view models consumed by
+// the transcript, tool-call, and statusline renderers.
 // ===========================================================================
 
 import {
@@ -33,13 +24,13 @@ import {
   tick,
 } from "@niuma/tuikit";
 
-// -- B-side (this package) ---------------------------------------------------
+// -- input and orchestration -------------------------------------------------
 import {
   createEditorState,
   editorIsEmpty,
   editorReducer,
-  editorText,
   type EditorState,
+  editorText,
   renderEditor,
   setEditorText,
 } from "./components/editor.ts";
@@ -93,8 +84,7 @@ import {
   SseEvent as WireSseEvent,
 } from "@niuma/schema";
 
-// -- A-side view layer (parallel agent) --------------------------------------
-// Imported by signature; shapes reconciled against the landed modules.
+// -- view layer --------------------------------------------------------------
 import type { Theme } from "./theme.ts";
 import {
   type ChatMessage,
@@ -115,7 +105,7 @@ import {
 // Local theme adapters (EditorTheme / ApprovalTheme / PaletteTheme -> Theme)
 // ---------------------------------------------------------------------------
 
-/** Semantic colors the input components need, derived from the A-side Theme.
+/** Semantic colors the input components need, derived from the shared Theme.
  *  `placeholder`/`prompt` have no direct Theme slot, so we reuse textDim /
  *  accent (the closest semantic match). */
 interface ThemeColors {
@@ -149,10 +139,17 @@ type PromptedMsg = {
   readonly status: number;
   readonly body: string;
 };
-type ApprovalReplyMsg = { readonly type: "tui:approval"; readonly ok: boolean };
+type ApprovalReplyMsg = {
+  readonly type: "tui:approval";
+  readonly ok: boolean;
+  readonly status: number;
+  readonly body: string;
+};
 type InterruptDoneMsg = {
   readonly type: "tui:interrupt";
   readonly ok: boolean;
+  readonly status: number;
+  readonly body: string;
 };
 type GitTickMsg = { readonly type: "tuikit:git-tick"; readonly n: number };
 type GitMsg = { readonly type: "tui:git"; readonly status: GitStatus | null };
@@ -248,7 +245,7 @@ interface AppModel {
 // Spinner
 // ---------------------------------------------------------------------------
 
-// The app advances `spinnerFrame` on each TickMsg; the A-side statusline and
+// The app advances `spinnerFrame` on each TickMsg; the statusline and
 // tool_call components map that index to a braille glyph themselves, so no
 // frame table is needed here.
 
@@ -398,7 +395,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     },
   });
 
-  /** Map our TuiToolCall to the A-side ToolCallView (structural interlock).
+  /** Map TuiToolCall state to the renderer's focused ToolCallView.
    *  `denied` maps to `error`; `durationMs` is omitted while still running. */
   const toToolCallView = (c: TuiToolCall): ToolCallView => {
     const status: ToolCallView["status"] = c.status === "running"
@@ -441,7 +438,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
   };
 
   /**
-   * Build the A-side TranscriptState from our model (structural interlock).
+   * Build the transcript renderer state from the application model.
    *
    * `followTail` / `scrollOffset` are the AUTHORITATIVE scroll fields stored on
    * the model (advanced only by `applyTranscriptScroll` / reset on esc+clear).
@@ -591,7 +588,12 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           cleared,
           cmd(async () => {
             const r = await client.approve(approvalId, decision, feedback);
-            return { type: "tui:approval", ok: r.ok } as Msg;
+            return {
+              type: "tui:approval",
+              ok: r.ok,
+              status: r.status,
+              body: r.body,
+            } as Msg;
           }),
         ];
       };
@@ -731,7 +733,12 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           model,
           cmd(async () => {
             const r = await client.interrupt();
-            return { type: "tui:interrupt", ok: r.ok } as Msg;
+            return {
+              type: "tui:interrupt",
+              ok: r.ok,
+              status: r.status,
+              body: r.body,
+            } as Msg;
           }),
         ];
       }
@@ -822,7 +829,12 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           model,
           cmd(async () => {
             const r = await client.interrupt();
-            return { type: "tui:interrupt", ok: r.ok } as Msg;
+            return {
+              type: "tui:interrupt",
+              ok: r.ok,
+              status: r.status,
+              body: r.body,
+            } as Msg;
           }),
         ];
       }
@@ -929,7 +941,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
    */
   const acceptCompletion = (
     model: AppModel,
-    menu: { readonly items: readonly CompletionCandidate[]; readonly selected: number },
+    menu: {
+      readonly items: readonly CompletionCandidate[];
+      readonly selected: number;
+    },
     submit: boolean,
   ): readonly [AppModel, ...Cmd<Msg>[]] => {
     const item = menu.items[menu.selected];
@@ -1318,21 +1333,18 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
 
       case "tui:approval":
         if (msg.ok) return [model];
-        return [
-          {
-            ...model,
-            state: {
-              ...model.state,
-              notices: [
-                ...model.state.notices,
-                notice("approval POST failed", "error"),
-              ],
-            },
-          },
-        ];
+        return [withNotice(
+          model,
+          `approval failed (${msg.status}) ${msg.body}`,
+          "error",
+        )];
 
       case "tui:interrupt":
-        return [model];
+        return msg.ok ? [model] : [withNotice(
+          model,
+          `interrupt failed (${msg.status}) ${msg.body}`,
+          "error",
+        )];
 
       case "tui:command":
         return applyCommandOutcome(model, msg.outcome);

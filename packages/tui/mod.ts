@@ -12,18 +12,17 @@
 // Sources live under `src/` (house style), so internal imports carry the
 // `./src/` prefix — exactly how `packages/tuikit/mod.ts` reaches its modules.
 //
-// Currency types for the INPUT/ORCHESTRATION half are re-exported here. The
-// A-side render primitives (renderTranscript / renderToolCall / renderBanner /
-// renderStatusline / Theme) are owned by a parallel agent and imported by
-// `app.ts` directly; they are not re-exported here.
+// Input component currency types are re-exported here. Internal render
+// primitives are composed by `app.ts` and are not part of this package's
+// public surface.
 // ===========================================================================
 
 import { run, Terminal, type TerminalCaps } from "@niuma/tuikit";
 
-// -- A-side theme (parallel agent) ------------------------------------------
+// -- theme -------------------------------------------------------------------
 import { detectTerminalBg, pickTheme } from "./src/theme.ts";
 
-// -- B-side (this package) --------------------------------------------------
+// -- application -------------------------------------------------------------
 import { buildProgram } from "./src/app.ts";
 import { createTuiClient, type TuiClient } from "./src/client.ts";
 

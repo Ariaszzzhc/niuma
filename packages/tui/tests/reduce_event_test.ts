@@ -2,8 +2,8 @@
 // @niuma/tui — reduce_event table tests
 // ---------------------------------------------------------------------------
 // Feeds canned SSE event sequences through `reduceEvent` / `reduceEventSequence`
-// and asserts on the resulting model. Pure: no terminal, no native lib, no
-// A-side imports — so these run standalone.
+// and asserts on the resulting model. Pure: no terminal or native library, so
+// these run standalone.
 // ===========================================================================
 
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
@@ -19,7 +19,7 @@ import {
 const ev = (type: string, data: Record<string, unknown> = {}): SseEvent => ({
   type,
   data,
-});
+} as unknown as SseEvent);
 
 describe("reduce_event: session + user", () => {
   it("session.created records workspace + model", () => {
@@ -320,19 +320,16 @@ describe("reduce_event: approval flow", () => {
 describe("reduce_event: notices + turn state", () => {
   it("compaction.performed adds a notice and bumps the counter", () => {
     const m = reduceEventSequence([
-      ev("compaction.performed", { mode: "llm" }),
+      ev("compaction.performed", {
+        mode: "llm",
+        summary: "summary body",
+        summaryMessageId: "summary-1",
+      }),
     ]);
     assertStrictEquals(m.compactionCount, 1);
     assertStrictEquals(m.notices.length, 1);
     assertStrictEquals(m.notices[0].kind, "compaction");
     assertStrictEquals(m.notices[0].text, "context compacted (llm)");
-  });
-
-  it("compaction.performed without a mode stays generic and hides the summary", () => {
-    const m = reduceEventSequence([
-      ev("compaction.performed", { summary: "SECRET SUMMARY" }),
-    ]);
-    assertStrictEquals(m.notices[0].text, "context compacted");
   });
 
   it("error.occurred records the message and a notice", () => {
@@ -429,17 +426,11 @@ describe("reduce_event: end-to-end canned sequence", () => {
   });
 });
 
-describe("reduce_event: purity + unknown events", () => {
+describe("reduce_event: purity", () => {
   it("does not mutate the input model", () => {
     const start = initialModelState();
     const snap = JSON.stringify(start);
     reduceEvent(start, ev("text.delta", { delta: "x" }));
     assertStrictEquals(JSON.stringify(start), snap);
-  });
-
-  it("unknown event types are a no-op", () => {
-    const start = initialModelState();
-    const m = reduceEvent(start, ev("some.future.event", { x: 1 }));
-    assertStrictEquals(m, start);
   });
 });

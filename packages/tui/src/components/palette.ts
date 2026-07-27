@@ -15,7 +15,7 @@
 //
 // Rendering mirrors the approval overlay: `renderPalette` returns the modal
 // lines + (top, left); the app composites them over a dimmed base scene.
-// Local `PaletteTheme` keeps this independent of the A-side `Theme`.
+// Local `PaletteTheme` keeps the renderer's dependency surface small.
 // ===========================================================================
 
 import {
@@ -95,7 +95,7 @@ export type PaletteAction =
   | { readonly type: "execute"; readonly item: PaletteItem }
   | { readonly type: "close" };
 
-/** Colors the palette needs. Decoupled from the A-side `Theme`. */
+/** Focused color interface needed by the palette. */
 export interface PaletteTheme {
   readonly border: Color;
   readonly accent: Color;

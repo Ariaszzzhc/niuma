@@ -4,14 +4,11 @@
 // Re-exports the implemented primitives (Frame / KeyParser / Terminal / run /
 // width / style helpers) and the currency types + constant tables. The FFI
 // internals (ffi.ts dlopen wiring, buffer.ts pool) are intentionally NOT
-// re-exported; advanced users who need the raw ABI still reach for
-// `binding_contract.ts` directly.
+// re-exported. `binding_contract.ts` feeds the public wrappers but remains an
+// internal implementation module.
 //
-// NOTE: `binding_contract.ts` carries ambient `declare` placeholders for the
-// runtime symbols (run / Frame / Terminal / openLib / ...) that this package
-// implements for real in loop.ts / frame.ts / terminal.ts / ffi.ts. We
-// therefore export the IMPLEMENTATIONS here, and only the types + constant
-// tables from the contract — never the ambient declares (which would clash).
+// `binding_contract.ts` contains only ABI constants/layouts and shared
+// currency types. Runtime APIs come from their implementation modules below.
 // ===========================================================================
 
 // -- currency types + constant tables (from the contract) -------------------

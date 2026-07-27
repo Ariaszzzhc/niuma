@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Layer, Ref, Stream } from "effect";
+import { Context, Deferred, Effect, Ref, type Scope, Stream } from "effect";
 import {
   type ApprovalRequestedData,
   type ApprovalResolvedData,
@@ -32,7 +32,11 @@ export interface Kernel {
     sessionId: string,
     fromSeq?: number,
   ) => Stream.Stream<RecordedEvent, never, never>;
-  readonly subscribe: (
+  /**
+   * Gap-free event stream: subscribe first, replay the durable log, then
+   * discard duplicate recorded events while preserving every live event.
+   */
+  readonly events: (
     sessionId: string,
     fromCursor?: number,
   ) => Stream.Stream<SseEvent, never, never>;
@@ -73,7 +77,11 @@ export interface KernelDeps {
     readonly subscribe: (
       sessionId: string,
       fromCursor?: number,
-    ) => Stream.Stream<SseEvent, never, never>;
+    ) => Effect.Effect<
+      Stream.Stream<SseEvent, never, never>,
+      never,
+      Scope.Scope
+    >;
     readonly publish: (event: SseEvent) => Effect.Effect<void, never, never>;
     readonly live: (event: LiveEvent) => Effect.Effect<void, never, never>;
   };
@@ -154,8 +162,39 @@ export const makeKernel = (
         },
       );
 
-    const subscribe: Kernel["subscribe"] = (sessionId, fromCursor = 0) =>
-      bus ? bus.subscribe(sessionId, fromCursor) : Stream.empty;
+    const events: Kernel["events"] = (sessionId, fromCursor = 0) => {
+      const replayAsSse = () =>
+        replay(sessionId, fromCursor).pipe(
+          Stream.map((event): SseEvent => ({ cursor: event.seq, event })),
+        );
+      if (!bus) return replayAsSse();
+
+      return Stream.unwrap(
+        Effect.gen(function* () {
+          // Acquire the PubSub subscription before replay starts. Events
+          // appended while replay is reading are therefore buffered.
+          const tail = yield* bus.subscribe(sessionId, fromCursor);
+          const replayedThrough = yield* Ref.make(
+            fromCursor > 0 ? fromCursor - 1 : 0,
+          );
+          const history = replayAsSse().pipe(
+            Stream.mapEffect((sse) =>
+              Ref.set(replayedThrough, sse.cursor).pipe(Effect.as(sse))
+            ),
+          );
+          const unseenTail = tail.pipe(
+            Stream.filterEffect((sse) =>
+              Ref.get(replayedThrough).pipe(
+                Effect.map((last) =>
+                  !("seq" in sse.event) || sse.cursor > last
+                ),
+              )
+            ),
+          );
+          return Stream.concat(history, unseenTail);
+        }),
+      );
+    };
 
     const live: Kernel["live"] = (event) => bus ? bus.live(event) : Effect.void;
 
@@ -232,7 +271,7 @@ export const makeKernel = (
       version: SCHEMA_VERSION,
       append,
       replay,
-      subscribe,
+      events,
       live,
       lastSeq,
       projection,

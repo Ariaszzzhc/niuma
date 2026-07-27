@@ -25,6 +25,7 @@ import { stringWidth } from "@niuma/tuikit";
 import type { RecordedEvent, SessionInfo } from "@niuma/schema";
 import { buildProgram } from "../src/app.ts";
 import type { ClientResult, TuiClient } from "../src/client.ts";
+import type { SseEvent } from "../src/reduce_event.ts";
 import { darkTheme } from "../src/theme.ts";
 
 // Warm the native lib at module load (scroll path reaches stringWidth).
@@ -59,7 +60,7 @@ const textMsg = (ch: string, mods: Partial<KeyMods> = {}): Msg =>
   keyMsg(textEvent(ch, mods));
 const sse = (type: string, data: Record<string, unknown> = {}): Msg => ({
   type: "tui:sse",
-  event: { type, data },
+  event: { type, data } as unknown as SseEvent,
 });
 
 const ok: ClientResult = { ok: true, status: 200, body: "" };
@@ -115,6 +116,33 @@ const fill = (u: ReturnType<typeof step>, model: Model): Model => {
   );
   return model;
 };
+
+Deno.test("app surfaces approval and interrupt response details", () => {
+  const program = newProgram();
+  const u = step(program.update);
+  let model = program.init()[0];
+
+  model = u(model, {
+    type: "tui:approval",
+    ok: false,
+    status: 409,
+    body: "approval expired",
+  });
+  model = u(model, {
+    type: "tui:interrupt",
+    ok: false,
+    status: 503,
+    body: "runtime unavailable",
+  });
+
+  assertEquals(
+    model.state.notices.slice(-2).map((notice) => notice.text),
+    [
+      "approval failed (409) approval expired",
+      "interrupt failed (503) runtime unavailable",
+    ],
+  );
+});
 
 // ---------------------------------------------------------------------------
 // scroll / followTail
@@ -1058,7 +1086,12 @@ const resumeHistory = (): ReadonlyArray<RecordedEvent> =>
       ts: 1,
       sessionId: "s_old",
       type: "session.created",
-      data: { model: "m2", contextWindow: 50_000 },
+      data: {
+        workspace: "/w",
+        model: "m2",
+        contextWindow: 50_000,
+        mcpServers: [],
+      },
     },
     {
       seq: 2,

@@ -1,4 +1,12 @@
-import { Deferred, Effect, Exit, PubSub, Ref, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  Exit,
+  PubSub,
+  Ref,
+  type Scope,
+  Stream,
+} from "effect";
 import type {
   ApprovalRequestedData,
   ApprovalResolvedData,
@@ -11,84 +19,57 @@ export interface EventBus {
   readonly subscribe: (
     sessionId: string,
     fromCursor?: number,
-  ) => Stream.Stream<SseEvent, never, never>;
+  ) => Effect.Effect<
+    Stream.Stream<SseEvent, never, never>,
+    never,
+    Scope.Scope
+  >;
   readonly publish: (event: SseEvent) => Effect.Effect<void, never, never>;
   readonly live: (event: LiveEvent) => Effect.Effect<void, never, never>;
-  readonly lastSeq: (sessionId: string) => Effect.Effect<number, never, never>;
   readonly shutdown: () => Effect.Effect<void, never, never>;
 }
 
 const BOUND = 4096;
 
-export const makeEventBus = (
-  logPath?: string,
-): Effect.Effect<EventBus, never, never> =>
+export const makeEventBus = (): Effect.Effect<EventBus, never, never> =>
   Effect.gen(function* () {
     const logger = log("niuma.server.bus");
     const buses = yield* Ref.make(new Map<string, PubSub.PubSub<SseEvent>>());
-    const liveBuses = yield* Ref.make(
-      new Map<string, PubSub.PubSub<LiveEvent>>(),
-    );
     const lastSeqBySession = yield* Ref.make(new Map<string, number>());
 
     const getOrCreate = (
       sessionId: string,
     ): Effect.Effect<PubSub.PubSub<SseEvent>, never, never> =>
       Effect.gen(function* () {
-        const m = yield* Ref.get(buses);
-        const existing = m.get(sessionId);
-        if (existing) return existing;
-        const created = yield* PubSub.bounded<SseEvent>(BOUND);
-        yield* Ref.update(buses, (mm) => new Map(mm).set(sessionId, created));
-        return created;
-      });
+        const current = yield* Ref.get(buses);
+        const cached = current.get(sessionId);
+        if (cached) return cached;
 
-    const getOrCreateLive = (
-      sessionId: string,
-    ): Effect.Effect<PubSub.PubSub<LiveEvent>, never, never> =>
-      Effect.gen(function* () {
-        const m = yield* Ref.get(liveBuses);
-        const existing = m.get(sessionId);
-        if (existing) return existing;
-        const created = yield* PubSub.bounded<LiveEvent>(BOUND);
-        yield* Ref.update(
-          liveBuses,
-          (mm) => new Map(mm).set(sessionId, created),
-        );
-        return created;
+        const created = yield* PubSub.bounded<SseEvent>(BOUND);
+        const selected = yield* Ref.modify(buses, (m): readonly [
+          PubSub.PubSub<SseEvent>,
+          Map<string, PubSub.PubSub<SseEvent>>,
+        ] => {
+          const existing = m.get(sessionId);
+          return existing
+            ? [existing, m]
+            : [created, new Map(m).set(sessionId, created)];
+        });
+        if (selected !== created) yield* PubSub.shutdown(created);
+        return selected;
       });
 
     const subscribe: EventBus["subscribe"] = (sessionId, fromCursor = 0) =>
-      Stream.unwrap(
-        Effect.gen(function* () {
-          const ps = yield* getOrCreate(sessionId);
-          const recorded = Stream.fromPubSub(ps).pipe(
-            Stream.filter((sse) => sse.cursor >= fromCursor),
-          );
-          // Live-only events (text.delta / tool.progress / text.reset) ride
-          // the same subscription stream. They have no seq, so their cursor
-          // repeats the last recorded seq — consumers must treat a repeated
-          // cursor as live, never as a resumable position. Without this merge
-          // the live PubSub had no readers at all and the SSE consumer only
-          // saw recorded events — the text appeared in one shot at
-          // assistant.message instead of streaming.
-          const livePs = yield* getOrCreateLive(sessionId);
-          const liveStream = Stream.fromPubSub(livePs).pipe(
-            Stream.map((event) => ({ cursor: fromCursor - 1, event })),
-          );
-          return Stream.merge(recorded, liveStream);
-        }),
-      );
-
-    const publish: EventBus["publish"] = (sse) =>
       Effect.gen(function* () {
-        yield* Ref.update(lastSeqBySession, (m) => {
-          const prev = m.get(sse.event.sessionId) ?? 0;
-          if (sse.cursor > prev) {
-            return new Map(m).set(sse.event.sessionId, sse.cursor);
-          }
-          return m;
-        });
+        const ps = yield* getOrCreate(sessionId);
+        const subscription = yield* PubSub.subscribe(ps);
+        return Stream.fromEffectRepeat(PubSub.take(subscription)).pipe(
+          Stream.filter((sse) => sse.cursor >= fromCursor),
+        );
+      });
+
+    const emit = (sse: SseEvent): Effect.Effect<void, never, never> =>
+      Effect.gen(function* () {
         const ps = yield* getOrCreate(sse.event.sessionId);
         const exit = yield* PubSub.publish(ps, sse).pipe(Effect.exit);
         if (Exit.isFailure(exit)) {
@@ -98,35 +79,29 @@ export const makeEventBus = (
         }
       });
 
+    const publish: EventBus["publish"] = (sse) =>
+      Ref.update(lastSeqBySession, (m) => {
+        const prev = m.get(sse.event.sessionId) ?? 0;
+        return sse.cursor > prev
+          ? new Map(m).set(sse.event.sessionId, sse.cursor)
+          : m;
+      }).pipe(
+        Effect.andThen(emit(sse)),
+      );
+
     const live: EventBus["live"] = (event) =>
       Effect.gen(function* () {
-        const ps = yield* getOrCreateLive(event.sessionId);
-        const exit = yield* PubSub.publish(ps, event).pipe(Effect.exit);
-        if (Exit.isFailure(exit)) {
-          logger.warn("pubsub live publish failed: {err}", {
-            err: String(exit.cause),
-          });
-        }
+        const seqs = yield* Ref.get(lastSeqBySession);
+        yield* emit({ cursor: seqs.get(event.sessionId) ?? 0, event });
       });
-
-    const lastSeq: EventBus["lastSeq"] = (sessionId) =>
-      Ref.get(lastSeqBySession).pipe(
-        Effect.map((m) => m.get(sessionId) ?? 0),
-      );
 
     const shutdown: EventBus["shutdown"] = () =>
       Effect.gen(function* () {
         const m = yield* Ref.get(buses);
         for (const ps of m.values()) yield* PubSub.shutdown(ps);
-        const lm = yield* Ref.get(liveBuses);
-        for (const ps of lm.values()) yield* PubSub.shutdown(ps);
       });
 
-    if (logPath) {
-      logger.debug("eventbus initialized ({path})", { path: logPath });
-    }
-
-    return { subscribe, publish, live, lastSeq, shutdown } satisfies EventBus;
+    return { subscribe, publish, live, shutdown } satisfies EventBus;
   });
 
 export interface PendingApproval {

@@ -52,7 +52,7 @@ export const moveCompletion = (
 // Render
 // ---------------------------------------------------------------------------
 
-/** Colors the menu needs. Decoupled from the A-side `Theme`. */
+/** Focused color interface needed by the completion menu. */
 export interface CompletionTheme {
   readonly border: Color;
   readonly accent: Color;

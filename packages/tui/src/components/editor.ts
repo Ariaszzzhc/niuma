@@ -33,8 +33,7 @@
 // composes cleanly with the alt-screen / CSI-2026 diff path.
 //
 // Theme: this component defines its OWN `EditorTheme` shape (the few colors it
-// needs) so it is independent of the A-side `Theme`. `app.ts` adapts the
-// real `Theme` to it — see `editorThemeFromTheme` interlock note.
+// needs). `app.ts` adapts the application theme to this focused interface.
 // ===========================================================================
 
 import {
@@ -92,7 +91,7 @@ const MAX_UNDO = 100;
 
 export type EditorAction = { readonly type: "submit"; readonly text: string };
 
-/** Colors the editor needs. Decoupled from the A-side `Theme`. */
+/** Focused color interface needed by the editor. */
 export interface EditorTheme {
   readonly border: Color;
   /** Border colour while the editor owns keyboard focus. */
@@ -701,7 +700,7 @@ export const renderEditor = (
 /**
  * Append the content spans of one cursor row, stamping the caret's whole
  * grapheme cluster in reverse video. If the caret is beyond the visible inner
- * width, fall back to a plain render (no horizontal scrolling in v1).
+ * width, fall back to a plain render; the editor does not scroll horizontally.
  *
  * Cluster granularity matters here: the caret cell is the full cluster (an
  * emoji or a base+combining chain), so reverse video never splits a wide glyph

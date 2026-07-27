@@ -30,12 +30,7 @@
 // (a bag of mutable state, which is what classes are for).
 // ===========================================================================
 
-import type {
-  Cmd,
-  InputEvent,
-  Program as ContractProgram,
-  StyledLine,
-} from "./binding_contract.ts";
+import type { InputEvent, StyledLine } from "./binding_contract.ts";
 import { Frame } from "./frame.ts";
 import {
   SYNC_BEGIN,
@@ -79,8 +74,9 @@ export type LoopMsg = KeyMsg | ResizeMsg | TickMsg | ErrorMsg;
 // Cmd / Sub / Program
 // ---------------------------------------------------------------------------
 
-/** Re-export of the contract's one-shot command type. */
-export type { Cmd };
+export interface Cmd<Msg> {
+  readonly run: () => Promise<Msg | undefined>;
+}
 
 /**
  * A subscription: a recurring source of messages (timers, etc.). The loop
@@ -95,11 +91,15 @@ export interface Sub<Msg> {
 /**
  * A TEA program. Extends the contract's `Program` with two OPTIONAL hooks:
  *  - `subscriptions(model)`: called ONCE with the initial model; the returned
- *    Subs live for the whole run (v1 — reactive re-subscription is not yet
- *    modelled). Powers `tick()`-driven animation.
+ *    Subs live for the whole run. A subscription owns any dynamic source
+ *    changes it needs. Powers `tick()`-driven animation.
  *  - `shouldQuit(model, msg)`: returning true stops the loop cleanly.
  */
-export interface Program<Model, Msg> extends ContractProgram<Model, Msg> {
+export interface Program<Model, Msg> {
+  readonly init: () => readonly [Model, ...Cmd<Msg>[]];
+  readonly update: (model: Model, msg: Msg) => readonly [Model, ...Cmd<Msg>[]];
+  /** Produces the full screen as styled lines (rows 0..). */
+  readonly view: (model: Model) => readonly StyledLine[];
   readonly subscriptions?: (model: Model) => readonly Sub<Msg>[];
   readonly shouldQuit?: (model: Model, msg: Msg) => boolean;
 }

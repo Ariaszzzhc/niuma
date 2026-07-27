@@ -137,8 +137,6 @@ export const pickTheme = (bg: BgKind, caps: TerminalCaps): Theme => {
 
 /** Convenience: the built-in dark theme at full colour depth. */
 export const darkTheme: Theme = pickTheme("dark", fullColorCaps);
-/** Convenience: the built-in light theme at full colour depth. */
-export const lightTheme: Theme = pickTheme("light", fullColorCaps);
 
 // ---------------------------------------------------------------------------
 // Terminal background detection (OSC 11)

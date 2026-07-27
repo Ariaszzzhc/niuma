@@ -369,8 +369,10 @@ pub extern "C" fn tuikit_truncate(
     out: *mut u8,
     cap: u32,
 ) -> i64 {
-    catch_unwind(AssertUnwindSafe(|| truncate_impl(ptr, len, max_width, ellipsis, out, cap)))
-        .unwrap_or(-1)
+    catch_unwind(AssertUnwindSafe(|| {
+        truncate_impl(ptr, len, max_width, ellipsis, out, cap)
+    }))
+    .unwrap_or(-1)
 }
 
 // ---------------------------------------------------------------------------
@@ -483,6 +485,7 @@ pub extern "C" fn tuikit_frame_write_line(
 ///   1. call with the pooled buffer;
 ///   2. if ret > cap, grow pool to ret and call again;
 ///   3. write buf[0..ret] to stdout.
+///
 /// The TS loop wraps these bytes in CSI 2026 sync markers
 /// (`ESC[?2026h` ... `ESC[?2026l`) when caps allow — Rust does NOT emit
 /// sync markers itself.
@@ -496,7 +499,10 @@ pub extern "C" fn tuikit_frame_diff(
     out: *mut u8,
     cap: u32,
 ) -> i64 {
-    catch_unwind(AssertUnwindSafe(|| frame_diff_impl(prev, next, caps, out, cap))).unwrap_or(-1)
+    catch_unwind(AssertUnwindSafe(|| {
+        frame_diff_impl(prev, next, caps, out, cap)
+    }))
+    .unwrap_or(-1)
 }
 
 /// Emit ANSI bytes painting the ENTIRE `frame` (first paint / full
@@ -513,8 +519,10 @@ pub extern "C" fn tuikit_frame_render_full(
     out: *mut u8,
     cap: u32,
 ) -> i64 {
-    catch_unwind(AssertUnwindSafe(|| frame_render_full_impl(frame, caps, out, cap)))
-        .unwrap_or(-1)
+    catch_unwind(AssertUnwindSafe(|| {
+        frame_render_full_impl(frame, caps, out, cap)
+    }))
+    .unwrap_or(-1)
 }
 
 // ---------------------------------------------------------------------------
@@ -590,8 +598,10 @@ pub extern "C" fn tuikit_keys_feed(
     out: *mut u8,
     cap: u32,
 ) -> i64 {
-    catch_unwind(AssertUnwindSafe(|| keys_feed_impl(handle, bytes, len, out, cap)))
-        .unwrap_or(-1)
+    catch_unwind(AssertUnwindSafe(|| {
+        keys_feed_impl(handle, bytes, len, out, cap)
+    }))
+    .unwrap_or(-1)
 }
 
 // ---------------------------------------------------------------------------
@@ -622,8 +632,10 @@ pub extern "C" fn tuikit_sgr_style(
     out: *mut u8,
     cap: u32,
 ) -> i64 {
-    catch_unwind(AssertUnwindSafe(|| sgr_style_impl(fg, bg, attrs, caps, out, cap)))
-        .unwrap_or(-1)
+    catch_unwind(AssertUnwindSafe(|| {
+        sgr_style_impl(fg, bg, attrs, caps, out, cap)
+    }))
+    .unwrap_or(-1)
 }
 
 /// Quantize a 24-bit RGB color to an xterm 256-palette index.
@@ -672,7 +684,16 @@ pub extern "C" fn tuikit_gradient(
     cap: u32,
 ) -> i64 {
     catch_unwind(AssertUnwindSafe(|| {
-        gradient_impl(from_rgb, to_rgb, text, len, bg, caps, out, cap)
+        sgr::gradient_impl(sgr::GradientArgs {
+            from_rgb,
+            to_rgb,
+            text,
+            len,
+            bg,
+            caps,
+            out,
+            cap,
+        })
     }))
     .unwrap_or(-1)
 }
@@ -761,7 +782,13 @@ fn frame_write_line_impl(
     cellbuf::frame_write_line_impl(handle, row, col, spans, span_count)
 }
 
-fn frame_diff_impl(prev: *const Frame, next: *const Frame, caps: u32, out: *mut u8, cap: u32) -> i64 {
+fn frame_diff_impl(
+    prev: *const Frame,
+    next: *const Frame,
+    caps: u32,
+    out: *mut u8,
+    cap: u32,
+) -> i64 {
     diff::frame_diff_impl(prev, next, caps, out, cap)
 }
 
@@ -797,17 +824,4 @@ fn rgb_to_256_impl(r: u8, g: u8, b: u8) -> i64 {
 
 fn rgb_to_16_impl(r: u8, g: u8, b: u8) -> i64 {
     sgr::rgb_to_16_impl(r, g, b)
-}
-
-fn gradient_impl(
-    from_rgb: u32,
-    to_rgb: u32,
-    text: *const u8,
-    len: u32,
-    bg: u32,
-    caps: u32,
-    out: *mut u8,
-    cap: u32,
-) -> i64 {
-    sgr::gradient_impl(from_rgb, to_rgb, text, len, bg, caps, out, cap)
 }

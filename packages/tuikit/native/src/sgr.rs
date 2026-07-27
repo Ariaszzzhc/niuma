@@ -28,7 +28,7 @@ fn nearest_cube_level(channel: u8) -> u8 {
     let mut best = 0u8;
     let mut best_d = u32::MAX;
     for (i, &lvl) in CUBE_LEVELS.iter().enumerate() {
-        let d = (channel as i32 - lvl as i32).abs() as u32;
+        let d = (channel as i32 - lvl as i32).unsigned_abs();
         let d = d * d;
         if d < best_d {
             best_d = d;
@@ -333,7 +333,14 @@ pub fn lerp_rgb(from: u32, to: u32, t: u32) -> u32 {
 // ---------------------------------------------------------------------------
 
 /// Write the SGR sequence into `out` (min(total, cap)); return total bytes.
-pub(crate) fn sgr_style_impl(fg: u32, bg: u32, attrs: u16, caps: u32, out: *mut u8, cap: u32) -> i64 {
+pub(crate) fn sgr_style_impl(
+    fg: u32,
+    bg: u32,
+    attrs: u16,
+    caps: u32,
+    out: *mut u8,
+    cap: u32,
+) -> i64 {
     let bytes = build_sgr(fg, bg, attrs, caps);
     let total = bytes.len();
     if total == 0 {
@@ -359,16 +366,28 @@ pub(crate) fn rgb_to_16_impl(r: u8, g: u8, b: u8) -> i64 {
 
 /// Paint `text` with a horizontal gradient; one `GradSpanRec` per cluster.
 /// `from_rgb` / `to_rgb` MUST be RGB-tagged words.
-pub(crate) fn gradient_impl(
-    from_rgb: u32,
-    to_rgb: u32,
-    text: *const u8,
-    len: u32,
-    bg: u32,
-    caps: u32,
-    out: *mut u8,
-    cap: u32,
-) -> i64 {
+pub(crate) struct GradientArgs {
+    pub(crate) from_rgb: u32,
+    pub(crate) to_rgb: u32,
+    pub(crate) text: *const u8,
+    pub(crate) len: u32,
+    pub(crate) bg: u32,
+    pub(crate) caps: u32,
+    pub(crate) out: *mut u8,
+    pub(crate) cap: u32,
+}
+
+pub(crate) fn gradient_impl(args: GradientArgs) -> i64 {
+    let GradientArgs {
+        from_rgb,
+        to_rgb,
+        text,
+        len,
+        bg,
+        caps,
+        out,
+        cap,
+    } = args;
     if color_tag(from_rgb) != COLOR_TAG_RGB || color_tag(to_rgb) != COLOR_TAG_RGB {
         return -1;
     }
@@ -395,7 +414,11 @@ pub(crate) fn gradient_impl(
     // Build records into a temp buffer, then copy min(total, cap).
     let mut recs: Vec<u8> = Vec::with_capacity(total);
     for (i, g) in clusters.iter().enumerate() {
-        let t = if n == 1 { 0 } else { (i * 255 / (n - 1)) as u32 };
+        let t = if n == 1 {
+            0
+        } else {
+            (i * 255 / (n - 1)) as u32
+        };
         let rgb_word = lerp_rgb(from_rgb, to_rgb, t);
         let fg_word = match caps & (CAP_TRUECOLOR | CAP_COLOR_256) {
             CAP_TRUECOLOR => rgb_word,
@@ -508,8 +531,8 @@ mod tests {
     #[test]
     fn sgr_named_and_bg() {
         let s = build_sgr(
-            color_named16(2),          // green fg = 32
-            color_named16(11),         // bright yellow bg = 103
+            color_named16(2),  // green fg = 32
+            color_named16(11), // bright yellow bg = 103
             ATTR_REVERSE | ATTR_STRIKETHROUGH,
             CAP_TRUECOLOR,
         );
@@ -522,21 +545,19 @@ mod tests {
         let to = color_rgb(255, 255, 255);
         let text = "abc"; // 3 clusters
         let mut buf = [0u8; GRAD_SPAN_REC_SIZE * 3];
-        let total = gradient_impl(
-            from,
-            to,
-            text.as_ptr(),
-            text.len() as u32,
-            color_default(),
-            CAP_TRUECOLOR,
-            buf.as_mut_ptr(),
-            buf.len() as u32,
-        );
+        let total = gradient_impl(GradientArgs {
+            from_rgb: from,
+            to_rgb: to,
+            text: text.as_ptr(),
+            len: text.len() as u32,
+            bg: color_default(),
+            caps: CAP_TRUECOLOR,
+            out: buf.as_mut_ptr(),
+            cap: buf.len() as u32,
+        });
         assert_eq!(total, (GRAD_SPAN_REC_SIZE * 3) as i64);
         // cluster 0 → from (0,0,0); cluster 2 → to (255,255,255)
-        let f0 = u32::from_le_bytes([
-            buf[8], buf[9], buf[10], buf[11],
-        ]);
+        let f0 = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
         let f2 = u32::from_le_bytes([
             buf[8 + 2 * GRAD_SPAN_REC_SIZE],
             buf[9 + 2 * GRAD_SPAN_REC_SIZE],
@@ -554,16 +575,16 @@ mod tests {
         let to = color_rgb(200, 200, 200);
         let text = "X";
         let mut buf = [0u8; GRAD_SPAN_REC_SIZE];
-        let total = gradient_impl(
-            from,
-            to,
-            text.as_ptr(),
-            text.len() as u32,
-            color_default(),
-            CAP_TRUECOLOR,
-            buf.as_mut_ptr(),
-            buf.len() as u32,
-        );
+        let total = gradient_impl(GradientArgs {
+            from_rgb: from,
+            to_rgb: to,
+            text: text.as_ptr(),
+            len: text.len() as u32,
+            bg: color_default(),
+            caps: CAP_TRUECOLOR,
+            out: buf.as_mut_ptr(),
+            cap: buf.len() as u32,
+        });
         assert_eq!(total, GRAD_SPAN_REC_SIZE as i64);
         let f0 = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
         assert_eq!(color_rgb_channels(f0), (10, 20, 30));
@@ -571,16 +592,16 @@ mod tests {
 
     #[test]
     fn gradient_rejects_non_rgb() {
-        let r = gradient_impl(
-            color_named16(0),
-            color_rgb(0, 0, 0),
-            b"x".as_ptr(),
-            1,
-            color_default(),
-            CAP_TRUECOLOR,
-            std::ptr::null_mut(),
-            0,
-        );
+        let r = gradient_impl(GradientArgs {
+            from_rgb: color_named16(0),
+            to_rgb: color_rgb(0, 0, 0),
+            text: b"x".as_ptr(),
+            len: 1,
+            bg: color_default(),
+            caps: CAP_TRUECOLOR,
+            out: std::ptr::null_mut(),
+            cap: 0,
+        });
         assert_eq!(r, -1);
     }
 

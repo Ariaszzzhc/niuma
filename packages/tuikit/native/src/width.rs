@@ -1,7 +1,7 @@
 //! Display-width + minimal grapheme clustering (hand-written, no unicode crates).
 //!
-//! Width model (v1, pragmatic — covers CJK / European / emoji, the cases the
-//! tests and the TUI exercise):
+//! Width model (covers CJK / European / emoji, the cases the tests and the TUI
+//! exercise):
 //! - **Wide (2 cells):** an embedded sorted interval table covering CJK
 //!   Unified Ideographs + extensions, Hiragana/Katakana, Hangul, Bopomofo,
 //!   CJK compat/punctuation, fullwidth forms, and the emoji blocks
@@ -16,10 +16,8 @@
 //!
 //! Coverage note: the combining-mark table includes the common
 //! Latin/Cyrillic/Hebrew/Arabic/Thai/Indic ranges but is not an exhaustive
-//! Unicode Mn/Me mirror; exotic combining marks may report width 1. This is
-//! the intentional v1 trade-off the plan calls out ("hand-written minimal
-//! grapheme/width rules"). The astral emoji blocks are treated as wide per
-//! the spec.
+//! Unicode Mn/Me mirror; exotic combining marks may report width 1. The
+//! astral emoji blocks are treated as wide per the contract.
 
 use crate::abi;
 
@@ -321,14 +319,14 @@ pub fn char_width(c: char) -> u32 {
     if cp == 0 {
         return 0;
     }
-    if in_table(&ZERO_WIDTH, cp) {
+    if in_table(ZERO_WIDTH, cp) {
         return 0;
     }
     // Cc control chars (incl. CR/LF/TAB/DEL/C1) → 0.
     if cp < 0x20 || (0x7F..=0x9F).contains(&cp) {
         return 0;
     }
-    if in_table(&WIDE, cp) || in_table(&WIDE_ASTRAL, cp) {
+    if in_table(WIDE, cp) || in_table(WIDE_ASTRAL, cp) {
         return 2;
     }
     1
@@ -413,7 +411,7 @@ pub fn grapheme_spans(s: &str) -> Vec<Grapheme> {
                     width = 2;
                     continue;
                 }
-                if is_variation_selector(cp) || in_table(&ZERO_WIDTH, cp) {
+                if is_variation_selector(cp) || in_table(ZERO_WIDTH, cp) {
                     j += 1;
                     continue;
                 }
@@ -729,9 +727,9 @@ mod tests {
 
     #[test]
     fn table_search_is_correct() {
-        assert!(in_table(&WIDE, 0x4E00));
-        assert!(!in_table(&WIDE, 0x41));
-        assert!(in_table(&ZERO_WIDTH, 0x0301));
-        assert!(in_table(&WIDE_ASTRAL, 0x1F600));
+        assert!(in_table(WIDE, 0x4E00));
+        assert!(!in_table(WIDE, 0x41));
+        assert!(in_table(ZERO_WIDTH, 0x0301));
+        assert!(in_table(WIDE_ASTRAL, 0x1F600));
     }
 }

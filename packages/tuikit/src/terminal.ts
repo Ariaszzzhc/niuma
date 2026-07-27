@@ -191,7 +191,6 @@ export class Terminal {
   #queue: AsyncQueue<InputEvent>;
   #resizeListeners: Array<(size: TerminalSize) => void> = [];
   #reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-  #pumpPromise: Promise<void> | null = null;
   #sigwinchHandler: (() => void) | null = null;
   #disposed = false;
   /** Tracks what we enabled so dispose restores exactly that. */
@@ -279,7 +278,7 @@ export class Terminal {
 
   #startPump(): void {
     this.#reader = Deno.stdin.readable.getReader();
-    this.#pumpPromise = this.#pump();
+    void this.#pump();
   }
 
   /** Read stdin chunks forever, feed the parser, push decoded events. */

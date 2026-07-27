@@ -9,10 +9,10 @@ const HEARTBEAT_MS = 15_000;
 type R = Kernel | SessionManager;
 type Rt = ManagedRuntime.ManagedRuntime<R, unknown>;
 
-// `replay-from-cursor` then `live-tail`. Replay drains the JSONL via the
-// kernel; once it exhausts, we hand off to kernel.subscribe(sessionId,
-// lastSeq) — a PubSub-backed stream that stays open until the request is
-// aborted. The 15s heartbeat interleaves with live frames via setInterval.
+// Kernel.events acquires the live subscription before replaying the JSONL, so
+// recorded events appended during the handoff are buffered and deduplicated.
+// The resulting stream stays open until the request is aborted. The 15s
+// heartbeat interleaves with event frames via setInterval.
 export const handleEvents = (
   c: HonoContext,
   runtime: Rt,
@@ -39,13 +39,16 @@ export const handleEvents = (
   return streamSSE(c, async (stream: SSEStreamingApi) => {
     let heartbeat: ReturnType<typeof setInterval> | null = null;
     let aborted = false;
-    const writeFrame = (cur: number, type: string, data: unknown) => {
-      void stream.writeSSE({
+    const writeFrame = (
+      cur: number,
+      type: string,
+      data: unknown,
+    ): Promise<void> =>
+      stream.writeSSE({
         id: String(cur),
         event: type,
         data: JSON.stringify(data),
       });
-    };
 
     const onAbort = () => {
       aborted = true;
@@ -59,42 +62,18 @@ export const handleEvents = (
     }, HEARTBEAT_MS);
 
     try {
-      // 1) Drain the JSONL from `cursor` to end-of-log. Track the highest seq
-      // we emit so the live tail picks up exactly where replay left off.
-      let lastSeq = cursor > 0 ? cursor - 1 : 0;
-      const replayStream = await runtime.runPromise(
+      const events = await runtime.runPromise(
         Effect.gen(function* () {
           const k = yield* Kernel;
-          return k.replay(sid, cursor).pipe(
-            Stream.map((event) => ({ cursor: event.seq, event })),
-          );
+          return k.events(sid, cursor);
         }),
       );
       await runtime.runPromise(
-        Stream.runForEach(replayStream, (sse) => {
-          lastSeq = Math.max(lastSeq, sse.cursor);
-          writeFrame(sse.cursor, sse.event.type, sse.event);
-          return Effect.void;
-        }),
-      );
-      if (aborted) return;
-
-      // 2) Live tail: subscribe to the per-session PubSub starting just after
-      // the last replayed seq. Events that arrived between replay exhaustion
-      // and subscribe are NOT re-delivered by the bounded PubSub — the next
-      // recorded event triggers a fresh delivery. We absorb the small gap in
-      // exchange for not having to introduce a sequencing round-trip.
-      const liveStream = await runtime.runPromise(
-        Effect.gen(function* () {
-          const k = yield* Kernel;
-          return k.subscribe(sid, lastSeq + 1);
-        }),
-      );
-      await runtime.runPromise(
-        Stream.runForEach(liveStream, (sse) => {
+        Stream.runForEach(events, (sse) => {
           if (aborted) return Effect.void;
-          writeFrame(sse.cursor, sse.event.type, sse.event);
-          return Effect.void;
+          return Effect.promise(() =>
+            writeFrame(sse.cursor, sse.event.type, sse.event)
+          );
         }),
       );
     } catch (e) {
