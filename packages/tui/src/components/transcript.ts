@@ -370,6 +370,12 @@ export const renderTranscriptContent = (
           );
         }
         if (msg.text.length > 0) {
+          // Thinking and the visible answer are two visual blocks even though
+          // they share one assistant event. Give their internal transition the
+          // same single-row rhythm used between top-level transcript items.
+          if (msg.thinking && msg.thinking.length > 0) {
+            out.push(blankLine(safeWidth));
+          }
           out.push(
             ...indentLines(
               renderMarkdown(msg.text, {

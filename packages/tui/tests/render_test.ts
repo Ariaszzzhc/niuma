@@ -127,6 +127,24 @@ Deno.test("transcript: thinking renders with a ⋮ gutter, dim + italic", () => 
   assertEquals(colorEq(textSpan.style.fg, THEME.textDim), true);
 });
 
+Deno.test("transcript: thinking and answer keep one separator row", () => {
+  const state: TranscriptState = {
+    messages: [{
+      role: "assistant",
+      thinking: "inspect the repository",
+      text: "Here is the answer.",
+    }],
+    scrollOffset: 0,
+    followTail: true,
+  };
+  const lines = renderTranscriptContent(state, 40, THEME);
+  assertEquals(lines.map((line) => lineText(line).trim()), [
+    "⋮ inspect the repository",
+    "",
+    "Here is the answer.",
+  ]);
+});
+
 Deno.test("transcript: notice renders dim with a ─ gutter; error uses error colour", () => {
   const state: TranscriptState = {
     messages: [
