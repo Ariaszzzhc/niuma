@@ -23,7 +23,6 @@ export {
 } from "./src/errors.ts";
 export type { ProviderError } from "./src/errors.ts";
 
-export { provideAdapter, Provider } from "./src/contract.ts";
 export type { ProviderAdapter } from "./src/contract.ts";
 
 export {
@@ -48,28 +47,23 @@ export { parseOpenAISSE } from "./src/sse.ts";
 
 export { niumaFetch } from "./src/http.ts";
 
-export {
-  makeOpenAIAdapter,
-  normalizeConfig,
-  OpenAIProviderLive,
-} from "./src/openai.ts";
+export { makeOpenAIAdapter, normalizeConfig } from "./src/openai.ts";
 export type { OpenAIProviderConfig } from "./src/openai.ts";
 
 export {
   makeAnthropicAdapter,
   messagesToAnthropic,
   toolsToAnthropic,
-  AnthropicProviderLive,
 } from "./src/anthropic.ts";
 export type {
-  AnthropicProviderConfig,
-  AnthropicMessage,
   AnthropicContentBlock,
+  AnthropicMessage,
+  AnthropicProviderConfig,
   AnthropicTextBlock,
   AnthropicThinkingBlock,
-  AnthropicToolUseBlock,
-  AnthropicToolResultBlock,
   AnthropicTool,
+  AnthropicToolResultBlock,
+  AnthropicToolUseBlock,
 } from "./src/anthropic.ts";
 
 // Responses API adapter. Only the factory + config + the OAuth token-source
@@ -77,11 +71,7 @@ export type {
 // vocabulary (responses_convert.ts / responses_sse.ts internals) stays
 // package-private (design rule 1: vendor types live in the provider package
 // only and never cross the boundary).
-export {
-  CODEX_BACKEND_URL,
-  makeResponsesAdapter,
-  ResponsesProviderLive,
-} from "./src/responses.ts";
+export { CODEX_BACKEND_URL, makeResponsesAdapter } from "./src/responses.ts";
 export type {
   OAuthTokenSource,
   ResponsesAdapterConfig,

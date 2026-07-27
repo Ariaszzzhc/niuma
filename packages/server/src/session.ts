@@ -1,10 +1,5 @@
-import { Cause, Context, Data, Effect, Fiber, Layer, Ref } from "effect";
-import type {
-  Part,
-  SessionInfo,
-  SessionStatus,
-  StopReason,
-} from "@niuma/schema";
+import { Cause, Context, Data, Effect, Fiber, Ref } from "effect";
+import type { Part, SessionInfo } from "@niuma/schema";
 import { compactSession, runTurn } from "@niuma/agent";
 import {
   expandCommandTemplate,
@@ -32,14 +27,6 @@ export interface SessionManager {
     never,
     never
   >;
-  readonly setStatus: (
-    id: string,
-    status: SessionStatus,
-  ) => Effect.Effect<void, never, never>;
-  readonly setLastStopReason: (
-    id: string,
-    reason: StopReason | undefined,
-  ) => Effect.Effect<void, never, never>;
   /** Switch the session's model for subsequent turns. Accepts a full
    * "provider/model-id" ref (cross-provider: rebuilds the adapter) or a
    * bare model-id (same provider). Fails when the session does not exist
@@ -54,10 +41,6 @@ export interface SessionManager {
     id: string,
     effort: string,
   ) => Effect.Effect<SetEffortResult, Error, never>;
-  readonly incrementMessageCount: (
-    id: string,
-    by: number,
-  ) => Effect.Effect<void, never, never>;
   readonly prompt: (
     id: string,
     parts: ReadonlyArray<Part>,
@@ -294,31 +277,16 @@ export const makeSessionManager = (
         return yield* Effect.promise(() => p.listSessions());
       });
 
-    const setStatus: SessionManager["setStatus"] = (id, status) =>
+    const setStatus = (
+      id: string,
+      status: SessionInfo["status"],
+    ): Effect.Effect<void, never, never> =>
       Effect.gen(function* () {
         const p = yield* kernel.projection();
         yield* Effect.promise(() =>
           p.db
             .updateTable("sessions")
             .set({ status, updated_at: now() })
-            .where("session_id", "=", id)
-            .execute()
-        );
-      });
-
-    const setLastStopReason: SessionManager["setLastStopReason"] = (
-      id,
-      reason,
-    ) =>
-      Effect.gen(function* () {
-        const p = yield* kernel.projection();
-        yield* Effect.promise(() =>
-          p.db
-            .updateTable("sessions")
-            .set({
-              last_stop_reason: reason ?? null,
-              updated_at: now(),
-            })
             .where("session_id", "=", id)
             .execute()
         );
@@ -399,8 +367,8 @@ export const makeSessionManager = (
           next = current ?? {};
         }
 
-        // Persist the model id (mirrors setStatus): runAgentTurn reads the
-        // projection per prompt, so the NEXT turn picks the new model up.
+        // Persist the model id: runAgentTurn reads the projection per prompt,
+        // so the NEXT turn picks the new model up.
         yield* Effect.promise(() =>
           p.db
             .updateTable("sessions")
@@ -429,19 +397,6 @@ export const makeSessionManager = (
         yield* Ref.update(overrides, (m) =>
           new Map(m).set(id, { ...m.get(id), effort }));
         return { ok: true as const, effort };
-      });
-
-    const incrementMessageCount: SessionManager["incrementMessageCount"] = (
-      id,
-      _by,
-    ) =>
-      Effect.gen(function* () {
-        const p = yield* kernel.projection();
-        // Note: the projection already bumps message_count on user/assistant
-        // message events. This helper is for callers that don't go through the
-        // event log (e.g. synthetic counts during restore). MVP no-op.
-        void p;
-        void id;
       });
 
     // Run a turn to completion in the background. The agent loop appends
@@ -662,20 +617,11 @@ export const makeSessionManager = (
       create,
       get,
       list,
-      setStatus,
-      setLastStopReason,
       setModel,
       setEffort,
-      incrementMessageCount,
       prompt,
       compact,
       interrupt,
       awaitAll,
     } satisfies SessionManager;
   });
-
-export const SessionManagerLive = (
-  infra: SessionManagerInfra,
-  env?: SessionManagerEnv,
-): Layer.Layer<SessionManager, never, Kernel> =>
-  Layer.effect(SessionManager, makeSessionManager(infra, env));

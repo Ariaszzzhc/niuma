@@ -5,7 +5,7 @@ import {
   type EventLog,
   makeEventLog,
 } from "./event_log.ts";
-import { Kernel, KernelLive, makeKernel } from "./kernel.ts";
+import { Kernel, makeKernel } from "./kernel.ts";
 import { type EventBus, makeEventBus } from "./event_bus.ts";
 import {
   bindSessionEnv,
@@ -106,6 +106,24 @@ const newSessionId = (): string => {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
+export interface SubagentRequest {
+  readonly prompt: string;
+  readonly mode?: "default" | "read-only";
+  readonly parentSessionId: string;
+}
+
+export interface SubagentSpawnerDeps {
+  readonly kernel: Kernel;
+  readonly workspace: string;
+  readonly model: string;
+  readonly mcpServers: ReadonlyArray<{ id: string; toolCount: number }>;
+  readonly runChild: (
+    sessionId: string,
+    prompt: string,
+    mode: "full" | "read-only",
+  ) => Promise<string>;
+}
+
 const validateEventLogs = async (
   eventLog: EventLog,
   projection: Projection,
@@ -132,6 +150,61 @@ const validateEventLogs = async (
       await projection.resetSession(session.sessionId);
     }
   }
+};
+
+// Own the child-session lifecycle in one server seam. The tool adapter only
+// invokes this closure; it does not know about event lineage or recursion.
+export const makeSubagentSpawner = (
+  deps: SubagentSpawnerDeps,
+): (req: SubagentRequest) => Promise<SubagentResult> => {
+  const depthBySession = new Map<string, number>();
+
+  return async (req) => {
+    const parentDepth = depthBySession.get(req.parentSessionId) ?? 0;
+    if (parentDepth >= SUBAGENT_DEPTH_LIMIT) {
+      return {
+        sessionId: req.parentSessionId,
+        text: "Subagent depth limit reached; cannot spawn further subagents.",
+      };
+    }
+
+    const childId = newSessionId();
+    depthBySession.set(childId, parentDepth + 1);
+    try {
+      await Effect.runPromise(deps.kernel.append({
+        type: "session.created",
+        sessionId: childId,
+        data: {
+          workspace: deps.workspace,
+          model: deps.model,
+          mcpServers: [...deps.mcpServers],
+        },
+      }));
+      await Effect.runPromise(deps.kernel.append({
+        type: "subagent.spawned",
+        sessionId: req.parentSessionId,
+        data: {
+          parentSessionId: req.parentSessionId,
+          childSessionId: childId,
+          prompt: req.prompt,
+        },
+      }));
+      await Effect.runPromise(deps.kernel.append({
+        type: "user.message",
+        sessionId: childId,
+        data: { parts: [{ type: "text", text: req.prompt }] },
+      }));
+
+      const text = await deps.runChild(
+        childId,
+        req.prompt,
+        req.mode === "read-only" ? "read-only" : "full",
+      );
+      return { sessionId: childId, text };
+    } finally {
+      depthBySession.delete(childId);
+    }
+  };
 };
 
 export const bootstrap = async (
@@ -216,56 +289,18 @@ export const bootstrap = async (
     ? withDefaultModel(deps.infra.provider, defaultModel)
     : await makeProviderFromConfig(config, deps.defaultModelRef);
 
-  // spawn_subagent wiring: create a child session, record lineage events,
-  // and recursively run a turn on the child. Depth is bounded by
-  // SUBAGENT_DEPTH_LIMIT (1) so a subagent cannot spawn further subagents.
-  const depthBySession = new Map<string, number>();
-  const spawnSubagent = async (req: {
-    readonly prompt: string;
-    readonly mode?: "default" | "read-only";
-    readonly parentSessionId: string;
-  }): Promise<SubagentResult> => {
-    const parentDepth = depthBySession.get(req.parentSessionId) ?? 0;
-    if (parentDepth >= SUBAGENT_DEPTH_LIMIT) {
-      return {
-        sessionId: req.parentSessionId,
-        text: "Subagent depth limit reached; cannot spawn further subagents.",
-      };
-    }
-    const childId = newSessionId();
-    depthBySession.set(childId, parentDepth + 1);
-
-    try {
-      // Record the child session and the parent → child lineage.
-      await Effect.runPromise(kernel.append({
-        type: "session.created",
-        sessionId: childId,
-        data: {
-          workspace,
-          model: defaultModel,
-          mcpServers: mcpServers.map(({ id, tools }) => ({
-            id,
-            toolCount: tools.length,
-          })),
-        },
-      }));
-      await Effect.runPromise(kernel.append({
-        type: "subagent.spawned",
-        sessionId: req.parentSessionId,
-        data: {
-          parentSessionId: req.parentSessionId,
-          childSessionId: childId,
-          prompt: req.prompt,
-        },
-      }));
-      // runTurn drains its steer queue but does not prepend an initial
-      // user.message on its own, so seed one before sampling.
-      await Effect.runPromise(kernel.append({
-        type: "user.message",
-        sessionId: childId,
-        data: { parts: [{ type: "text", text: req.prompt }] },
-      }));
-
+  // The spawner owns lineage/depth. Its injected runner owns only the child
+  // agent loop, which breaks the recursive pipeline dependency at a narrow
+  // seam and makes the lifecycle independently testable.
+  const spawnSubagent = makeSubagentSpawner({
+    kernel,
+    workspace,
+    model: defaultModel,
+    mcpServers: mcpServers.map((server) => ({
+      id: server.id,
+      toolCount: server.tools.length,
+    })),
+    runChild: async (childId, _prompt, mode) => {
       const result = await Effect.runPromise(
         runTurn(childId, {
           event_log: kernelEventLog(kernel),
@@ -275,7 +310,7 @@ export const bootstrap = async (
           emitLive: kernelEmitLive(kernel),
           model: defaultModel,
           workspace,
-          mode: req.mode === "read-only" ? "read-only" : "full",
+          mode,
           ...(defaultContextWindow !== undefined
             ? { contextWindow: defaultContextWindow }
             : {}),
@@ -295,16 +330,14 @@ export const bootstrap = async (
           ),
         ),
       );
-      return { sessionId: childId, text: result.text };
-    } finally {
-      depthBySession.delete(childId);
-    }
-  };
+      return result.text;
+    },
+  });
 
   // Subagent-facing pipeline: same shape as the parent's, with the
   // spawnSubagent closure wired through so a child can itself refuse further
   // nesting at the depth limit.
-  const toolsForSubagent = makeToolPipeline({
+  const toolsForSubagent: SessionManagerInfra["tools"] = makeToolPipeline({
     registry,
     engine,
     spawnSubagent,
@@ -566,7 +599,7 @@ export const makeProviderFromConfig = (
 
 export { buildProvider };
 
-export { Kernel, KernelLive, SessionManager };
+export { Kernel, SessionManager };
 export { ensureSchema, makeProjection } from "./projection.ts";
 export { makeEventLog } from "./event_log.ts";
 export { makeEventBus } from "./event_bus.ts";

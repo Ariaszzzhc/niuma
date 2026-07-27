@@ -22,22 +22,6 @@ const UpdatePlanInput_ = z.object({
 export type UpdatePlanInput = z.infer<typeof UpdatePlanInput_>;
 export const UpdatePlanInput: z.ZodType<UpdatePlanInput> = UpdatePlanInput_;
 
-// In-memory plan store keyed by sessionId.
-//
-// Persistence semantics: per the @niuma/tools contract, update_plan state is
-// in-memory for v0 — it is rebuilt on session restart by replaying the
-// event log (the agent's runTurn loop records each tool.call.requested for
-// update_plan, so a resuming session can reconstruct the latest plan via
-// AgentSession.plan()). The store below is therefore a process-local cache
-// only; it must not be treated as authoritative across restarts.
-const plans = new Map<string, UpdatePlanInput["items"]>();
-
-export function getPlan(
-  sessionId: string,
-): UpdatePlanInput["items"] | undefined {
-  return plans.get(sessionId);
-}
-
 export const updatePlanTool: Tool<UpdatePlanInput> = {
   name: "update_plan",
   def: {
@@ -61,7 +45,6 @@ export const updatePlanTool: Tool<UpdatePlanInput> = {
         { isError: true },
       );
     }
-    plans.set(ctx.sessionId, input.items);
     ctx.emitProgress?.(callId, `plan updated: ${input.items.length} items`);
     const summary = input.items.map((i) => `[${i.status}] ${i.title}`).join(
       "\n",

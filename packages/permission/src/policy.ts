@@ -1,4 +1,4 @@
-import type { Decision, PermissionRule } from "@niuma/schema";
+import type { PermissionRule } from "@niuma/schema";
 import { lastMatch } from "./matcher.ts";
 import { FILE_TOOLS, isSensitivePath } from "./sensitive.ts";
 
@@ -109,22 +109,4 @@ export function runPolicy(
     toolName,
     target,
   };
-}
-
-/**
- * Convert this package's richer Verdict into the canonical `Decision`
- * shape defined by @niuma/schema. The Verdict carries extra context
- * (toolName, target, matching rule) used by the CLI prompter; the
- * schema Decision is the minimal serialisable result used in protocol
- * types and the event log.
- */
-export function toDecision(v: Verdict): Decision {
-  switch (v.kind) {
-    case "allow":
-      return { decision: "allow" };
-    case "deny":
-      return { decision: "deny", reason: v.reason };
-    case "ask":
-      return { decision: "ask" };
-  }
 }

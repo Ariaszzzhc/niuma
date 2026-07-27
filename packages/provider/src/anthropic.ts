@@ -1,12 +1,8 @@
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import { niumaFetch } from "./http.ts";
-import { Provider, type ProviderAdapter } from "./contract.ts";
+import type { ProviderAdapter } from "./contract.ts";
 import type { ChatRequest, Message, ModelRef, ToolDef } from "./domain.ts";
-import {
-  InvalidResponse,
-  Network,
-  type ProviderError,
-} from "./errors.ts";
+import { InvalidResponse, Network, type ProviderError } from "./errors.ts";
 import { withRetry } from "./retry.ts";
 import { parseAnthropicSSE } from "./anthropic_sse.ts";
 // Shared with openai.ts / responses.ts: the HTTP -> ProviderError ladder is
@@ -308,13 +304,13 @@ const fetchModels = (
             { data?: Array<{ id: string; display_name?: string }> }
           >
         )
-        : Effect.fail(new InvalidResponse({ message: `HTTP ${res.status}` })),
+        : Effect.fail(new InvalidResponse({ message: `HTTP ${res.status}` }))
     ),
     Effect.map((body) =>
       (body.data ?? []).map((m) => ({
         id: m.id,
         name: m.display_name ?? m.id,
-      })),
+      }))
     ),
     withRetry,
     Effect.catchIf(
@@ -347,7 +343,7 @@ export const makeAnthropicAdapter = (
               } catch {
                 // ignore
               }
-            }),
+            })
           );
           if (req.abort) {
             if (req.abort.aborted) controller.abort();
@@ -391,11 +387,3 @@ export const makeAnthropicAdapter = (
       ),
   };
 };
-
-export const AnthropicProviderLive = (
-  config: AnthropicProviderConfig,
-): Layer.Layer<Provider> =>
-  Layer.succeed(
-    Provider,
-    makeAnthropicAdapter(normalizeConfig(config)),
-  );

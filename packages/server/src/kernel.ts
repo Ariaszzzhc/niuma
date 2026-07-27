@@ -50,7 +50,6 @@ export interface Kernel {
     name: string,
     input: unknown,
   ) => Effect.Effect<ApprovalResolvedData, never, never>;
-  readonly shutdown: () => Effect.Effect<void, never, never>;
 }
 
 // deno-lint-ignore no-slow-types
@@ -189,21 +188,45 @@ export const makeKernel = (
           input,
         };
         const deferred = yield* registry.register(request);
-        yield* append({
-          type: "approval.requested",
-          sessionId,
-          data: request,
+        const awaitResolution = Effect.gen(function* () {
+          yield* append({
+            type: "approval.requested",
+            sessionId,
+            data: request,
+          });
+          return yield* Effect.uninterruptibleMask((restore) =>
+            Effect.flatMap(
+              restore(Deferred.await(deferred)),
+              (resolved) =>
+                append({
+                  type: "approval.resolved",
+                  sessionId,
+                  data: resolved,
+                }).pipe(Effect.as(resolved)),
+            )
+          );
         });
-        const resolved = yield* Deferred.await(deferred);
-        yield* append({
-          type: "approval.resolved",
-          sessionId,
-          data: resolved,
-        });
-        return resolved;
+        return yield* awaitResolution.pipe(
+          Effect.onInterrupt(() =>
+            registry.remove(approvalId).pipe(
+              Effect.flatMap((removed) =>
+                removed
+                  ? append({
+                    type: "approval.resolved",
+                    sessionId,
+                    data: {
+                      approvalId,
+                      decision: "reject",
+                      feedback: "aborted",
+                    },
+                  }).pipe(Effect.asVoid)
+                  : Effect.void
+              ),
+            )
+          ),
+          Effect.ensuring(registry.remove(approvalId).pipe(Effect.asVoid)),
+        );
       });
-
-    const shutdown: Kernel["shutdown"] = () => Effect.void;
 
     return {
       version: SCHEMA_VERSION,
@@ -216,12 +239,7 @@ export const makeKernel = (
       event_log,
       resolveApproval,
       askForApproval,
-      shutdown,
     } satisfies Kernel;
   });
-
-export const KernelLive = (
-  deps: KernelDeps,
-): Layer.Layer<Kernel, never, never> => Layer.effect(Kernel, makeKernel(deps));
 
 export { SCHEMA_VERSION };

@@ -1,6 +1,6 @@
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import { niumaFetch } from "./http.ts";
-import { Provider, type ProviderAdapter } from "./contract.ts";
+import type { ProviderAdapter } from "./contract.ts";
 import type { ChatRequest, ModelRef } from "./domain.ts";
 import {
   type AuthFailed,
@@ -22,7 +22,8 @@ import { parseResponsesSSE } from "./responses_sse.ts";
 /** The ChatGPT-subscription OAuth rewrite target. When `oauth` credentials are
  * present the adapter rewrites `{baseUrl}/responses` to this URL. Lives in the
  * provider package because it is wire-protocol knowledge, not configuration. */
-export const CODEX_BACKEND_URL = "https://chatgpt.com/backend-api/codex/responses";
+export const CODEX_BACKEND_URL =
+  "https://chatgpt.com/backend-api/codex/responses";
 
 /** Proactive + single-flight access-token provider, injected by the server.
  * Effect-typed so refresh failures surface as AuthFailed, not rejects.
@@ -300,11 +301,3 @@ export const makeResponsesAdapter = (
       ),
   };
 };
-
-export const ResponsesProviderLive = (
-  config: ResponsesAdapterConfig,
-): Layer.Layer<Provider> =>
-  Layer.succeed(
-    Provider,
-    makeResponsesAdapter(normalizeConfig(config)),
-  );

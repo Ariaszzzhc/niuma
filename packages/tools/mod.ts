@@ -66,11 +66,7 @@ export {
 } from "./src/tools/apply_patch.ts";
 export { GrepInput, grepTool } from "./src/tools/grep.ts";
 export { GlobInput, globTool } from "./src/tools/glob.ts";
-export {
-  getPlan,
-  UpdatePlanInput,
-  updatePlanTool,
-} from "./src/tools/update_plan.ts";
+export { UpdatePlanInput, updatePlanTool } from "./src/tools/update_plan.ts";
 export { QuestionInput, questionTool } from "./src/tools/question.ts";
 export {
   SpawnSubagentInput,

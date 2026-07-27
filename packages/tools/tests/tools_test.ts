@@ -34,14 +34,13 @@ Deno.test("builtins are 10 built-in tools", () => {
   assertEquals(builtins().length, 10);
 });
 
-Deno.test("ToolRegistry resolves subset and exposes toolDefs", () => {
+Deno.test("ToolRegistry exposes builtins and supports custom registration", () => {
   const reg = new ToolRegistry();
-  const subset = reg.resolve(["read", "write", "bash"]);
-  assertEquals(subset.length, 3);
-  const defs = reg.toToolDefs(["bash"]);
-  assertEquals(defs.length, 1);
-  assertEquals(defs[0].name, "bash");
-  assertEquals((defs[0].parameters as { type: string }).type, "object");
+  assertEquals(reg.get("bash"), bashTool);
+  assertEquals(reg.all().length, 10);
+  reg.register("custom-bash", bashTool);
+  assertEquals(reg.get("custom-bash"), bashTool);
+  assertEquals(reg.all().length, 11);
 });
 
 Deno.test("bash executes and surfaces non-zero exit as isError", async () => {
@@ -166,7 +165,7 @@ Deno.test("glob walks JS fallback and sorts by mtime desc", async () => {
   assertStringIncludes(lines[0], "new.txt");
 });
 
-Deno.test("update_plan persists and rejects >1 in_progress", async () => {
+Deno.test("update_plan renders progress and rejects >1 in_progress", async () => {
   const c = mkCtx();
   const ok = await updatePlanTool.execute(
     { items: [{ title: "a", status: "in_progress" }] },
@@ -445,14 +444,14 @@ Deno.test("truncate spills safely when callId contains slashes", async () => {
   assertEquals(onDisk.length, big.length);
 });
 
-Deno.test("read-only mode drops mutating tools from the registry defs", () => {
+Deno.test("read-only mode drops mutating tools from the registry", () => {
   const reg = new ToolRegistry();
-  const full = reg.toToolDefs({ mode: "full" });
-  const ro = reg.toToolDefs({ mode: "read-only" });
+  const full = reg.all("full");
+  const ro = reg.all("read-only");
   assertEquals(full.length, 10);
   // read-only allowlist: read, grep, glob, update_plan, question.
   assertEquals(ro.length, 5);
-  const roNames = new Set(ro.map((t) => t.name));
+  const roNames = new Set(ro.map((tool) => tool.name));
   assertEquals(roNames.has("bash"), false);
   assertEquals(roNames.has("write"), false);
   assertEquals(roNames.has("edit"), false);

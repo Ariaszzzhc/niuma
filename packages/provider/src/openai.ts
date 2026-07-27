@@ -1,6 +1,6 @@
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import { niumaFetch } from "./http.ts";
-import { Provider, type ProviderAdapter } from "./contract.ts";
+import type { ProviderAdapter } from "./contract.ts";
 import type { ChatRequest, ModelRef } from "./domain.ts";
 import {
   type AuthFailed,
@@ -226,11 +226,3 @@ export const makeOpenAIAdapter = (
       ),
   };
 };
-
-export const OpenAIProviderLive = (
-  config: OpenAIProviderConfig,
-): Layer.Layer<Provider> =>
-  Layer.succeed(
-    Provider,
-    makeOpenAIAdapter(normalizeConfig(config)),
-  );

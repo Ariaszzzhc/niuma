@@ -147,6 +147,9 @@ export interface ApprovalRegistry {
     approvalId: string,
     decision: ApprovalResolvedData,
   ) => Effect.Effect<boolean, never, never>;
+  readonly remove: (
+    approvalId: string,
+  ) => Effect.Effect<boolean, never, never>;
   readonly pending: () => Effect.Effect<
     ReadonlyArray<PendingApproval>,
     never,
@@ -196,5 +199,13 @@ export const makeApprovalRegistry = (): Effect.Effect<
         Array.from(m.values())
       ));
 
-    return { register, resolve, pending } satisfies ApprovalRegistry;
+    const remove: ApprovalRegistry["remove"] = (approvalId) =>
+      Ref.modify(registry, (m) => {
+        if (!m.has(approvalId)) return [false, m];
+        const next = new Map(m);
+        next.delete(approvalId);
+        return [true, next];
+      });
+
+    return { register, resolve, remove, pending } satisfies ApprovalRegistry;
   });

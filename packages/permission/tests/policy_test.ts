@@ -1,5 +1,5 @@
 import type { PermissionRule } from "@niuma/schema";
-import { runPolicy, toDecision } from "../src/policy.ts";
+import { runPolicy } from "../src/policy.ts";
 
 function assertEquals<T>(actual: T, expected: T, msg?: string): void {
   const a = JSON.stringify(actual);
@@ -221,26 +221,4 @@ Deno.test("policy: sensitive guard does NOT fire for non-file tools (bash)", () 
   const v = runPolicy([], "bash", `cat ${HOME}/.ssh/id_rsa`, CWD);
   assertEquals(v.kind, "ask");
   assertEquals(v.kind === "ask" ? v.reason : "", "default (manual mode)");
-});
-
-// ---- Verdict → Decision adapter ----
-
-Deno.test("toDecision: maps Verdict variants to schema Decision one-to-one", () => {
-  assertEquals(toDecision(runPolicy([], "bash", "ls", CWD)), {
-    decision: "ask",
-  });
-  assertEquals(
-    toDecision(runPolicy([r("bash", "rm *", "deny")], "bash", "rm x", CWD)),
-    { decision: "deny", reason: "deny rule: bash(rm *)" },
-  );
-  assertEquals(
-    toDecision(runPolicy([], "read", "/tmp/x", CWD)),
-    { decision: "allow" },
-  );
-  // Sensitive-path Ask collapses to the minimal { decision: "ask" } —
-  // the richer context (toolName/target/reason) stays on the Verdict.
-  assertEquals(
-    toDecision(runPolicy([], "read", CWD + "/.git/HEAD", CWD)),
-    { decision: "ask" },
-  );
 });
