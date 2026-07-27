@@ -211,3 +211,6 @@ Notes:
   type-check/lint; do not hand-edit beyond syncing it.
 - The HTTP server validates session ids and binds locally by default; keep input
   validation in `handlers/` when adding endpoints.
+
+## Current Status
+The project is currently under active development and has not had any official releases yet. With the exception of the database, do not introduce any backward compatibility code, technical debt, or data migration logic. If any corrupted user data is found in niuma, simply delete the corrupted data.
