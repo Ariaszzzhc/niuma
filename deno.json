@@ -2,12 +2,11 @@
   "nodeModulesDir": "auto",
   "version": "0.0.1",
   "exclude": [
-    "packages/store/vendor/"
+    "packages/server/vendor/"
   ],
   "workspace": [
     "packages/schema",
     "packages/provider",
-    "packages/store",
     "packages/permission",
     "packages/tools",
     "packages/agent",
@@ -37,8 +36,6 @@
     "@std/testing/bdd": "jsr:@std/testing@^1.0.0/bdd",
     "@niuma/schema": "./packages/schema/mod.ts",
     "@niuma/provider": "./packages/provider/mod.ts",
-    "@niuma/store": "./packages/store/mod.ts",
-    "@niuma/store/vendor/": "./packages/store/vendor/",
     "@niuma/permission": "./packages/permission/mod.ts",
     "@niuma/tools": "./packages/tools/mod.ts",
     "@niuma/agent": "./packages/agent/mod.ts",

@@ -123,7 +123,6 @@ const SessionInfo_ = Schema.Struct({
   updatedAt: Schema.Number,
   status: SessionStatus,
   lastStopReason: Schema.optional(StopReason),
-  messageCount: Schema.optional(Schema.Number),
   // First non-empty user message text (truncated); serves as the display title.
   // Populated by the projection from the first user.message event.
   title: Schema.optional(Schema.String),

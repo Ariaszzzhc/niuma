@@ -5,7 +5,7 @@ import type {
   StopReason,
 } from "@niuma/schema";
 import { Kysely, sql } from "kysely";
-import { createNodeSqliteDialect } from "@niuma/store/vendor/node-sqlite-dialect.ts";
+import { createNodeSqliteDialect } from "../vendor/node-sqlite-dialect.ts";
 import { log } from "./logger.ts";
 
 interface SessionRow {
@@ -15,8 +15,8 @@ interface SessionRow {
   created_at: number;
   updated_at: number;
   status: string;
+  title: string | null;
   last_stop_reason: string | null;
-  message_count: number;
 }
 
 interface EventRow {
@@ -54,8 +54,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL,
   status            TEXT NOT NULL,
-  last_stop_reason  TEXT,
-  message_count     INTEGER NOT NULL DEFAULT 0
+  title             TEXT,
+  last_stop_reason  TEXT
 );
 CREATE TABLE IF NOT EXISTS events (
   session_id        TEXT NOT NULL,
@@ -88,19 +88,30 @@ const fromRow = (r: SessionRow): SessionInfo => ({
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   status: r.status as SessionInfo["status"],
+  ...(r.title ? { title: r.title } : {}),
   ...(r.last_stop_reason
     ? { lastStopReason: r.last_stop_reason as StopReason }
     : {}),
-  messageCount: r.message_count,
 });
+
+const firstUserText = (
+  event: Extract<RecordedEvent, { type: "user.message" }>,
+): string | undefined => {
+  const sourceText = event.data.sourceText?.trim();
+  if (sourceText) return sourceText.slice(0, 120);
+  for (const part of event.data.parts) {
+    if (part.type !== "text") continue;
+    const text = part.text.trim();
+    if (text) return text.slice(0, 120);
+  }
+  return undefined;
+};
 
 export interface Projection {
   readonly db: Kysely<NiumaDB>;
   readonly apply: (event: RecordedEvent) => Promise<void>;
   readonly listSessions: () => Promise<SessionInfo[]>;
   readonly getSession: (id: string) => Promise<SessionInfo | undefined>;
-  readonly getApproval: (id: string) => Promise<ApprovalRow | undefined>;
-  readonly getMessageCount: (id: string) => Promise<number>;
   readonly resetSession: (id: string) => Promise<void>;
   readonly close: () => void;
 }
@@ -126,8 +137,8 @@ export const makeProjection = (dbPath: string): Projection => {
             created_at: ts,
             updated_at: ts,
             status: "idle",
+            title: null,
             last_stop_reason: null,
-            message_count: 0,
           })
           .onConflict((oc) =>
             oc.column("session_id").doUpdateSet({ updated_at: ts })
@@ -135,15 +146,24 @@ export const makeProjection = (dbPath: string): Projection => {
           .execute();
         break;
       }
-      case "user.message":
-      case "assistant.message": {
-        const inc = event.type === "user.message" ? 1 : 1;
+      case "user.message": {
+        const title = firstUserText(event);
         await db
           .updateTable("sessions")
           .set({
             updated_at: ts,
-            message_count: sql`message_count + ${inc}`,
+            ...(title !== undefined
+              ? { title: sql`coalesce(title, ${title})` }
+              : {}),
           })
+          .where("session_id", "=", sid)
+          .execute();
+        break;
+      }
+      case "assistant.message": {
+        await db
+          .updateTable("sessions")
+          .set({ updated_at: ts })
           .where("session_id", "=", sid)
           .execute();
         break;
@@ -277,22 +297,6 @@ export const makeProjection = (dbPath: string): Projection => {
     return row ? fromRow(row) : undefined;
   };
 
-  const getApproval: Projection["getApproval"] = async (id) =>
-    await db
-      .selectFrom("approvals")
-      .selectAll()
-      .where("approval_id", "=", id)
-      .executeTakeFirst();
-
-  const getMessageCount: Projection["getMessageCount"] = async (id) => {
-    const row = await db
-      .selectFrom("sessions")
-      .select("message_count")
-      .where("session_id", "=", id)
-      .executeTakeFirst();
-    return row?.message_count ?? 0;
-  };
-
   const resetSession: Projection["resetSession"] = async (id) => {
     await db.deleteFrom("events").where("session_id", "=", id).execute();
     await db.deleteFrom("approvals").where("session_id", "=", id).execute();
@@ -314,8 +318,6 @@ export const makeProjection = (dbPath: string): Projection => {
     apply,
     listSessions,
     getSession,
-    getApproval,
-    getMessageCount,
     resetSession,
     close,
   };
@@ -330,6 +332,12 @@ export const ensureSchema = async (dbPath: string): Promise<Projection> => {
     .filter((s) => s.length > 0);
   for (const stmt of stmts) {
     await sql`${sql.raw(stmt)}`.execute(p.db);
+  }
+  const sessionColumns = await sql<{ name: string }>`
+    PRAGMA table_info(sessions)
+  `.execute(p.db);
+  if (!sessionColumns.rows.some((column) => column.name === "title")) {
+    await sql`ALTER TABLE sessions ADD COLUMN title TEXT`.execute(p.db);
   }
   return p;
 };
