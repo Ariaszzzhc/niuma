@@ -12,8 +12,8 @@ import type {
 } from "@niuma/provider";
 
 // ---------------------------------------------------------------------------
-// Ports. The agent package owns these contracts; @niuma/store and @niuma/tools
-// provide concrete adapters, and the server wires them into RunTurnDeps.
+// Ports. The agent package owns these contracts; @niuma/tools provides the
+// concrete tool adapter, and the server wires persistence into RunTurnDeps.
 // ---------------------------------------------------------------------------
 
 // A recorded event minus the fields the log assigns (seq/ts/sessionId).
@@ -84,31 +84,14 @@ export interface ToolPipeline {
   ) => Effect.Effect<ReadonlyArray<ToolRunResult>>;
 }
 
-// The approval gateway bridges the tool pipeline's `ask` to the frontend. The
-// agent ships a default (makeApprovalGateway) that records approval.requested,
-// parks a resolver in a pending map, and records approval.resolved once the
-// server calls resolve(). The server may substitute its own implementation.
-export interface ApprovalInfo {
-  readonly approvalId: string;
-  readonly callId: string;
-  readonly name: string;
-  readonly input: unknown;
-}
-
+// The server owns approval lifecycle and persistence. The agent loop only
+// needs a port for asking the current frontend decision.
 export interface ApprovalGateway {
-  // Optional `signal` releases a parked approval on session abort so the
-  // turn can terminate with turn.aborted instead of hanging on stdin.
   readonly ask: (
     sessionId: string,
     req: ApprovalRequest,
     signal?: AbortSignal,
   ) => Effect.Effect<ApprovalOutcome>;
-  readonly resolve: (
-    approvalId: string,
-    decision: ApprovalDecisionType,
-    feedback?: string,
-  ) => void;
-  readonly pending: ReadonlyMap<string, ApprovalInfo>;
 }
 
 export interface RunTurnDeps {

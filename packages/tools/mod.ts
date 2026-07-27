@@ -52,21 +52,7 @@ export {
   shouldSkipDir,
 } from "./src/path_util.ts";
 export { zodToJsonSchema } from "./src/json_schema.ts";
-export { builtins, ToolRegistry, toToolMap } from "./src/registry.ts";
-
-// ---- Agent-port adapter (satisfies @niuma/agent's ToolPipeline) ----
-export { makeToolPipeline } from "./src/adapter.ts";
-export type {
-  ApprovalDecisionType,
-  ApprovalOutcome,
-  ApprovalRequest,
-  MakeToolPipelineOptions,
-  SpawnSubagentFn,
-  ToolCallRequest as AgentToolCallRequest,
-  ToolPipeline,
-  ToolRunContext,
-  ToolRunResult,
-} from "./src/adapter.ts";
+export { builtins, ToolRegistry } from "./src/registry.ts";
 
 // ---- Built-in tools (named exports for direct use + tests) ----
 export { BashInput, bashTool } from "./src/tools/bash.ts";

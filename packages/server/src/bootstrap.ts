@@ -40,12 +40,11 @@ import {
   type SubagentResult,
   ToolRegistry,
 } from "@niuma/tools";
-import { runTurn } from "@niuma/agent";
+import { makeToolPipeline, runTurn } from "@niuma/agent";
 import {
   kernelApprovalGateway,
   kernelEmitLive,
   kernelEventLog,
-  makeToolPipeline,
 } from "./agent_deps.ts";
 import { makeOAuthTokenSource } from "./oauth_source.ts";
 

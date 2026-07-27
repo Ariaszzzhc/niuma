@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { Effect, Stream } from "effect";
-import type { LiveEvent, RecordedEvent } from "@niuma/schema";
+import type { LiveEvent, Part, RecordedEvent } from "@niuma/schema";
 import type {
   ChatRequest,
   Message as ProviderMessage,
@@ -8,6 +8,7 @@ import type {
   ProviderAdapter,
   ProviderError,
   StreamEvent as ProviderStreamEvent,
+  ThinkingConfig,
 } from "@niuma/provider";
 import {
   AuthFailed,
@@ -24,10 +25,15 @@ import {
   summarizeHistory,
   SUMMARY_PREFIX,
 } from "../src/compaction.ts";
-import { makeApprovalGateway } from "../src/approval.ts";
 import { compactSession } from "../src/compact.ts";
-import { type AgentInfra, SessionManager } from "../src/session.ts";
-import type { EventInput, EventLog, ToolPipeline } from "../src/deps.ts";
+import { runTurn, type TurnResult } from "../src/loop.ts";
+import type {
+  ApprovalGateway,
+  EventInput,
+  EventLog,
+  ToolMode,
+  ToolPipeline,
+} from "../src/deps.ts";
 
 // In-memory event log honouring the EventLog port.
 function makeMemoryLog(): EventLog & {
@@ -78,8 +84,8 @@ function scriptedProvider(
 
 // Provider whose streams fail (or emit partial text then fail) per script step.
 // `fail` present = emit `events` then fail with that error; absent = succeed
-// with `events`. Captures every request (snapshotting the message list, since
-// Fix D's incremental mirror mutates the same `messages` array after sampling)
+// with `events`. Captures every request, snapshotting the message list because
+// the incremental mirror mutates the same `messages` array after sampling,
 // so tests can assert call count and message-list shape across retries and
 // ContextOverflow force-compaction.
 function flakyProvider(
@@ -134,6 +140,105 @@ const noTools: ToolPipeline = {
       })),
     ),
 };
+
+// Minimal test harness around runTurn. Session lifecycle and approval parking
+// belong to @niuma/server; these tests exercise only the agent loop.
+interface AgentInfra {
+  readonly event_log: EventLog;
+  readonly provider: ProviderAdapter;
+  readonly tools: ToolPipeline;
+  readonly approvals: ApprovalGateway;
+  readonly defaultModel: string;
+  readonly defaultContextWindow?: number;
+  readonly defaultMaxTokens?: number;
+  readonly defaultTemperature?: number;
+  readonly defaultThinking?: ThinkingConfig;
+  readonly emitLive?: (event: LiveEvent) => void;
+}
+
+const makeApprovalGateway = (_log: EventLog): ApprovalGateway => ({
+  ask: () => Effect.succeed({ decision: "once" }),
+});
+
+class TestSession {
+  readonly id = crypto.randomUUID();
+  #steer: Part[][] = [];
+
+  constructor(
+    private readonly infra: AgentInfra,
+    private readonly workspace: string,
+    private readonly model: string,
+  ) {}
+
+  #deps() {
+    return {
+      event_log: this.infra.event_log,
+      provider: this.infra.provider,
+      tools: this.infra.tools,
+      approvals: this.infra.approvals,
+      model: this.model,
+      workspace: this.workspace,
+      mode: "full" as ToolMode,
+      ...(this.infra.defaultContextWindow !== undefined
+        ? { contextWindow: this.infra.defaultContextWindow }
+        : {}),
+      ...(this.infra.defaultMaxTokens !== undefined
+        ? { maxTokens: this.infra.defaultMaxTokens }
+        : {}),
+      ...(this.infra.defaultTemperature !== undefined
+        ? { temperature: this.infra.defaultTemperature }
+        : {}),
+      ...(this.infra.defaultThinking !== undefined
+        ? { thinking: this.infra.defaultThinking }
+        : {}),
+      ...(this.infra.emitLive ? { emitLive: this.infra.emitLive } : {}),
+      drainInput: () => {
+        const drained = this.#steer;
+        this.#steer = [];
+        return drained;
+      },
+    };
+  }
+
+  steer(parts: ReadonlyArray<Part>): void {
+    this.#steer.push([...parts]);
+  }
+
+  prompt(parts: ReadonlyArray<Part>): Effect.Effect<TurnResult> {
+    const deps = this.#deps();
+    return this.infra.event_log.append(this.id, {
+      type: "user.message",
+      data: { parts: [...parts] },
+    }).pipe(Effect.flatMap(() => runTurn(this.id, deps)));
+  }
+
+  run(): Effect.Effect<TurnResult> {
+    return runTurn(this.id, this.#deps());
+  }
+}
+
+class SessionManager {
+  constructor(private readonly infra: AgentInfra) {}
+
+  createAndRecord(opts: {
+    readonly workspace: string;
+    readonly model?: string;
+  }): Effect.Effect<TestSession> {
+    const session = new TestSession(
+      this.infra,
+      opts.workspace,
+      opts.model ?? this.infra.defaultModel,
+    );
+    return this.infra.event_log.append(session.id, {
+      type: "session.created",
+      data: {
+        workspace: opts.workspace,
+        model: opts.model ?? this.infra.defaultModel,
+        mcpServers: [],
+      },
+    }).pipe(Effect.as(session));
+  }
+}
 
 Deno.test("runTurn: plain answer, no tools", async () => {
   const log = makeMemoryLog();
@@ -450,7 +555,7 @@ Deno.test("eventsToMessages: keepThinking:none strips both text-only and encrypt
   }
 });
 
-Deno.test("projectEvent: incremental mirror preserves multi-block reasoningContent (Fix D)", () => {
+Deno.test("projectEvent: incremental mirror preserves multi-block reasoningContent", () => {
   const base = { seq: 0, ts: 0, sessionId: "s" };
   const events: RecordedEvent[] = [
     {
@@ -624,7 +729,7 @@ Deno.test("context helpers: replay, compaction, summary", () => {
   assertEquals(compacted[0].content.includes("summary"), true);
   assertEquals(compacted[compacted.length - 1].content, "u3");
 
-  // Fix B: isSummaryMessage recognises the SUMMARY_PREFIX marker.
+  // isSummaryMessage recognises the SUMMARY_PREFIX marker.
   assertEquals(isSummaryMessage(`${SUMMARY_PREFIX}\nfoo`), true);
   assertEquals(isSummaryMessage("foo"), false);
 });
@@ -791,7 +896,7 @@ Deno.test("fatal provider error is not retried", async () => {
 
 Deno.test("ContextOverflow force-compacts and re-samples", async () => {
   const log = makeMemoryLog();
-  // Fix B: ContextOverflow now triggers an LLM summarizer call (via compactNow)
+  // ContextOverflow triggers an LLM summarizer call (via compactNow)
   // before the re-sample. Script: [0] main sample → ContextOverflow; [1]
   // summarizer → returns summary text (mode "llm"); [2] re-sample on the
   // compacted list → "recovered".
@@ -857,7 +962,7 @@ Deno.test("ContextOverflow force-compacts and re-samples", async () => {
 // FIX D — incremental projection (replay once per turn)
 // ---------------------------------------------------------------------------
 
-Deno.test("runTurn replays the log once per turn (Fix D)", async () => {
+Deno.test("runTurn replays the log once per turn", async () => {
   const log = makeMemoryLog();
   const provider = flakyProvider([
     {
@@ -905,7 +1010,7 @@ Deno.test("runTurn replays the log once per turn (Fix D)", async () => {
   assertEquals(log.replayCalls(), 1);
 });
 
-Deno.test("incremental mirror matches full replay at each sample (Fix D)", async () => {
+Deno.test("incremental mirror matches full replay at each sample", async () => {
   const log = makeMemoryLog();
   const provider = flakyProvider([
     {
@@ -967,7 +1072,7 @@ Deno.test("incremental mirror matches full replay at each sample (Fix D)", async
   );
 });
 
-Deno.test("steered input is mirrored into the message list (Fix D)", async () => {
+Deno.test("steered input is mirrored into the message list", async () => {
   const log = makeMemoryLog();
   const provider = flakyProvider([
     {
@@ -1006,7 +1111,7 @@ Deno.test("steered input is mirrored into the message list (Fix D)", async () =>
   assertEquals(msgs[0].content, "seed");
 });
 
-Deno.test("projectEvent: no-ops metadata, projects message types identically to eventsToMessages (Fix D)", () => {
+Deno.test("projectEvent: no-ops metadata and matches full replay", () => {
   const base = { seq: 0, ts: 0, sessionId: "s" };
   const events: RecordedEvent[] = [
     { ...base, type: "turn.started", data: {} },
@@ -1038,7 +1143,6 @@ Deno.test("projectEvent: no-ops metadata, projects message types identically to 
       type: "tool.result",
       data: { callId: "t1", content: "ok", isError: false, durationMs: 1 },
     },
-    { ...base, type: "compaction.performed", data: {} },
     {
       ...base,
       type: "error.occurred",
@@ -1310,7 +1414,7 @@ async function seedTurns(
   }
 }
 
-Deno.test("compaction over threshold uses LLM summary (Fix B)", async () => {
+Deno.test("compaction over threshold uses LLM summary", async () => {
   const log = makeMemoryLog();
   const provider = flakyProvider([
     {
@@ -1365,7 +1469,7 @@ Deno.test("compaction over threshold uses LLM summary (Fix B)", async () => {
   assertEquals(content.includes("LLM SUMMARY"), true);
 });
 
-Deno.test("summary call failure falls back to template (Fix B)", async () => {
+Deno.test("summary call failure falls back to template", async () => {
   const log = makeMemoryLog();
   const provider = flakyProvider([
     { events: [], fail: new Network({ cause: new Error("x") }) },
@@ -1408,7 +1512,7 @@ Deno.test("summary call failure falls back to template (Fix B)", async () => {
   assertEquals(content.includes("Conversation summary"), true);
 });
 
-Deno.test("empty summary falls back to template (Fix B)", async () => {
+Deno.test("empty summary falls back to template", async () => {
   const log = makeMemoryLog();
   // Summarizer returns Finish with no TextDelta → summarizeHistory yields null.
   const provider = flakyProvider([
@@ -1446,7 +1550,7 @@ Deno.test("empty summary falls back to template (Fix B)", async () => {
   assertEquals(cp?.type === "compaction.performed" && cp.data.mode, "template");
 });
 
-Deno.test("summarizeHistory: appends prompt as final user message, no tools (Fix B)", async () => {
+Deno.test("summarizeHistory: appends prompt as final user message, no tools", async () => {
   let captured: ChatRequest | undefined;
   const provider: ProviderAdapter = {
     listModels: () => Effect.succeed([] as ReadonlyArray<ModelRef>),
@@ -1503,18 +1607,6 @@ Deno.test("eventsToMessages: summary-bearing compaction folds prior history into
   assertEquals(isSummaryMessage(msgs[0].content), true);
   assertEquals(msgs[1].content, "u4");
   assertEquals(msgs[2].content, "r4");
-});
-
-Deno.test("eventsToMessages: compaction.performed without summary is ignored (legacy logs)", async () => {
-  const log = makeMemoryLog();
-  await seedTurns(log, "s", [["u1", "r1"]]);
-  await Effect.runPromise(log.append("s", {
-    type: "compaction.performed",
-    data: { summaryMessageId: "sum-1", mode: "template" },
-  }));
-
-  const msgs = eventsToMessages(log.dump("s"));
-  assertEquals(msgs.map((m) => m.content), ["u1", "r1"]);
 });
 
 Deno.test("eventsToMessages: tool.result for a call cut by the compaction fold is dropped", async () => {

@@ -6,11 +6,6 @@ export type {
   CompactSessionResult,
 } from "./src/compact.ts";
 
-export { AgentSession, SessionManager } from "./src/session.ts";
-export type { AgentInfra, SessionOptions } from "./src/session.ts";
-
-export { makeApprovalGateway } from "./src/approval.ts";
-
 export { buildSystemPrompt, environmentContext } from "./src/prompt.ts";
 export {
   ABORTED_TOOL_OUTPUT,
@@ -35,7 +30,6 @@ export type { MakeToolPipelineOptions } from "./src/tool-pipeline.ts";
 
 export type {
   ApprovalGateway,
-  ApprovalInfo,
   ApprovalOutcome,
   ApprovalRequest,
   EventInput,

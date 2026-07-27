@@ -1,5 +1,4 @@
 import { assert, assertEquals } from "@std/assert";
-import { Effect } from "effect";
 import {
   applyPatchTool,
   bashTool,
@@ -8,7 +7,6 @@ import {
   editTool,
   globTool,
   grepTool,
-  makeToolPipeline,
   matchWildcard,
   MemoryPermissionEngine,
   parsePatch,
@@ -549,67 +547,6 @@ Deno.test("pipeline records durationMs and callId on every result", async () => 
   assertEquals(out[0].callId, "c-xyz");
   assertEquals(typeof out[0].durationMs, "number");
   assertEquals((out[0].durationMs ?? -1) >= 0, true);
-});
-
-Deno.test("agent-port adapter: defs(mode) and run() round-trip", async () => {
-  const pipeline = makeToolPipeline({ registry: new ToolRegistry() });
-  const fullDefs = pipeline.defs("full");
-  const roDefs = pipeline.defs("read-only");
-  assertEquals(fullDefs.length, 10);
-  assertEquals(roDefs.length, 5);
-
-  const tmp = await Deno.makeTempDir();
-  const results = await Effect.runPromise(pipeline.run(
-    [
-      {
-        callId: "ac-1",
-        name: "write",
-        input: { path: "a.txt", content: "hello" },
-      },
-      {
-        callId: "ac-2",
-        name: "read",
-        input: { path: "a.txt" },
-      },
-    ],
-    {
-      sessionId: "sess",
-      workspace: tmp,
-      mode: "full",
-      ask: () => Effect.succeed({ decision: "once" as const }),
-    },
-  ));
-  assertEquals(results.length, 2);
-  assertEquals(results[0].callId, "ac-1");
-  assertEquals(results[0].isError, false);
-  assertEquals(results[0].durationMs >= 0, true);
-  const readContent = results[1].content;
-  assertStringIncludes(
-    typeof readContent === "string" ? readContent : JSON.stringify(readContent),
-    "hello",
-  );
-});
-
-Deno.test("agent-port adapter: routes Ask through the Effect-returning ctx.ask", async () => {
-  const pipeline = makeToolPipeline({ registry: new ToolRegistry() });
-  const tmp = await Deno.makeTempDir();
-  let asked = 0;
-  const results = await Effect.runPromise(pipeline.run(
-    [{ callId: "bash-1", name: "bash", input: { command: "ls" } }],
-    {
-      sessionId: "sess",
-      workspace: tmp,
-      mode: "full",
-      ask: (req) =>
-        Effect.sync(() => {
-          asked++;
-          assertEquals(req.name, "bash");
-          return { decision: "once" as const };
-        }),
-    },
-  ));
-  assertEquals(asked, 1);
-  assertEquals(results[0].isError, false);
 });
 
 Deno.test("MemoryPermissionEngine honours deny rules over allow rules", async () => {

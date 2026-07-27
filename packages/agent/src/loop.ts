@@ -32,7 +32,7 @@ const COMPACT_RATIO = 0.85;
 const MAX_ITERATIONS = 100;
 
 // ============================================================================
-// Fix D — Incremental projection (replay once per turn)
+// Incremental projection (replay once per turn)
 //
 // Message-relevant recorded events are exactly user.message | assistant.message
 // | tool.result (context.ts eventsToMessages / projectEvent; every other type
@@ -41,9 +41,9 @@ const MAX_ITERATIONS = 100;
 //   - user.message: drained from the steer queue and appended at the loop top;
 //   - assistant.message / tool.result: appended after sampling / running tools.
 // No external writer appends message-relevant events to an in-flight turn —
-// steer() is drained (and appended) here, and AgentSession.prompt / the server
-// runAgentTurn / subagent seeder append user.message BEFORE invoking runTurn,
-// so the single pre-loop replay picks them up. Therefore the log is replayed
+// steered input is drained (and appended) here, while server callers append
+// user.message BEFORE invoking runTurn, so the single pre-loop replay picks
+// it up. Therefore the log is replayed
 // ONCE per turn and the message list is maintained incrementally by mirroring
 // each appended event (append+mirror wrapper below). This drops the per-
 // iteration replay — O(n²) over a growing JSONL — to one O(n) replay plus O(1)
@@ -336,7 +336,7 @@ export function runTurn(
     // (see header invariant). Within a turn only this loop appends message-
     // relevant events, so the local mirror stays an exact projection.
     const replayed = yield* deps.event_log.replay(sessionId);
-    let historyEvents: RecordedEvent[] = [...replayed];
+    const historyEvents: RecordedEvent[] = [...replayed];
     // keepThinking gates reasoningContent projection (context.ts); driven by
     // the same ThinkingConfig that goes on the wire.
     const projectOptions = {
@@ -366,7 +366,7 @@ export function runTurn(
         return ev;
       });
 
-    // Fix B: compact `messages`, preferring an LLM-written handoff summary
+    // Compact `messages`, preferring an LLM-written handoff summary
     // (codex local path). Falls back to the deterministic template when the
     // summary call fails or returns empty/null. Records compaction.performed
     // with the mode used. The summary is wrapped as SUMMARY_PREFIX + "\n" +
@@ -440,11 +440,9 @@ export function runTurn(
       }
 
       // Pre-sampling token check → compact older history if over threshold.
-      // Fix D side effect: because `messages` persists across iterations now,
-      // a compacted list stays compacted — the check won't re-fire every loop
-      // the way the old replay-every-iteration code did (which re-compacted
-      // the full history each pass and appended duplicate compaction.performed
-      // events while the conversation remained over threshold).
+      // Because `messages` persists across iterations, a compacted list stays
+      // compacted and the check does not append duplicate compaction events
+      // while the conversation remains over threshold.
       let estimate = estimateRequestTokens(system, messages, tools);
       if (estimate > threshold) {
         messages = yield* compactNow(messages, historyEvents);
