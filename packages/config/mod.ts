@@ -6,7 +6,9 @@ export type { NiumaPaths } from "./src/paths.ts";
 export {
   ANTHROPIC_DEFAULT_BASE_URL,
   ConfigError,
+  configWriteTarget,
   DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_INPUT_DELIVERY,
   DEFAULT_MAX_OUTPUT,
   loadConfigFile,
   loadMergedConfig,
@@ -21,6 +23,7 @@ export {
   resolveModelRef,
   RESPONSES_DEFAULT_BASE_URL,
   substituteEnv,
+  writeInputDelivery,
 } from "./src/config.ts";
 export type {
   NiumaConfig,

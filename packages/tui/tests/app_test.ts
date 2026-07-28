@@ -77,6 +77,7 @@ const fakeClient: TuiClient = {
   contextWindow: 200_000,
   mcpServers: [],
   commands: [],
+  inputDelivery: "steer",
   // Never consumed here (we drive update() directly, not the loop), but the
   // field is required; close immediately so nothing hangs if subscribed.
   eventsStream: new ReadableStream<Uint8Array>({
@@ -85,15 +86,19 @@ const fakeClient: TuiClient = {
     },
   }),
   streamVersion: 0,
-  prompt: () => Promise.resolve({ ok: true, status: 202, body: "" }),
+  prompt: () =>
+    Promise.resolve({ ok: true, status: 202, disposition: "started" }),
   approve: () => Promise.resolve(ok),
-  interrupt: () => Promise.resolve(ok),
+  interrupt: () =>
+    Promise.resolve({ ok: true, status: 200, returnedInputs: [] }),
   newSession: () => Promise.resolve(),
   listSessions: () => Promise.resolve([]),
   resume: () =>
     Promise.reject(new Error("fake client: resume not implemented")),
   setModel: () => Promise.resolve({ ok: true }),
   setEffort: () => Promise.resolve({ ok: true }),
+  setInputDelivery: (inputDelivery) =>
+    Promise.resolve({ ok: true, inputDelivery }),
   compact: () => Promise.resolve({ ok: true }),
 };
 
@@ -173,7 +178,8 @@ Deno.test("app surfaces approval and interrupt response details", () => {
     type: "tui:interrupt",
     ok: false,
     status: 503,
-    body: "runtime unavailable",
+    returnedInputs: [],
+    error: "runtime unavailable",
   });
 
   assertEquals(
@@ -914,7 +920,7 @@ Deno.test("completion menu: arrows/ctrl+n/ctrl+p move the selection (and ctrl+p 
   let model = program.init()[0];
 
   model = typeText(update, model, "/");
-  // 9 candidates (8 builtins + /quit), sorted; selection starts at 0.
+  // 10 candidates (9 builtins + /quit), sorted; selection starts at 0.
   model = update(model, keyMsg(key("down")))[0];
   assertEquals(model.completion.selected, 1);
   model = update(model, textMsg("n", { ctrl: true }))[0];
@@ -926,7 +932,7 @@ Deno.test("completion menu: arrows/ctrl+n/ctrl+p move the selection (and ctrl+p 
   assertEquals(model.palette.open, false, "palette stayed closed");
   // wraps around both ends
   model = update(model, keyMsg(key("up")))[0];
-  assertEquals(model.completion.selected, 8, "up from 0 wraps to the last");
+  assertEquals(model.completion.selected, 9, "up from 0 wraps to the last");
 });
 
 Deno.test("completion menu: esc dismisses; arrows fall back to editor history", async () => {
@@ -1003,6 +1009,7 @@ const recordingClient = (overrides: Partial<TuiClient> = {}) => {
     prompt: [] as string[],
     setModel: [] as string[],
     setEffort: [] as string[],
+    setInputDelivery: [] as string[],
     compact: 0,
     newSession: 0,
     resume: [] as string[],
@@ -1011,7 +1018,11 @@ const recordingClient = (overrides: Partial<TuiClient> = {}) => {
     ...fakeClient,
     prompt: (text: string) => {
       calls.prompt.push(text);
-      return Promise.resolve({ ok: true, status: 202, body: "" });
+      return Promise.resolve({
+        ok: true,
+        status: 202,
+        disposition: "started",
+      });
     },
     setModel: (m: string) => {
       calls.setModel.push(m);
@@ -1020,6 +1031,10 @@ const recordingClient = (overrides: Partial<TuiClient> = {}) => {
     setEffort: (e: string) => {
       calls.setEffort.push(e);
       return Promise.resolve({ ok: true, effort: e });
+    },
+    setInputDelivery: (inputDelivery) => {
+      calls.setInputDelivery.push(inputDelivery);
+      return Promise.resolve({ ok: true, inputDelivery });
     },
     compact: () => {
       calls.compact++;
@@ -1065,6 +1080,143 @@ const runFirstCmd = async (
   if (msg === undefined) throw new Error("command produced no message");
   return update(res[0], msg)[0];
 };
+
+Deno.test("returned inputs restore one draft at a time and never auto-submit", async () => {
+  const { calls, client } = recordingClient();
+  const program = programWith(client);
+  const update = program.update;
+  let model = program.init()[0];
+
+  model = update(model, {
+    type: "tui:interrupt",
+    ok: true,
+    status: 200,
+    returnedInputs: [
+      { sourceText: "first recovered" },
+      { sourceText: "second recovered" },
+      { sourceText: "third recovered" },
+    ],
+  })[0];
+
+  assertEquals(model.editor.lines.join("\n"), "first recovered");
+  assertEquals(model.draftBacklog, ["second recovered", "third recovered"]);
+  assertEquals(model.restoredDraftActive, true);
+  assertEquals(calls.prompt, [], "restoring drafts does not submit them");
+
+  const firstSubmit = update(model, keyMsg(key("enter")));
+  assertEquals(
+    firstSubmit[0].editor.lines.join("\n"),
+    "second recovered",
+    "submitting one draft reveals the next",
+  );
+  assertEquals(firstSubmit[0].draftBacklog, ["third recovered"]);
+  assertEquals(firstSubmit[0].restoredDraftActive, true);
+  model = await runFirstCmd(update, firstSubmit);
+
+  assertEquals(calls.prompt, ["first recovered"]);
+  assertEquals(
+    model.editor.lines.join("\n"),
+    "second recovered",
+    "the next draft remains waiting after the request finishes",
+  );
+});
+
+Deno.test("a cleared recovered draft advances only after explicit submit", () => {
+  const program = newProgram();
+  const update = program.update;
+  let model = program.init()[0];
+
+  model = update(model, {
+    type: "tui:interrupt",
+    ok: true,
+    status: 200,
+    returnedInputs: [
+      { sourceText: "current recovered" },
+      { sourceText: "older backlog" },
+    ],
+  })[0];
+  model = update(model, textMsg("u", { ctrl: true }))[0];
+  assertEquals(model.editor.lines.join("\n"), "");
+  assertEquals(model.restoredDraftActive, true);
+
+  model = update(model, {
+    type: "tui:interrupt",
+    ok: true,
+    status: 200,
+    returnedInputs: [{ sourceText: "newer recovered" }],
+  })[0];
+  assertEquals(
+    model.editor.lines.join("\n"),
+    "",
+    "a recovery event does not implicitly advance the cleared draft slot",
+  );
+  assertEquals(model.draftBacklog, [
+    "older backlog",
+    "newer recovered",
+  ]);
+
+  const submitted = update(model, keyMsg(key("enter")));
+  assertEquals(submitted.length, 1, "blank recovered draft is not sent");
+  assertEquals(submitted[0].editor.lines.join("\n"), "older backlog");
+  assertEquals(submitted[0].draftBacklog, ["newer recovered"]);
+  assertEquals(submitted[0].restoredDraftActive, true);
+});
+
+Deno.test("returned inputs are all discarded when the editor is non-empty", () => {
+  const { client } = recordingClient();
+  const program = programWith(client);
+  const update = program.update;
+  let model = program.init()[0];
+
+  model = typeText(update, model, "local unsubmitted text");
+  model = update(model, {
+    type: "tui:interrupt",
+    ok: true,
+    status: 200,
+    returnedInputs: [
+      { sourceText: "discard one" },
+      { sourceText: "discard two" },
+    ],
+  })[0];
+
+  assertEquals(model.editor.lines.join("\n"), "local unsubmitted text");
+  assertEquals(model.draftBacklog, []);
+  assertEquals(model.restoredDraftActive, false);
+});
+
+Deno.test("turn failure recovery uses the same editor collision rule", () => {
+  const program = newProgram();
+  const update = program.update;
+  let model = program.init()[0];
+
+  model = update(
+    model,
+    sse("input.recovered", {
+      reason: "turn_failed",
+      inputs: [
+        { sourceText: "failed steer one" },
+        { sourceText: "failed steer two" },
+      ],
+    }),
+  )[0];
+  assertEquals(model.editor.lines.join("\n"), "failed steer one");
+  assertEquals(model.draftBacklog, ["failed steer two"]);
+
+  model = update(model, textMsg("!"))[0];
+  model = update(
+    model,
+    sse("input.recovered", {
+      reason: "turn_failed",
+      inputs: [{ sourceText: "must be discarded" }],
+    }),
+  )[0];
+  assertEquals(model.editor.lines.join("\n"), "failed steer one!");
+  assertEquals(
+    model.draftBacklog,
+    ["failed steer two"],
+    "newly returned input is not appended behind an occupied editor",
+  );
+});
 
 Deno.test("slash dispatch: a builtin command is intercepted (no prompt)", () => {
   // A custom command named "help" tries to shadow the builtin — builtin wins.
@@ -1219,6 +1371,43 @@ Deno.test("slash dispatch: /effort sets and then reports the effort", async () =
   res = update(model, keyMsg(key("enter")));
   assertEquals(
     res[0].state.notices.some((n) => n.text === "effort: high"),
+    true,
+  );
+});
+
+Deno.test("slash dispatch: /delivery reports, validates, and updates the server mode", async () => {
+  const { calls, client } = recordingClient();
+  const program = programWith(client);
+  const update = program.update;
+  let model = program.init()[0];
+
+  model = typeText(update, model, "/delivery");
+  let res = update(model, keyMsg(key("enter")));
+  assertEquals(res.length, 1);
+  assertEquals(
+    res[0].state.notices.some((n) => n.text === "delivery: steer"),
+    true,
+  );
+
+  model = res[0];
+  model = typeText(update, model, "/delivery invalid");
+  res = update(model, keyMsg(key("enter")));
+  assertEquals(res.length, 1);
+  assertEquals(calls.setInputDelivery, []);
+  assertEquals(
+    res[0].state.notices.some((n) =>
+      n.kind === "error" && n.text === "delivery must be steer or queue"
+    ),
+    true,
+  );
+
+  model = res[0];
+  model = typeText(update, model, "/delivery queue");
+  res = update(model, keyMsg(key("enter")));
+  model = await runFirstCmd(update, res);
+  assertEquals(calls.setInputDelivery, ["queue"]);
+  assertEquals(
+    model.state.notices.some((n) => n.text === "delivery: queue"),
     true,
   );
 });

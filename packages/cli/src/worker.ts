@@ -23,9 +23,8 @@ const WORKER_URL = new URL("./server_worker.ts", import.meta.url);
 export interface SpawnServerWorkerOpts {
   /** Smoke-harness only: inject the scripted network-free provider. */
   readonly mockProvider: boolean;
-  /** Raw provider/model-id ref resolved from --model/config.toml. The worker's
-   * bootstrap binds its provider + default model to this ref so a `--model
-   * other/x` actually switches provider, not just the session's model id. */
+  /** Raw provider/model-id from the Client's explicit --model override. The
+   * Server resolves config.toml itself when this is absent. */
   readonly modelRef?: string;
 }
 

@@ -3,6 +3,48 @@ import { StopReason } from "./domain.ts";
 import { ApprovalDecisionType } from "./permission.ts";
 import { LiveEvent, McpServerStatus, RecordedEvent } from "./event.ts";
 
+// ---- Server-owned client configuration ----
+
+// How a prompt submitted while a turn is already active is admitted by the
+// server. This is server configuration: clients request changes and consume
+// the authoritative view returned by the server.
+// deno-lint-ignore no-slow-types
+const InputDelivery_ = Schema.Literals(["steer", "queue"]);
+export type InputDelivery = Schema.Schema.Type<typeof InputDelivery_>;
+export const InputDelivery: Schema.Codec<InputDelivery> = InputDelivery_;
+
+// Sanitized configuration projected to clients. Provider definitions,
+// credentials, filesystem paths, and other server-only settings never cross
+// this wire seam.
+// deno-lint-ignore no-slow-types
+const ClientConfigView_ = Schema.Struct({
+  inputDelivery: InputDelivery_,
+});
+export type ClientConfigView = Schema.Schema.Type<typeof ClientConfigView_>;
+export const ClientConfigView: Schema.Codec<ClientConfigView> =
+  ClientConfigView_;
+
+// deno-lint-ignore no-slow-types
+const SetInputDeliveryReq_ = Schema.Struct({
+  inputDelivery: InputDelivery_,
+});
+export type SetInputDeliveryReq = Schema.Schema.Type<
+  typeof SetInputDeliveryReq_
+>;
+export const SetInputDeliveryReq: Schema.Codec<SetInputDeliveryReq> =
+  SetInputDeliveryReq_;
+
+// deno-lint-ignore no-slow-types
+const SetInputDeliveryRes_ = Schema.Struct({
+  ok: Schema.Literal(true),
+  config: ClientConfigView_,
+});
+export type SetInputDeliveryRes = Schema.Schema.Type<
+  typeof SetInputDeliveryRes_
+>;
+export const SetInputDeliveryRes: Schema.Codec<SetInputDeliveryRes> =
+  SetInputDeliveryRes_;
+
 // ---- Custom slash commands ----
 
 // A user/project-defined command (a `commands/*.md` template), as listed in
@@ -37,6 +79,8 @@ const CreateSessionRes_ = Schema.Struct({
   mcpServers: Schema.Array(McpServerStatus),
   // Custom slash commands visible to this session's workspace.
   commands: Schema.Array(CommandInfo_),
+  // Server-digested settings relevant to the client.
+  clientConfig: ClientConfigView_,
 });
 export type CreateSessionRes = Schema.Schema.Type<typeof CreateSessionRes_>;
 export const CreateSessionRes: Schema.Codec<CreateSessionRes> =
@@ -51,10 +95,27 @@ export const PromptReq: Schema.Codec<PromptReq> = PromptReq_;
 
 // deno-lint-ignore no-slow-types
 const PromptRes_ = Schema.Struct({
-  accepted: Schema.Literal(true),
+  disposition: Schema.Literals(["started", "steered", "queued"]),
 });
 export type PromptRes = Schema.Schema.Type<typeof PromptRes_>;
 export const PromptRes: Schema.Codec<PromptRes> = PromptRes_;
+
+// User input accepted into a turn but not yet consumed by the agent. Explicit
+// interrupt and terminal turn failure return these as independent drafts.
+// deno-lint-ignore no-slow-types
+const ReturnedInput_ = Schema.Struct({
+  sourceText: Schema.String,
+});
+export type ReturnedInput = Schema.Schema.Type<typeof ReturnedInput_>;
+export const ReturnedInput: Schema.Codec<ReturnedInput> = ReturnedInput_;
+
+// deno-lint-ignore no-slow-types
+const InterruptRes_ = Schema.Struct({
+  ok: Schema.Literal(true),
+  returnedInputs: Schema.Array(ReturnedInput_),
+});
+export type InterruptRes = Schema.Schema.Type<typeof InterruptRes_>;
+export const InterruptRes: Schema.Codec<InterruptRes> = InterruptRes_;
 
 // deno-lint-ignore no-slow-types
 const ApprovalReplyReq_ = Schema.Struct({
@@ -140,6 +201,7 @@ export const GetSessionRes = Schema.Struct({
   contextWindow: Schema.optional(Schema.Number),
   mcpServers: Schema.Array(McpServerStatus),
   commands: Schema.Array(CommandInfo_),
+  clientConfig: ClientConfigView_,
 });
 export type GetSessionRes = Schema.Schema.Type<typeof GetSessionRes>;
 

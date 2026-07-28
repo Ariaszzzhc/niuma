@@ -26,10 +26,8 @@ export type TunnelOut =
     kind: "init";
     port: MessagePort;
     mockProvider?: boolean;
-    /** Raw provider/model-id ref resolved from --model/config.toml. The
-     * worker's bootstrap binds its provider + default model to this ref so a
-     * one-shot `--model other/x` actually switches provider, not just the
-     * model id recorded on the session. */
+    /** Raw provider/model-id from an explicit Client --model override. The
+     * Worker owns config.toml resolution when this is absent. */
     defaultModelRef?: string;
   }
   | TunnelRequest
@@ -235,8 +233,8 @@ export const setupTunnel = (
   // Hand port1 to the worker. The transfer list detaches port1 in this
   // thread; only the worker may post through it from now on. The optional
   // mockProvider flag is the smoke harness's injection channel;
-  // defaultModelRef carries the one-shot's resolved model ref so the worker
-  // binds the right provider.
+  // defaultModelRef carries only an explicit Client override; otherwise the
+  // Worker resolves the effective Server config itself.
   worker.postMessage(
     {
       kind: "init",

@@ -38,18 +38,17 @@ const MAX_ITERATIONS = 100;
 // | tool.result (context.ts eventsToMessages / projectEvent; every other type
 // hits `default`). Within a single runTurn invocation, every such event is
 // appended by this loop itself, synchronously in its own fiber:
-//   - user.message: drained from the steer queue and appended at the loop top;
+//   - user.message: claimed from the Server Input Coordinator and appended at
+//     the loop top immediately before the next provider request;
 //   - assistant.message / tool.result: appended after sampling / running tools.
 // No external writer appends message-relevant events to an in-flight turn —
-// steered input is drained (and appended) here, while server callers append
-// user.message BEFORE invoking runTurn, so the single pre-loop replay picks
-// it up. Therefore the log is replayed
-// ONCE per turn and the message list is maintained incrementally by mirroring
-// each appended event (append+mirror wrapper below). This drops the per-
-// iteration replay — O(n²) over a growing JSONL — to one O(n) replay plus O(1)
-// per-iteration appends. historyEvents is mirrored at the same append sites so
-// buildSummary (which scans tool.call.requested) sees the same input a fresh
-// replay would yield.
+// admission remains in Server memory until `TurnInput.claim` durably appends
+// it. Therefore the log is replayed ONCE per turn and the message list is
+// maintained incrementally by mirroring each claimed/appended event. This
+// drops the per-iteration replay — O(n²) over a growing JSONL — to one O(n)
+// replay plus O(1) per-iteration appends. historyEvents is mirrored at the same
+// append sites so buildSummary (which scans tool.call.requested) sees the same
+// input a fresh replay would yield.
 // ============================================================================
 
 export interface TurnResult {
@@ -59,10 +58,6 @@ export interface TurnResult {
   // Present only when the turn terminated on a provider/stream error
   // (stopReason === "error"). Carries the human-readable terminal message.
   readonly error?: string;
-}
-
-interface Steered {
-  readonly drainInput?: () => ReadonlyArray<ReadonlyArray<Part>>;
 }
 
 const zeroUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0 });
@@ -315,7 +310,7 @@ const sample = (
 
 export function runTurn(
   sessionId: string,
-  deps: RunTurnDeps & Steered,
+  deps: RunTurnDeps,
 ): Effect.Effect<TurnResult> {
   const mode: ToolMode = deps.mode ?? "full";
   const contextWindow = deps.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
@@ -365,6 +360,14 @@ export function runTurn(
         projectEvent(messages, ev, projectOptions);
         return ev;
       });
+
+    // Inputs claimed through the server-owned admission seam have already
+    // been appended durably. Fold them into the same local mirrors as events
+    // appended by this loop, without writing them a second time.
+    const mirrorRecorded = (event: RecordedEvent): void => {
+      historyEvents.push(event);
+      projectEvent(messages, event, projectOptions);
+    };
 
     // Compact `messages`, preferring an LLM-written handoff summary
     // (codex local path). Falls back to the deterministic template when the
@@ -429,14 +432,21 @@ export function runTurn(
         return { stopReason: "abort", usage: turnUsage, text: finalText };
       }
 
-      // Drain steer queue → append as user messages before sampling.
-      const steered = deps.drainInput?.() ?? [];
-      for (const parts of steered) {
-        if (parts.length === 0) continue;
+      // Atomically claim + record every input currently bound to this Turn.
+      // Initial `started` input and later `steered` input share this path.
+      // Anything still pending when explicit interrupt wins is returned to
+      // the client and can never appear in this claimed list.
+      const claimed = deps.input ? yield* deps.input.claim() : [];
+      for (const event of claimed) mirrorRecorded(event);
+
+      // Interrupt may have won immediately after the loop-top check but
+      // before claim entered the coordinator. Do not sample stale context.
+      if (aborted()) {
         yield* append({
-          type: "user.message",
-          data: { parts },
+          type: "turn.aborted",
+          data: { reason: "signal" },
         });
+        return { stopReason: "abort", usage: turnUsage, text: finalText };
       }
 
       // Pre-sampling token check → compact older history if over threshold.
@@ -577,6 +587,20 @@ export function runTurn(
 
       // No tool calls → the turn is done.
       if (result.toolCalls.length === 0) {
+        const close = deps.input
+          ? yield* deps.input.tryClose()
+          : ("close" as const);
+        if (close === "continue") {
+          // A steer admission beat closing; consume it in the next iteration.
+          continue;
+        }
+        if (close === "interrupted" || aborted()) {
+          yield* append({
+            type: "turn.aborted",
+            data: { reason: "signal" },
+          });
+          return { stopReason: "abort", usage: turnUsage, text: finalText };
+        }
         yield* finishTurn(stopReason);
         return { stopReason, usage: turnUsage, text: finalText };
       }
@@ -647,7 +671,32 @@ export function runTurn(
       // loop continues with the tool results in context
     }
 
-    // Safety cap hit.
+    // Safety cap hit. A late pending steer cannot be silently completed:
+    // surface a terminal failure so the SessionManager returns it as a draft.
+    const close = deps.input
+      ? yield* deps.input.tryClose()
+      : ("close" as const);
+    if (close === "interrupted" || aborted()) {
+      yield* append({
+        type: "turn.aborted",
+        data: { reason: "signal" },
+      });
+      return { stopReason: "abort", usage: turnUsage, text: finalText };
+    }
+    if (close === "continue") {
+      const message = "turn reached the maximum iteration count";
+      yield* append({
+        type: "error.occurred",
+        data: { message, retryable: false },
+      });
+      yield* finishTurn("error");
+      return {
+        stopReason: "error",
+        usage: turnUsage,
+        text: finalText,
+        error: message,
+      };
+    }
     yield* finishTurn(stopReason);
     return { stopReason, usage: turnUsage, text: finalText };
   });

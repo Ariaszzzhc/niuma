@@ -1,6 +1,11 @@
 import { assertEquals } from "@std/assert";
 import { Effect, Stream } from "effect";
-import type { LiveEvent, Part, RecordedEvent } from "@niuma/schema";
+import type {
+  LiveEvent,
+  Part,
+  RecordedEvent,
+  UserMessageEvent,
+} from "@niuma/schema";
 import type {
   ChatRequest,
   Message as ProviderMessage,
@@ -162,7 +167,7 @@ const makeApprovalGateway = (_log: EventLog): ApprovalGateway => ({
 
 class TestSession {
   readonly id = crypto.randomUUID();
-  #steer: Part[][] = [];
+  #pending: Part[][] = [];
 
   constructor(
     private readonly infra: AgentInfra,
@@ -192,24 +197,43 @@ class TestSession {
         ? { thinking: this.infra.defaultThinking }
         : {}),
       ...(this.infra.emitLive ? { emitLive: this.infra.emitLive } : {}),
-      drainInput: () => {
-        const drained = this.#steer;
-        this.#steer = [];
-        return drained;
+      input: {
+        claim: () =>
+          Effect.suspend(() => {
+            const pending = this.#pending;
+            this.#pending = [];
+            const { event_log } = this.infra;
+            const sessionId = this.id;
+            return Effect.gen(function* () {
+              const recorded: UserMessageEvent[] = [];
+              for (const parts of pending) {
+                recorded.push(
+                  (yield* event_log.append(sessionId, {
+                    type: "user.message",
+                    data: { parts },
+                  })) as UserMessageEvent,
+                );
+              }
+              return recorded;
+            });
+          }),
+        tryClose: () =>
+          Effect.sync(() =>
+            this.#pending.length > 0
+              ? ("continue" as const)
+              : ("close" as const)
+          ),
       },
     };
   }
 
   steer(parts: ReadonlyArray<Part>): void {
-    this.#steer.push([...parts]);
+    this.#pending.push([...parts]);
   }
 
   prompt(parts: ReadonlyArray<Part>): Effect.Effect<TurnResult> {
-    const deps = this.#deps();
-    return this.infra.event_log.append(this.id, {
-      type: "user.message",
-      data: { parts: [...parts] },
-    }).pipe(Effect.flatMap(() => runTurn(this.id, deps)));
+    this.#pending.push([...parts]);
+    return runTurn(this.id, this.#deps());
   }
 
   run(): Effect.Effect<TurnResult> {
@@ -1093,8 +1117,8 @@ Deno.test("steered input is mirrored into the message list", async () => {
   const session = await Effect.runPromise(
     mgr.createAndRecord({ workspace: "/tmp/ws" }),
   );
-  // Seed a prior user message so the session has history, then steer extra
-  // input that runTurn drains and appends at the loop top.
+  // Seed a prior user message so the session has history, then bind extra
+  // input that runTurn claims and mirrors at the loop top.
   await Effect.runPromise(log.append(session.id, {
     type: "user.message",
     data: { parts: [{ type: "text", text: "seed" }] },

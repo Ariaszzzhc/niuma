@@ -25,7 +25,7 @@ const SKIP_DIRS = new Set([
 
 const baseInstructions = (): string =>
   [
-    "You are niuma, a minimal server-first AI coding agent.",
+    "You are niuma, a single-binary AI coding agent.",
     "",
     "You operate in a one-shot headless turn: understand the request, inspect",
     "the relevant context, use tools when action is required, verify the result,",

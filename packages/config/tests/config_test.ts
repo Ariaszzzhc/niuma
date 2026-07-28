@@ -2,6 +2,8 @@ import { assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import {
   ANTHROPIC_DEFAULT_BASE_URL,
+  configWriteTarget,
+  DEFAULT_INPUT_DELIVERY,
   loadConfigFile,
   loadMergedConfig,
   mergeConfig,
@@ -10,12 +12,15 @@ import {
   resolveModelRef,
   RESPONSES_DEFAULT_BASE_URL,
   substituteEnv,
+  writeInputDelivery,
 } from "../mod.ts";
 import { ConfigError } from "../src/config.ts";
 
 Deno.test("parseConfig: empty text yields defaults", () => {
   const c = parseConfig("");
   assertEquals(c.model, undefined);
+  assertEquals(c.inputDelivery, undefined);
+  assertEquals(DEFAULT_INPUT_DELIVERY, "steer");
   // Unset, NOT "info": the fallback lives in consumers, so a project-level
   // file can override the global one in mergeConfig.
   assertEquals(c.core.logLevel, undefined);
@@ -25,6 +30,7 @@ Deno.test("parseConfig: empty text yields defaults", () => {
 Deno.test("parseConfig: full document", () => {
   const c = parseConfig(`
 model = "deepseek/deepseek-chat"
+input_delivery = "queue"
 
 [core]
 log_level = "debug"
@@ -38,6 +44,7 @@ context_window = 128000
 max_output = 8192
 `);
   assertEquals(c.model, "deepseek/deepseek-chat");
+  assertEquals(c.inputDelivery, "queue");
   assertEquals(c.core.logLevel, "debug");
   const p = c.providers.deepseek!;
   assertEquals(p.name, "DeepSeek");
@@ -112,6 +119,11 @@ context_window = "128k"
     "log_level",
   );
   assertThrows(() => parseConfig(`model = 3`), ConfigError, "string");
+  assertThrows(
+    () => parseConfig(`input_delivery = "replace"`),
+    ConfigError,
+    "input_delivery must be one of steer|queue",
+  );
 });
 
 Deno.test("parseConfig: provider.type defaults to undefined, accepts openai/anthropic/responses", () => {
@@ -250,6 +262,7 @@ Deno.test("loadConfigFile: reads and parses a real file", async () => {
 Deno.test("mergeConfig: override wins on scalars, providers/models merge per id", () => {
   const base = parseConfig(`
 model = "a/m1"
+input_delivery = "steer"
 
 [core]
 log_level = "debug"
@@ -264,6 +277,7 @@ max_output = 20
 `);
   const override = parseConfig(`
 model = "b/m9"
+input_delivery = "queue"
 
 [provider.a.models.m1]
 context_window = 111
@@ -273,6 +287,7 @@ base_url = "https://b"
 `);
   const merged = mergeConfig(base, override);
   assertEquals(merged.model, "b/m9");
+  assertEquals(merged.inputDelivery, "queue");
   // core not set in the override → base survives
   assertEquals(merged.core.logLevel, "debug");
   // per-model merge: m1 overridden, m2 inherited from base
@@ -365,6 +380,68 @@ Deno.test("loadMergedConfig: no project files yields the global config", async (
     await Deno.mkdir(ws);
     const c = await loadMergedConfig(global, { projectDir: ws });
     assertEquals(c.model, "g/m");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("writeInputDelivery: writes the closest existing project config and preserves unrelated text", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const global = join(root, "global.toml");
+    await Deno.writeTextFile(global, `input_delivery = "steer"\n`);
+    const repo = join(root, "repo");
+    const pkg = join(repo, "pkg");
+    await Deno.mkdir(join(repo, ".niuma"), { recursive: true });
+    await Deno.mkdir(join(pkg, ".niuma"), { recursive: true });
+    await Deno.writeTextFile(
+      join(repo, ".niuma", "config.toml"),
+      `# repo config\nmodel = "p/m"\n`,
+    );
+    const closest = join(pkg, ".niuma", "config.toml");
+    await Deno.writeTextFile(
+      closest,
+      `# keep this comment\ninput_delivery = 'steer' # keep inline too\n[core]\nlog_level = "debug"\n`,
+    );
+
+    assertEquals(await configWriteTarget(global, pkg), closest);
+    assertEquals(await writeInputDelivery(global, pkg, "queue"), closest);
+    const text = await Deno.readTextFile(closest);
+    assertEquals(text.includes(`input_delivery = "queue"`), true);
+    assertEquals(text.includes("# keep this comment"), true);
+    assertEquals(text.includes("# keep inline too"), true);
+    assertEquals(text.includes(`log_level = "debug"`), true);
+    assertEquals(parseConfig(text).inputDelivery, "queue");
+    assertEquals(
+      parseConfig(await Deno.readTextFile(global)).inputDelivery,
+      "steer",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("writeInputDelivery: falls back to and creates the global config", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const global = join(root, "user", "config.toml");
+    const workspace = join(root, "repo", "pkg");
+    await Deno.mkdir(workspace, { recursive: true });
+
+    assertEquals(await configWriteTarget(global, workspace), global);
+    assertEquals(
+      await writeInputDelivery(global, workspace, "queue"),
+      global,
+    );
+    assertEquals(
+      parseConfig(await Deno.readTextFile(global)).inputDelivery,
+      "queue",
+    );
+
+    await writeInputDelivery(global, workspace, "steer");
+    const text = await Deno.readTextFile(global);
+    assertEquals(text.match(/input_delivery/g)?.length, 1);
+    assertEquals(parseConfig(text).inputDelivery, "steer");
   } finally {
     await Deno.remove(root, { recursive: true });
   }

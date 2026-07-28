@@ -2,6 +2,7 @@ import { Effect, Stream } from "effect";
 import type { LiveEvent, RecordedEvent } from "@niuma/schema";
 import type { ProviderAdapter, ThinkingConfig } from "@niuma/provider";
 import type { NiumaConfig } from "@niuma/config";
+import type { InputDelivery } from "@niuma/schema";
 import type {
   ApprovalGateway,
   ApprovalOutcome,
@@ -52,8 +53,14 @@ const outcomeOf = (resolved: {
     : { decision: resolved.decision };
 
 export const kernelApprovalGateway = (kernel: Kernel): ApprovalGateway => ({
-  ask: (sessionId, req) =>
-    kernel.askForApproval(sessionId, req.callId, req.name, req.input).pipe(
+  ask: (sessionId, req, signal) =>
+    kernel.askForApproval(
+      sessionId,
+      req.callId,
+      req.name,
+      req.input,
+      signal,
+    ).pipe(
       Effect.map(outcomeOf),
     ),
 });
@@ -80,6 +87,9 @@ export interface AgentInfra {
   readonly tools: ToolPipeline;
   readonly defaultModel: string;
   readonly defaultWorkspace: string;
+  /** Current Server-owned prompt admission mode. Sampled for each submit;
+   * explicit config updates replace the underlying runtime snapshot. */
+  readonly inputDelivery?: () => InputDelivery;
   /** Per-model limits from config.toml ([provider.*.models.*]); the agent
    * loop falls back to its own defaults when unset. */
   readonly defaultContextWindow?: number;

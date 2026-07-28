@@ -148,7 +148,8 @@ type PromptedMsg = {
   readonly type: "tui:prompted";
   readonly ok: boolean;
   readonly status: number;
-  readonly body: string;
+  readonly disposition?: "started" | "steered" | "queued";
+  readonly error?: string;
 };
 type ApprovalReplyMsg = {
   readonly type: "tui:approval";
@@ -160,7 +161,8 @@ type InterruptDoneMsg = {
   readonly type: "tui:interrupt";
   readonly ok: boolean;
   readonly status: number;
-  readonly body: string;
+  readonly returnedInputs: ReadonlyArray<{ readonly sourceText: string }>;
+  readonly error?: string;
 };
 type GitTickMsg = { readonly type: "tuikit:git-tick"; readonly n: number };
 type GitMsg = { readonly type: "tui:git"; readonly status: GitStatus | null };
@@ -189,6 +191,13 @@ type CommandOutcome =
     readonly kind: "compact";
     readonly ok: boolean;
     readonly code?: string;
+    readonly error?: string;
+  }
+  | {
+    readonly kind: "delivery";
+    readonly ok: boolean;
+    readonly ref: string;
+    readonly inputDelivery?: "steer" | "queue";
     readonly error?: string;
   }
   | { readonly kind: "clear"; readonly ok: boolean; readonly error?: string }
@@ -228,6 +237,14 @@ type Msg =
 interface AppModel {
   readonly state: ReturnType<typeof initialModelState>;
   readonly editor: EditorState;
+  /** Recovered messages after the one currently visible in the editor.
+   * Each remains an independent draft and is surfaced after an explicit
+   * submit; nothing in this queue is auto-submitted. */
+  readonly draftBacklog: readonly string[];
+  /** True while the editor owns the current recovered-draft slot, even if
+   * the user edits that draft down to an empty buffer. Only an explicit
+   * submit advances the backlog. */
+  readonly restoredDraftActive: boolean;
   readonly palette: PaletteState;
   /** Slash-command completion popup state (selection + esc dismissal). */
   readonly completion: CompletionState;
@@ -286,6 +303,8 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
   const initialModel: AppModel = {
     state: initialModelState(),
     editor: createEditorState(),
+    draftBacklog: [],
+    restoredDraftActive: false,
     palette: initialPaletteState,
     completion: initialCompletionState,
     approval: null,
@@ -411,6 +430,64 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       notices: [...model.state.notices, notice(text, kind)],
     },
   });
+
+  /** Apply Server-returned unconsumed input to the editor. The confirmed
+   * collision rule is intentionally lossy: any existing local editor text
+   * wins and ALL returned inputs are discarded. */
+  const restoreInputs = (
+    model: AppModel,
+    inputs: ReadonlyArray<{ readonly sourceText: string }>,
+  ): AppModel => {
+    if (inputs.length === 0 || !editorIsEmpty(model.editor)) return model;
+    const incoming = inputs.map((input) => input.sourceText);
+    if (model.restoredDraftActive) {
+      return {
+        ...model,
+        draftBacklog: [...model.draftBacklog, ...incoming],
+      };
+    }
+    const drafts = [...model.draftBacklog, ...incoming];
+    const first = drafts[0]!;
+    const rest = drafts.slice(1);
+    return {
+      ...model,
+      editor: setEditorText(model.editor, first),
+      draftBacklog: rest,
+      restoredDraftActive: true,
+      completion: initialCompletionState,
+    };
+  };
+
+  /** After the user explicitly submits one restored draft, reveal the next
+   * one without submitting it. */
+  const advanceDraftBacklog = (
+    model: AppModel,
+    editor: EditorState,
+  ): Pick<
+    AppModel,
+    "editor" | "draftBacklog" | "restoredDraftActive"
+  > => {
+    if (!model.restoredDraftActive || !editorIsEmpty(editor)) {
+      return {
+        editor,
+        draftBacklog: model.draftBacklog,
+        restoredDraftActive: model.restoredDraftActive,
+      };
+    }
+    if (model.draftBacklog.length === 0) {
+      return {
+        editor,
+        draftBacklog: [],
+        restoredDraftActive: false,
+      };
+    }
+    const [next, ...rest] = model.draftBacklog;
+    return {
+      editor: setEditorText(editor, next),
+      draftBacklog: rest,
+      restoredDraftActive: true,
+    };
+  };
 
   /** Map the event-derived TuiToolCall into its renderer view model.
    *  `denied` maps to `error`; `durationMs` is omitted while still running. */
@@ -875,7 +952,8 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
               type: "tui:interrupt",
               ok: r.ok,
               status: r.status,
-              body: r.body,
+              returnedInputs: r.returnedInputs,
+              ...(r.error !== undefined ? { error: r.error } : {}),
             } as Msg;
           }),
         ];
@@ -959,7 +1037,8 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
               type: "tui:interrupt",
               ok: r.ok,
               status: r.status,
-              body: r.body,
+              returnedInputs: r.returnedInputs,
+              ...(r.error !== undefined ? { error: r.error } : {}),
             } as Msg;
           }),
         ];
@@ -1035,13 +1114,14 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     editorNext: EditorState,
     text: string,
   ): readonly [AppModel, ...Cmd<Msg>[]] => {
-    if (text.trim() === "") return [{ ...model, editor: editorNext }];
+    const advanced = advanceDraftBacklog(model, editorNext);
+    if (text.trim() === "") return [{ ...model, ...advanced }];
     // Built-in slash commands are dispatched locally and never become a
     // prompt; anything else (custom commands, plain text) goes to the
     // server, which expands commands/*.md templates.
     const withEditor: AppModel = {
       ...model,
-      editor: editorNext,
+      ...advanced,
       completion: initialCompletionState,
     };
     const builtin = runSlashCommand(withEditor, text);
@@ -1057,7 +1137,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           type: "tui:prompted",
           ok: r.ok,
           status: r.status,
-          body: r.body,
+          ...(r.disposition !== undefined
+            ? { disposition: r.disposition }
+            : {}),
+          ...(r.error !== undefined ? { error: r.error } : {}),
         } as Msg;
       }),
     ];
@@ -1157,6 +1240,28 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           cmd(async () => {
             const r = await client.setEffort(ref);
             return commandMsg({ kind: "effort", ref, ...r });
+          }),
+        ];
+      }
+      case "delivery": {
+        if (parsed.args === "") {
+          return [withNotice(model, `delivery: ${client.inputDelivery}`)];
+        }
+        if (parsed.args !== "steer" && parsed.args !== "queue") {
+          return [
+            withNotice(
+              model,
+              "delivery must be steer or queue",
+              "error",
+            ),
+          ];
+        }
+        const ref = parsed.args;
+        return [
+          model,
+          cmd(async () => {
+            const r = await client.setInputDelivery(ref);
+            return commandMsg({ kind: "delivery", ref, ...r });
           }),
         ];
       }
@@ -1293,6 +1398,15 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           withNotice({ ...model, effort }, `effort: ${effort}`),
         ];
       }
+      case "delivery": {
+        if (!o.ok) {
+          return [
+            withNotice(model, o.error ?? "delivery update failed", "error"),
+          ];
+        }
+        const inputDelivery = o.inputDelivery ?? o.ref;
+        return [withNotice(model, `delivery: ${inputDelivery}`)];
+      }
       case "compact": {
         if (o.ok) return [withNotice(model, "compacting context…")];
         if (o.code === "turn_in_flight") {
@@ -1318,6 +1432,8 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           },
           approval: null,
           question: null,
+          draftBacklog: [],
+          restoredDraftActive: false,
           effort: undefined,
           detailsExpanded: false,
           transcriptScroll: 0,
@@ -1357,6 +1473,8 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           },
           approval: null,
           question: null,
+          draftBacklog: [],
+          restoredDraftActive: false,
           effort: undefined,
           detailsExpanded: false,
           transcriptScroll: 0,
@@ -1457,11 +1575,24 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           approval = null;
           question = null;
         }
-        return [{ ...model, state: newState, approval, question, palette }];
+        const next = { ...model, state: newState, approval, question, palette };
+        return [
+          msg.event.type === "input.recovered"
+            ? restoreInputs(next, msg.event.data.inputs)
+            : next,
+        ];
       }
 
       case "tui:prompted":
-        if (msg.ok) return [model];
+        if (msg.ok) {
+          if (msg.disposition === "queued") {
+            return [withNotice(model, "input queued")];
+          }
+          if (msg.disposition === "steered") {
+            return [withNotice(model, "input steered")];
+          }
+          return [model];
+        }
         return [
           {
             ...model,
@@ -1469,7 +1600,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
               ...model.state,
               notices: [
                 ...model.state.notices,
-                notice(`prompt rejected (${msg.status}) ${msg.body}`, "error"),
+                notice(
+                  `prompt rejected (${msg.status}) ${msg.error ?? ""}`.trim(),
+                  "error",
+                ),
               ],
             },
           },
@@ -1484,11 +1618,13 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
         )];
 
       case "tui:interrupt":
-        return msg.ok ? [model] : [withNotice(
-          model,
-          `interrupt failed (${msg.status}) ${msg.body}`,
-          "error",
-        )];
+        return msg.ok
+          ? [restoreInputs(model, msg.returnedInputs)]
+          : [withNotice(
+            model,
+            `interrupt failed (${msg.status}) ${msg.error ?? ""}`.trim(),
+            "error",
+          )];
 
       case "tui:command":
         return applyCommandOutcome(model, msg.outcome);

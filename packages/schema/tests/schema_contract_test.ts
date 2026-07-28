@@ -2,13 +2,19 @@ import { assertEquals } from "@std/assert";
 import { Schema } from "effect";
 import {
   ApprovalDecisionType,
+  ClientConfigView,
+  CreateSessionRes,
   Decision,
+  InterruptRes,
   LiveEvent,
   parseEventLine,
   Part,
+  PromptRes,
   RecordedEvent,
   RuleAction,
   SessionStatus,
+  SetInputDeliveryReq,
+  SetInputDeliveryRes,
   SseEvent,
   StopReason,
   stringifyEventLine,
@@ -115,6 +121,26 @@ Deno.test("ToolResultContent / Part / Decision / LiveEvent / SseEvent / Recorded
       data: { callId: "c1", message: "running" },
     },
   );
+  assertEquals(
+    dec(LiveEvent)({
+      ts: 2,
+      sessionId: "s",
+      type: "input.recovered",
+      data: {
+        reason: "turn_failed",
+        inputs: [{ sourceText: "first" }, { sourceText: "second" }],
+      },
+    }),
+    {
+      ts: 2,
+      sessionId: "s",
+      type: "input.recovered",
+      data: {
+        reason: "turn_failed",
+        inputs: [{ sourceText: "first" }, { sourceText: "second" }],
+      },
+    },
+  );
 
   // SseEvent nests the array-form Union of (RecordedEvent | LiveEvent).
   assertEquals(
@@ -155,6 +181,49 @@ Deno.test("ToolResultContent / Part / Decision / LiveEvent / SseEvent / Recorded
       type: "session.created",
       data: { workspace: "/w", model: "m", mcpServers: [] },
     },
+  );
+});
+
+Deno.test("prompt delivery protocol is closed and carries the server config view", () => {
+  assertEquals(dec(ClientConfigView)({ inputDelivery: "steer" }), {
+    inputDelivery: "steer",
+  });
+  assertEquals(dec(SetInputDeliveryReq)({ inputDelivery: "queue" }), {
+    inputDelivery: "queue",
+  });
+  assertEquals(
+    dec(SetInputDeliveryRes)({
+      ok: true,
+      config: { inputDelivery: "queue" },
+    }),
+    { ok: true, config: { inputDelivery: "queue" } },
+  );
+  for (const disposition of ["started", "steered", "queued"] as const) {
+    assertEquals(dec(PromptRes)({ disposition }), { disposition });
+  }
+  assertEquals(
+    dec(InterruptRes)({
+      ok: true,
+      returnedInputs: [{ sourceText: "restore me" }],
+    }),
+    { ok: true, returnedInputs: [{ sourceText: "restore me" }] },
+  );
+  assertEquals(
+    dec(CreateSessionRes)({
+      sessionId: "s",
+      workspace: "/w",
+      model: "m",
+      mcpServers: [],
+      commands: [],
+      clientConfig: { inputDelivery: "steer" },
+    }).clientConfig,
+    { inputDelivery: "steer" },
+  );
+
+  assertRejectsSync(() => dec(ClientConfigView)({ inputDelivery: "replace" }));
+  assertRejectsSync(() => dec(PromptRes)({ disposition: "accepted" }));
+  assertRejectsSync(() =>
+    dec(InterruptRes)({ ok: true, returnedInputs: ["not structured"] })
   );
 });
 

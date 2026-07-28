@@ -8,3 +8,4 @@ export * from "./src/bootstrap.ts";
 export * from "./src/error.ts";
 export * from "./src/logger.ts";
 export * from "./src/app.ts";
+export * from "./src/configuration.ts";

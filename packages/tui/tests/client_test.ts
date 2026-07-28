@@ -82,6 +82,9 @@ const fakeFetch = () => {
             contextWindow: 100_000 + created,
             mcpServers: [{ id: "fs", toolCount: 3 }],
             commands: [{ name: "review" }],
+            clientConfig: {
+              inputDelivery: created === 1 ? "steer" : "queue",
+            },
           },
           201,
         ),
@@ -101,6 +104,7 @@ const fakeFetch = () => {
           contextWindow: 77_000,
           mcpServers: [{ id: "old-fs", toolCount: 1 }],
           commands: [{ name: "old-review" }],
+          clientConfig: { inputDelivery: "queue" },
         }),
       );
     }
@@ -138,6 +142,25 @@ const fakeFetch = () => {
         ),
       );
     }
+    if (method === "POST" && url.endsWith("/prompt")) {
+      return Promise.resolve(json({ disposition: "started" }, 202));
+    }
+    if (method === "POST" && url.endsWith("/interrupt")) {
+      return Promise.resolve(
+        json({ ok: true, returnedInputs: [{ sourceText: "restore me" }] }),
+      );
+    }
+    if (method === "PUT" && url === `${BASE}/config/input-delivery`) {
+      const body = JSON.parse(String(init?.body)) as {
+        inputDelivery?: "steer" | "queue";
+      };
+      return Promise.resolve(
+        json({
+          ok: true,
+          config: { inputDelivery: body.inputDelivery },
+        }),
+      );
+    }
     if (method === "POST") return Promise.resolve(json({ ok: true }));
     return Promise.resolve(json({ error: { code: "not_found" } }, 404));
   }) as typeof fetch;
@@ -152,6 +175,7 @@ Deno.test("boot creates the first session and opens its stream first", async () 
   assertEquals(client.contextWindow, 100_001);
   assertEquals(client.mcpServers, [{ id: "fs", toolCount: 3 }]);
   assertEquals(client.commands, [{ name: "review" }]);
+  assertEquals(client.inputDelivery, "steer");
   assertEquals(client.streamVersion, 0);
   assert(client.eventsStream instanceof ReadableStream);
 
@@ -163,7 +187,7 @@ Deno.test("boot creates the first session and opens its stream first", async () 
   );
 
   const res = await client.prompt("hello");
-  assertEquals(res.ok, true);
+  assertEquals(res, { ok: true, status: 202, disposition: "started" });
   assertEquals(requests.at(-1), {
     method: "POST",
     url: `${BASE}/sessions/s1/prompt`,
@@ -179,6 +203,7 @@ Deno.test("newSession switches the accessors and bumps streamVersion", async () 
 
   assertEquals(client.sessionId, "s2");
   assertEquals(client.contextWindow, 100_002);
+  assertEquals(client.inputDelivery, "queue");
   assertEquals(client.streamVersion, 1);
   assert(
     client.eventsStream !== firstStream,
@@ -191,7 +216,11 @@ Deno.test("newSession switches the accessors and bumps streamVersion", async () 
 
   // Mutators now target the new session.
   await client.prompt("again");
-  await client.interrupt();
+  assertEquals(await client.interrupt(), {
+    ok: true,
+    status: 200,
+    returnedInputs: [{ sourceText: "restore me" }],
+  });
   await client.approve("ap_1", "once");
   assertEquals(requests.at(-3), {
     method: "POST",
@@ -228,6 +257,7 @@ Deno.test("resume returns info+history and re-opens the stream after the last se
   assertEquals(client.contextWindow, 77_000);
   assertEquals(client.mcpServers, [{ id: "old-fs", toolCount: 1 }]);
   assertEquals(client.commands, [{ name: "old-review" }]);
+  assertEquals(client.inputDelivery, "queue");
   // max(seq) = 7, server replays seq >= cursor => stream opens at cursor 8.
   assertEquals(requests.at(-1), {
     method: "GET",
@@ -266,6 +296,13 @@ Deno.test("session creation rejects success payloads missing required metadata",
         workspace: "/w",
         model: "default",
         mcpServers: [],
+      },
+      {
+        sessionId: "bad",
+        workspace: "/w",
+        model: "default",
+        mcpServers: [],
+        commands: [],
       },
     ]
   ) {
@@ -342,6 +379,22 @@ Deno.test("setEffort posts the effort verbatim", async () => {
   });
 });
 
+Deno.test("setInputDelivery updates the server-owned client config view", async () => {
+  const { fetchImpl, requests } = fakeFetch();
+  const client = await createTuiClient(fetchImpl, { workspace: "/w" });
+
+  assertEquals(client.inputDelivery, "steer");
+  assertEquals(await client.setInputDelivery("queue"), {
+    ok: true,
+    inputDelivery: "queue",
+  });
+  assertEquals(client.inputDelivery, "queue");
+  assertEquals(requests.at(-1), {
+    method: "PUT",
+    url: `${BASE}/config/input-delivery`,
+  });
+});
+
 Deno.test("model and effort reject malformed success payloads", async () => {
   const { fetchImpl: baseFetch } = fakeFetch();
   const malformedFetch = ((
@@ -371,6 +424,55 @@ Deno.test("model and effort reject malformed success payloads", async () => {
   const effort = await client.setEffort("high");
   assertEquals(effort.ok, false);
   assert(effort.error !== undefined);
+});
+
+Deno.test("prompt, interrupt, and delivery reject malformed success payloads", async () => {
+  const { fetchImpl: baseFetch } = fakeFetch();
+  const malformedFetch = ((
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (method === "POST" && url.endsWith("/prompt")) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ accepted: true }), {
+          status: 202,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }
+    if (method === "POST" && url.endsWith("/interrupt")) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, returnedInputs: ["bad"] }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }
+    if (method === "PUT" && url.endsWith("/config/input-delivery")) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, config: {} }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  const client = await createTuiClient(malformedFetch, { workspace: "/w" });
+
+  const prompt = await client.prompt("hello");
+  assertEquals(prompt.ok, false);
+  assert(prompt.error !== undefined);
+
+  const interrupt = await client.interrupt();
+  assertEquals(interrupt.ok, false);
+  assertEquals(interrupt.returnedInputs, []);
+  assert(interrupt.error !== undefined);
+
+  const delivery = await client.setInputDelivery("queue");
+  assertEquals(delivery.ok, false);
+  assert(delivery.error !== undefined);
+  assertEquals(client.inputDelivery, "steer");
 });
 
 Deno.test("compact reports accepted, then turn_in_flight on the busy session", async () => {

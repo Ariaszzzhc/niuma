@@ -7,7 +7,7 @@
 //   - serve: `niuma serve` -> run the HTTP + SSE server on the main thread.
 //
 // One-shot mode wiring (the worker bootstrap lives in worker.ts):
-//   1. Resolve the model (--model wins, else config.toml).
+//   1. Forward the raw --model override, if any, to the Server Worker.
 //   2. setEnvIfAbsent NIUMA_WORKSPACE (inherited by the worker).
 //   3. spawnServerWorker(): Worker + fetch tunnel + ready handshake.
 //   4. runOneshot(prompt, fetch=tunnel.fetch).
@@ -21,7 +21,6 @@ import { runServe } from "./serve.ts";
 import { runAuth } from "./auth_cmd.ts";
 import { spawnServerWorker } from "./worker.ts";
 import { runInteractive } from "./interactive.ts";
-import { niumaPaths, loadMergedConfig, resolveModelRef } from "@niuma/config";
 
 // Configuration comes from config.toml (+ auth.json for credentials) — see
 // @niuma/config. There is deliberately no .env loading and no NIUMA_* env
@@ -52,46 +51,9 @@ const main = async (): Promise<number> => {
   // One-shot mode.
   const { bypassPermissions, prompt, workspace, mockProvider } = parsed.args;
 
-  // Resolve the model: --model flag wins, else config.toml's top-level
-  // `model` (provider/model-id). Validated here so a typo fails fast with a
-  // config pointer instead of surfacing as a provider 404 mid-turn.
-  //
-  // Two values are derived:
-  //   - modelRef: the raw provider/model-id ref, forwarded to the worker so
-  //     its bootstrap binds the provider adapter to the provider the user
-  //     actually picked (not just the config's default one).
-  //   - model: the bare model id recorded on the session and sent to the
-  //     provider in ChatRequests. Undefined under the mock provider — the
-  //     server falls back to the literal "default" (same as the server smoke
-  //     tests), which the scripted mock accepts.
-  let modelRef: string | undefined;
-  let model: string | undefined;
-  if (!mockProvider) {
-    try {
-      // Project-level .niuma/config.toml files (walked up from the workspace)
-      // merge over the global config, so a project can pin its own default
-      // model.
-      const config = await loadMergedConfig(niumaPaths().configFile, {
-        projectDir: workspace,
-      });
-      const ref = parsed.args.model ?? config.model;
-      if (!ref) {
-        console.error(
-          `niuma: no model configured. Set one with --model provider/model-id,` +
-            ` or add e.g.\n  model = "myprovider/my-model"\nto ${niumaPaths().configFile}`,
-        );
-        return 1;
-      }
-      const resolved = resolveModelRef(config, ref);
-      modelRef = ref;
-      model = resolved.modelId;
-    } catch (err) {
-      console.error(
-        `niuma: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return 1;
-    }
-  }
+  // The CLI never reads config.toml. The Server Worker resolves its effective
+  // config and validates this optional raw provider/model-id override.
+  const modelRef = mockProvider ? undefined : parsed.args.model;
 
   // Propagate the resolved workspace to the worker's bootstrap: the
   // permission engine reads NIUMA_WORKSPACE at startup to set its cwd, so
@@ -116,7 +78,6 @@ const main = async (): Promise<number> => {
         prompt,
         workspace,
         bypassPermissions,
-        ...(model !== undefined ? { model } : {}),
       },
       tunnel.fetch,
     );

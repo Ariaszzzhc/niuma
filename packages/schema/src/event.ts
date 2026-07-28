@@ -434,12 +434,32 @@ const TextResetLive_ = Schema.Struct({
 export type TextResetLive = Schema.Schema.Type<typeof TextResetLive_>;
 export const TextResetLive: Schema.Codec<TextResetLive> = TextResetLive_;
 
+// Inputs bound to a turn but not yet consumed when that turn failed. This is
+// deliberately live-only: accepted-but-unconsumed input is runtime state, not
+// part of the durable conversation history. Clients may restore these as
+// drafts, subject to their local editor collision rule.
+// deno-lint-ignore no-slow-types
+const InputRecoveredLive_ = Schema.Struct({
+  ...liveBase,
+  type: Schema.Literal("input.recovered"),
+  data: Schema.Struct({
+    reason: Schema.Literal("turn_failed"),
+    inputs: Schema.Array(Schema.Struct({ sourceText: Schema.String })),
+  }),
+});
+export type InputRecoveredLive = Schema.Schema.Type<
+  typeof InputRecoveredLive_
+>;
+export const InputRecoveredLive: Schema.Codec<InputRecoveredLive> =
+  InputRecoveredLive_;
+
 // deno-lint-ignore no-slow-types
 const LiveEvent_ = Schema.Union([
   ThinkingDeltaLive,
   TextDeltaLive,
   ToolProgressLive,
   TextResetLive,
+  InputRecoveredLive,
 ]);
 export type LiveEvent = Schema.Schema.Type<typeof LiveEvent_>;
 export const LiveEvent: Schema.Codec<LiveEvent> = LiveEvent_;
@@ -450,6 +470,7 @@ const LiveEventType_ = Schema.Literals([
   "text.delta",
   "tool.progress",
   "text.reset",
+  "input.recovered",
 ]);
 export type LiveEventType = Schema.Schema.Type<typeof LiveEventType_>;
 export const LiveEventType: Schema.Codec<LiveEventType> = LiveEventType_;

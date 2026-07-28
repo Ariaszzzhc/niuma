@@ -341,13 +341,13 @@ const parseAuthArgs = (argv: string[]): ParseResult => {
 };
 
 export const printHelp = (): void => {
-  const text = `niuma ${VERSION} — minimal server-first AI coding agent
+  const text = `niuma ${VERSION} — single-binary AI coding agent
 
 USAGE
   niuma [options]                      Interactive TUI (default; needs a TTY).
   niuma tui [options]                  Interactive TUI (same as bare \`niuma\`).
   niuma -p <prompt> [options]          One-shot: run a prompt, print the answer.
-  niuma serve [--port <port>]          Start a local HTTP + SSE server.
+  niuma serve [--port <port>]          Debug the local HTTP + SSE server.
   niuma auth login|logout|status       Manage credentials (see \`niuma auth --help\`).
   niuma --version                      Print version and exit.
   niuma --help                         Show this help.
@@ -373,8 +373,9 @@ SERVE OPTIONS
       --host <addr>                   Bind address (default: 127.0.0.1).
 
 CONFIGURATION
-  ~/.niuma/config.toml                 Providers, models, [core] options. Example:
+  ~/.niuma/config.toml                 Server-owned settings. Example:
                                         model = "deepseek/deepseek-chat"
+                                        input_delivery = "steer"
                                         [core]
                                         log_level = "info"
                                         [provider.deepseek]
@@ -400,6 +401,10 @@ CONFIGURATION
                                       .niuma/config.toml loads, closest wins).
                                       Merged over the global file — e.g. pin a
                                       project model: model = "deepseek/deepseek-chat"
+                                      /delivery steer|queue writes the closest
+                                      existing project config, else the global
+                                      file. Config is read at Server startup;
+                                      there is no automatic reload.
 
 ENVIRONMENT (path overrides only — no provider configuration)
   NIUMA_DATA_DIR                       Override data dir (also relocates config).
@@ -414,7 +419,7 @@ trigger an interactive prompt on stdin:
 };
 
 export const printServeHelp = (): void => {
-  const text = `niuma ${VERSION} serve — local HTTP + SSE server
+  const text = `niuma ${VERSION} serve — debug HTTP + SSE server
 
 USAGE
   niuma serve [--port <port>] [--host <addr>]
@@ -424,8 +429,9 @@ OPTIONS
       --host <addr>       Bind address (default: 127.0.0.1).
   -h, --help              Show this help.
 
-The server exposes the REST + SSE API on the bound address. See \`niuma --help\`
-for configuration (config.toml + auth.json).
+This temporary debugging command exposes the same Server Worker REST + SSE API
+directly on the bound address. The primary TUI and one-shot entrypoints keep
+Client + Server packaged in one binary. See \`niuma --help\` for configuration.
 `;
   console.log(text);
 };

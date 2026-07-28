@@ -40,4 +40,6 @@ export type {
   ToolPipeline,
   ToolRunContext,
   ToolRunResult,
+  TurnCloseDecision,
+  TurnInput,
 } from "./src/deps.ts";

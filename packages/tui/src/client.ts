@@ -46,10 +46,14 @@ import {
   CreateSessionRes,
   decode,
   GetSessionRes,
+  type InputDelivery,
+  InterruptRes as InterruptResponse,
+  PromptRes as PromptResponse,
   type RecordedEvent,
   type SessionInfo,
   SessionListRes,
   SetEffortRes as SetEffortResponse,
+  SetInputDeliveryRes as SetInputDeliveryResponse,
   SetModelRes as SetModelResponse,
 } from "@niuma/schema";
 
@@ -78,6 +82,29 @@ export interface ClientResult {
   readonly ok: boolean;
   readonly status: number;
   readonly body: string;
+}
+
+export interface PromptResult {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly disposition?: "started" | "steered" | "queued";
+  readonly code?: string;
+  readonly error?: string;
+}
+
+export interface InterruptResult {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly returnedInputs: ReadonlyArray<{ readonly sourceText: string }>;
+  readonly code?: string;
+  readonly error?: string;
+}
+
+export interface SetInputDeliveryResult {
+  readonly ok: boolean;
+  readonly inputDelivery?: InputDelivery;
+  readonly code?: string;
+  readonly error?: string;
 }
 
 /** Parsed outcome of POST /sessions/:id/model. On success carries the
@@ -134,6 +161,8 @@ export interface TuiClient {
   /** Custom slash commands visible to the current session (user + project
    * commands/*.md). Empty when none are defined. */
   readonly commands: ReadonlyArray<ClientCommand>;
+  /** Server-owned prompt admission mode currently in force. */
+  readonly inputDelivery: InputDelivery;
   /** The CURRENT open SSE `/events` body; the app consumes it via
    * `parseSseStream`. Replaced on session switch — pair with
    * `streamVersion`. */
@@ -143,7 +172,7 @@ export interface TuiClient {
    * the old pump and re-read `eventsStream` (see the banner contract). */
   readonly streamVersion: number;
   /** Submit a prompt to the current session (kicks off an agent turn). */
-  readonly prompt: (text: string) => Promise<ClientResult>;
+  readonly prompt: (text: string) => Promise<PromptResult>;
   /** Resolve a pending approval of the current session. */
   readonly approve: (
     approvalId: string,
@@ -151,7 +180,7 @@ export interface TuiClient {
     feedback?: string,
   ) => Promise<ClientResult>;
   /** Interrupt the current session's in-flight turn (ctrl+c). */
-  readonly interrupt: () => Promise<ClientResult>;
+  readonly interrupt: () => Promise<InterruptResult>;
   /** Create a fresh session and switch to it (SSE re-opened at cursor 0,
    * `streamVersion` bumped). Rejects on a server/stream failure. */
   readonly newSession: () => Promise<void>;
@@ -169,6 +198,11 @@ export interface TuiClient {
   /** Set the current session's thinking effort (provider-defined string,
    * passed through verbatim). */
   readonly setEffort: (effort: string) => Promise<SetEffortResult>;
+  /** Request an explicit Server config update. The returned value is the
+   * authoritative mode after persistence succeeds. */
+  readonly setInputDelivery: (
+    inputDelivery: InputDelivery,
+  ) => Promise<SetInputDeliveryResult>;
   /** Ask the server to compact the current session's context. Rejected with
    * `code: "turn_in_flight"` while a turn is active. */
   readonly compact: () => Promise<CompactResult>;
@@ -223,6 +257,7 @@ interface SessionState {
   contextWindow: number | null;
   mcpServers: ReadonlyArray<{ id: string; toolCount: number }>;
   commands: ReadonlyArray<ClientCommand>;
+  inputDelivery: InputDelivery;
   eventsStream: ReadableStream<Uint8Array>;
   streamVersion: number;
 }
@@ -232,7 +267,14 @@ const createSessionOnServer = async (
   fetchImpl: typeof fetch,
   opts: TuiClientOptions,
 ): Promise<
-  Pick<SessionState, "sessionId" | "contextWindow" | "mcpServers" | "commands">
+  Pick<
+    SessionState,
+    | "sessionId"
+    | "contextWindow"
+    | "mcpServers"
+    | "commands"
+    | "inputDelivery"
+  >
 > => {
   const createBody: Record<string, unknown> = { workspace: opts.workspace };
   if (opts.model !== undefined) createBody.model = opts.model;
@@ -257,6 +299,7 @@ const createSessionOnServer = async (
       contextWindow,
       mcpServers: created.mcpServers,
       commands: created.commands,
+      inputDelivery: created.clientConfig.inputDelivery,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -321,6 +364,7 @@ export const createTuiClient = async (
     state.contextWindow = next.contextWindow;
     state.mcpServers = next.mcpServers;
     state.commands = next.commands;
+    state.inputDelivery = next.inputDelivery;
     state.eventsStream = stream;
     state.streamVersion += 1;
   };
@@ -355,19 +399,43 @@ export const createTuiClient = async (
     state.contextWindow = payload.contextWindow ?? null;
     state.mcpServers = payload.mcpServers;
     state.commands = payload.commands;
+    state.inputDelivery = payload.clientConfig.inputDelivery;
     state.eventsStream = stream;
     state.streamVersion += 1;
     return { info: payload.info, history };
   };
 
   // 3. Mutators (always target the CURRENT session) ------------------------
-  const prompt = (text: string): Promise<ClientResult> =>
-    request(
-      fetchImpl,
-      "POST",
-      `${BASE}/sessions/${enc(state.sessionId)}/prompt`,
-      { text },
-    );
+  const prompt = async (text: string): Promise<PromptResult> => {
+    try {
+      const res = await fetchImpl(
+        `${BASE}/sessions/${enc(state.sessionId)}/prompt`,
+        {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify({ text }),
+        },
+      );
+      const responseText = await safeText(res);
+      if (!res.ok) {
+        const { code, message } = errorFields(responseText);
+        return {
+          ok: false,
+          status: res.status,
+          ...(code !== undefined ? { code } : {}),
+          error: message ?? (responseText || `prompt failed (${res.status})`),
+        };
+      }
+      const body = decode(PromptResponse)(tryParseJson(responseText));
+      return { ok: true, status: res.status, disposition: body.disposition };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 0,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  };
 
   const approve = (
     approvalId: string,
@@ -381,13 +449,39 @@ export const createTuiClient = async (
       feedback !== undefined ? { decision, feedback } : { decision },
     );
 
-  const interrupt = (): Promise<ClientResult> =>
-    request(
-      fetchImpl,
-      "POST",
-      `${BASE}/sessions/${enc(state.sessionId)}/interrupt`,
-      {},
-    );
+  const interrupt = async (): Promise<InterruptResult> => {
+    try {
+      const res = await fetchImpl(
+        `${BASE}/sessions/${enc(state.sessionId)}/interrupt`,
+        { method: "POST", headers: jsonHeaders, body: "{}" },
+      );
+      const responseText = await safeText(res);
+      if (!res.ok) {
+        const { code, message } = errorFields(responseText);
+        return {
+          ok: false,
+          status: res.status,
+          returnedInputs: [],
+          ...(code !== undefined ? { code } : {}),
+          error: message ??
+            (responseText || `interrupt failed (${res.status})`),
+        };
+      }
+      const body = decode(InterruptResponse)(tryParseJson(responseText));
+      return {
+        ok: true,
+        status: res.status,
+        returnedInputs: body.returnedInputs,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 0,
+        returnedInputs: [],
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  };
 
   // 4. Built-in command endpoints (model / effort / compact) ----------------
   const setModel = async (model: string): Promise<SetModelResult> => {
@@ -458,6 +552,38 @@ export const createTuiClient = async (
     }
   };
 
+  const setInputDelivery = async (
+    inputDelivery: InputDelivery,
+  ): Promise<SetInputDeliveryResult> => {
+    try {
+      const res = await fetchImpl(`${BASE}/config/input-delivery`, {
+        method: "PUT",
+        headers: jsonHeaders,
+        body: JSON.stringify({ inputDelivery }),
+      });
+      const responseText = await safeText(res);
+      if (!res.ok) {
+        const { code, message } = errorFields(responseText);
+        return {
+          ok: false,
+          ...(code !== undefined ? { code } : {}),
+          error: message ??
+            (responseText || `delivery update failed (${res.status})`),
+        };
+      }
+      const body = decode(SetInputDeliveryResponse)(
+        tryParseJson(responseText),
+      );
+      state.inputDelivery = body.config.inputDelivery;
+      return { ok: true, inputDelivery: state.inputDelivery };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  };
+
   const compact = async (): Promise<CompactResult> => {
     try {
       const res = await fetchImpl(
@@ -493,6 +619,9 @@ export const createTuiClient = async (
     get commands() {
       return state.commands;
     },
+    get inputDelivery() {
+      return state.inputDelivery;
+    },
     get eventsStream() {
       return state.eventsStream;
     },
@@ -507,6 +636,7 @@ export const createTuiClient = async (
     resume,
     setModel,
     setEffort,
+    setInputDelivery,
     compact,
   };
 };

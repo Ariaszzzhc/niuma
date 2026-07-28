@@ -363,6 +363,11 @@ export const reduceEvent = (
       // thinking — the whole in-flight sample is discarded).
       return { ...model, streaming: null };
 
+    case "input.recovered":
+      // App-level editor state owns draft restoration. The transcript model
+      // deliberately has no second copy of those unconsumed inputs.
+      return model;
+
     case "assistant.message": {
       const toolBatch = model.toolBatch + 1;
       const streamingText = model.streaming?.text ?? "";

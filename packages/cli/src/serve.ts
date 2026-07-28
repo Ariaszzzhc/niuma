@@ -1,4 +1,4 @@
-// `niuma serve` — local HTTP + SSE server.
+// `niuma serve` — temporary/debug HTTP + SSE server surface.
 //
 // Unlike one-shot mode, the serve subcommand runs the server on the MAIN
 // thread and exposes it over plain TCP via Deno.serve. Remote HTTP clients

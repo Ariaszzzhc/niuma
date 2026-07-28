@@ -1,5 +1,11 @@
-import { Cause, Context, Data, Effect, Fiber, Ref } from "effect";
-import type { Part, SessionInfo } from "@niuma/schema";
+import { Cause, Context, Data, Effect, Fiber, Ref, Semaphore } from "effect";
+import type {
+  InputDelivery,
+  Part,
+  PromptRes,
+  SessionInfo,
+  UserMessageEvent,
+} from "@niuma/schema";
 import { compactSession, runTurn } from "@niuma/agent";
 import {
   expandCommandTemplate,
@@ -17,7 +23,7 @@ import {
 
 export interface SessionManager {
   readonly create: (
-    input: { workspace: string; model: string },
+    input: { workspace: string; model?: string },
   ) => Effect.Effect<SessionInfo, never, never>;
   readonly get: (
     id: string,
@@ -43,8 +49,8 @@ export interface SessionManager {
   ) => Effect.Effect<SetEffortResult, Error, never>;
   readonly prompt: (
     id: string,
-    parts: ReadonlyArray<Part>,
-  ) => Effect.Effect<void, never, never>;
+    input: SubmittedInput,
+  ) => Effect.Effect<PromptResult, never, never>;
   /** Compact the session's history in the background (the /compact command).
    * Fails with TurnInFlightError while a turn/compaction is running;
    * otherwise forks compactSession (@niuma/agent) and returns immediately —
@@ -53,7 +59,13 @@ export interface SessionManager {
   readonly compact: (
     id: string,
   ) => Effect.Effect<{ accepted: true }, TurnInFlightError, never>;
-  readonly interrupt: (id: string) => Effect.Effect<void, never, never>;
+  readonly interrupt: (
+    id: string,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly sourceText: string }>,
+    never,
+    never
+  >;
   readonly awaitAll: () => Effect.Effect<void, never, never>;
 }
 
@@ -78,6 +90,15 @@ export interface SetModelResult {
 export interface SetEffortResult {
   readonly ok: true;
   readonly effort: string;
+}
+
+export interface SubmittedInput {
+  readonly parts: ReadonlyArray<Part>;
+  readonly sourceText: string;
+}
+
+export interface PromptResult {
+  readonly disposition: PromptRes["disposition"];
 }
 
 /** SessionManager.compact fails with this when the session still has a turn
@@ -225,26 +246,88 @@ export const getSessionEnv = (
 
 export interface SessionManagerInfra extends AgentInfra {}
 
+interface PendingInput {
+  /** Expanded content recorded and sent to the provider on consumption. */
+  readonly parts: ReadonlyArray<Part>;
+  /** Exact client text returned when the input is not consumed. */
+  readonly sourceText: string;
+  /** Included on user.message only when slash-command expansion changed the
+   * provider-facing content. */
+  readonly eventSourceText?: string;
+}
+
+type TurnPhase = "accepting" | "interrupting" | "closing";
+type TurnTermination = "completed" | "interrupted" | "failed";
+
+interface ActiveTurn {
+  readonly kind: "turn";
+  readonly token: object;
+  readonly controller: AbortController;
+  phase: TurnPhase;
+  readonly pending: PendingInput[];
+  fiber?: Fiber.Fiber<unknown, unknown>;
+}
+
+interface ActiveCompaction {
+  readonly kind: "compaction";
+  readonly token: object;
+  fiber?: Fiber.Fiber<unknown, unknown>;
+}
+
+type ActiveExecution = ActiveTurn | ActiveCompaction;
+
+interface SessionExecution {
+  active?: ActiveExecution;
+  /** Inputs not yet bound to a Turn. Each entry becomes its own future Turn. */
+  readonly fifo: PendingInput[];
+}
+
 export const makeSessionManager = (
   infra: SessionManagerInfra,
   env: SessionManagerEnv = { mcpServers: [] },
 ): Effect.Effect<SessionManager, never, Kernel> =>
   Effect.gen(function* () {
     const kernel = yield* Kernel;
-    const inflight = yield* Ref.make(
-      new Map<string, Fiber.Fiber<unknown, unknown>>(),
-    );
     const overrides = yield* Ref.make(new Map<string, SessionOverride>());
+    const executions = new Map<string, SessionExecution>();
+    const locks = new Map<
+      string,
+      ReturnType<typeof Semaphore.makeUnsafe>
+    >();
+
+    const executionFor = (id: string): SessionExecution => {
+      const existing = executions.get(id);
+      if (existing) return existing;
+      const created: SessionExecution = { fifo: [] };
+      executions.set(id, created);
+      return created;
+    };
+
+    const lockFor = (
+      id: string,
+    ): ReturnType<typeof Semaphore.makeUnsafe> => {
+      const existing = locks.get(id);
+      if (existing) return existing;
+      const created = Semaphore.makeUnsafe(1);
+      locks.set(id, created);
+      return created;
+    };
+
+    const withSessionLock = <A, E, R>(
+      id: string,
+      effect: Effect.Effect<A, E, R>,
+    ): Effect.Effect<A, E, R> => lockFor(id).withPermit(effect);
 
     const create: SessionManager["create"] = ({ workspace, model }) =>
       Effect.gen(function* () {
         const sessionId = newSessionId();
+        const sessionModel = (model ?? infra.defaultModel) || "default";
         yield* kernel.append({
           type: "session.created",
           sessionId,
           data: {
             workspace,
-            model,
+            model: sessionModel,
             ...(infra.defaultContextWindow !== undefined
               ? { contextWindow: infra.defaultContextWindow }
               : {}),
@@ -258,7 +341,7 @@ export const makeSessionManager = (
         return {
           sessionId,
           workspace,
-          model,
+          model: sessionModel,
           createdAt: now(),
           updatedAt: now(),
           status: "idle",
@@ -399,16 +482,145 @@ export const makeSessionManager = (
         return { ok: true as const, effort };
       });
 
-    // Run a turn to completion in the background. The agent loop appends
-    // turn.started / assistant.message / tool.* / turn.completed events as it
-    // goes; the kernel fans those out to the JSONL log + projection + SSE bus.
-    // Failure isolation: any error is converted to an error.occurred event so
-    // the JSONL stays the source of truth and the fiber always exits cleanly.
-    const runAgentTurn = (
+    // Input Coordinator ----------------------------------------------------
+    //
+    // `boundPending` and FIFO are intentionally different state. The former
+    // belongs to the active Turn and is recoverable on interrupt/failure; the
+    // latter has not been bound to any Turn and continues automatically.
+    // Every transition below runs under the same per-session semaphore.
+
+    const startTurnLocked = (
       sessionId: string,
-      parts: ReadonlyArray<Part>,
+      state: SessionExecution,
+      input: PendingInput,
     ): Effect.Effect<void, never, never> =>
       Effect.gen(function* () {
+        const token = {};
+        const controller = new AbortController();
+        const active: ActiveTurn = {
+          kind: "turn",
+          token,
+          controller,
+          phase: "accepting",
+          pending: [input],
+        };
+        state.active = active;
+        const fiber = yield* Effect.forkDetach(
+          runAgentTurn(sessionId, token, controller),
+        );
+        active.fiber = fiber;
+      });
+
+    const turnInputFor = (
+      sessionId: string,
+      token: object,
+    ) => ({
+      claim: (): Effect.Effect<ReadonlyArray<UserMessageEvent>> =>
+        withSessionLock(
+          sessionId,
+          Effect.uninterruptible(
+            Effect.gen(function* () {
+              const active = executionFor(sessionId).active;
+              if (
+                active?.kind !== "turn" ||
+                active.token !== token ||
+                active.phase !== "accepting"
+              ) {
+                return [];
+              }
+
+              const recorded: UserMessageEvent[] = [];
+              // Append and remove one-by-one. If a later append defects, every
+              // earlier item is already consumed and every later item remains
+              // recoverable; no input occupies a "removed but not recorded"
+              // state.
+              while (active.pending.length > 0) {
+                const input = active.pending[0];
+                const event = yield* kernel.append({
+                  type: "user.message",
+                  sessionId,
+                  data: {
+                    parts: [...input.parts],
+                    ...(input.eventSourceText !== undefined
+                      ? { sourceText: input.eventSourceText }
+                      : {}),
+                  },
+                });
+                active.pending.shift();
+                recorded.push(event as UserMessageEvent);
+              }
+              return recorded;
+            }),
+          ),
+        ),
+
+      tryClose: () =>
+        withSessionLock(
+          sessionId,
+          Effect.sync(() => {
+            const active = executionFor(sessionId).active;
+            if (active?.kind !== "turn" || active.token !== token) {
+              return "interrupted" as const;
+            }
+            if (active.phase === "interrupting") {
+              return "interrupted" as const;
+            }
+            if (active.phase === "closing") {
+              return "close" as const;
+            }
+            if (active.pending.length > 0) {
+              return "continue" as const;
+            }
+            active.phase = "closing";
+            return "close" as const;
+          }),
+        ),
+    });
+
+    const finalizeTurn = (
+      sessionId: string,
+      token: object,
+      termination: TurnTermination,
+    ): Effect.Effect<
+      ReadonlyArray<{ readonly sourceText: string }>,
+      never,
+      never
+    > =>
+      withSessionLock(
+        sessionId,
+        Effect.gen(function* () {
+          const state = executionFor(sessionId);
+          const active = state.active;
+          if (active?.kind !== "turn" || active.token !== token) {
+            return [];
+          }
+
+          const recovered = termination === "failed"
+            ? active.pending.splice(0).map(({ sourceText }) => ({ sourceText }))
+            : [];
+          state.active = undefined;
+
+          const next = state.fifo.shift();
+          if (next) {
+            yield* startTurnLocked(sessionId, state, next);
+          }
+          return recovered;
+        }),
+      );
+
+    // Run a turn to completion in the background. Inputs are not recorded at
+    // admission: runTurn claims them immediately before each provider request.
+    // Terminal failure returns whatever remains bound-but-unconsumed through a
+    // live-only input.recovered event; explicit interrupt returns it directly
+    // to the requesting client and therefore emits no duplicate live event.
+    const runAgentTurn = (
+      sessionId: string,
+      token: object,
+      controller: AbortController,
+    ): Effect.Effect<void, never, never> => {
+      let termination: TurnTermination = "failed";
+
+      return Effect.gen(function* () {
         const info = yield* kernel.projection().pipe(
           Effect.flatMap((p) =>
             Effect.promise(() => p.getSession(sessionId))
@@ -416,9 +628,6 @@ export const makeSessionManager = (
         );
         const workspace = info?.workspace ?? infra.defaultWorkspace;
         const model = info?.model ?? infra.defaultModel;
-        // Per-session overrides (setModel/setEffort) win over the boot
-        // defaults; the model name itself comes from the projection, which
-        // setModel already updated.
         const ov = (yield* Ref.get(overrides)).get(sessionId);
         const provider = ov?.provider ?? infra.provider;
         const contextWindow = ov?.contextWindow ?? infra.defaultContextWindow;
@@ -428,100 +637,79 @@ export const makeSessionManager = (
           ? { ...baseThinking, effort: ov.effort }
           : baseThinking;
 
-        // Record the user message before sampling — runTurn drains its steer
-        // queue at each loop top but does not prepend an initial user.message.
-        // A `/name args` prompt is first expanded against the custom command
-        // templates; the typed input survives as sourceText for display.
-        const expanded = yield* expandSlashCommand(infra, workspace, parts);
-        yield* kernel.append({
-          type: "user.message",
-          sessionId,
-          data: {
-            parts: [...expanded.parts],
-            ...(expanded.sourceText !== undefined
-              ? { sourceText: expanded.sourceText }
-              : {}),
-          },
-        });
-
-        const event_log = kernelEventLog(kernel);
-        const approvals = kernelApprovalGateway(kernel);
-        const emitLive = kernelEmitLive(kernel);
-
-        yield* runTurn(sessionId, {
-          event_log,
+        const result = yield* runTurn(sessionId, {
+          event_log: kernelEventLog(kernel),
           provider,
           tools: infra.tools,
-          approvals,
+          approvals: kernelApprovalGateway(kernel),
           model,
           workspace,
-          emitLive,
+          emitLive: kernelEmitLive(kernel),
+          signal: controller.signal,
+          input: turnInputFor(sessionId, token),
           ...(contextWindow !== undefined ? { contextWindow } : {}),
           ...(maxTokens !== undefined ? { maxTokens } : {}),
           ...(thinking !== undefined ? { thinking } : {}),
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.gen(function* () {
-              // Failure isolation. runTurn records error.occurred for every
-              // provider-classified failure (transient retries + terminal), so
-              // reaching here means a defect/panic or interruption outside the
-              // provider path — never a typed provider error. Label retryable
-              // by inspection: a pure defect (a Die with no interrupt) is a
-              // genuine programming error → terminal; an interrupt (user or
-              // manager cancelled the turn) or any combined/unknown cause
-              // defaults to retryable so the UI does not mark the session
-              // permanently failed. (Equivalent to `!Cause.isDieType`; this
-              // effect build exposes hasDies/hasInterrupts instead.)
-              const retryable = !Cause.hasDies(cause) ||
-                Cause.hasInterrupts(cause);
+        });
+        termination = result.stopReason === "abort"
+          ? "interrupted"
+          : result.stopReason === "error"
+          ? "failed"
+          : "completed";
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            termination = controller.signal.aborted ? "interrupted" : "failed";
+            if (termination === "failed") {
               yield* kernel.append({
                 type: "error.occurred",
                 sessionId,
                 data: {
                   message: `turn failed: ${Cause.pretty(cause)}`,
-                  retryable,
+                  retryable: false,
                 },
               });
-            })
-          ),
-          Effect.ensuring(
-            Effect.gen(function* () {
-              yield* setStatus(sessionId, "idle");
-            }),
-          ),
-        );
-      }).pipe(
+              // A defect bypasses runTurn's normal terminal event; close the
+              // visible Turn explicitly so clients do not remain "running".
+              yield* kernel.append({
+                type: "turn.aborted",
+                sessionId,
+                data: { reason: "turn failed" },
+              });
+            } else {
+              yield* kernel.append({
+                type: "turn.aborted",
+                sessionId,
+                data: { reason: "signal" },
+              });
+            }
+          })
+        ),
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* setStatus(sessionId, "idle");
+            const recovered = yield* finalizeTurn(
+              sessionId,
+              token,
+              termination,
+            );
+            if (recovered.length > 0) {
+              yield* kernel.live({
+                type: "input.recovered",
+                ts: now(),
+                sessionId,
+                data: { reason: "turn_failed", inputs: [...recovered] },
+              });
+            }
+          }),
+        ),
         Effect.catchCause((cause) =>
-          // Last-resort isolation so a panic in dep wiring does not crash the
-          // background fiber silently.
           Effect.sync(() => {
             console.error(`runAgentTurn(${sessionId}) crashed:`, cause);
           })
         ),
       );
-
-    // Register a background fiber for a session and drop it from the
-    // inflight map once it finishes, so interrupt/awaitAll/compact don't
-    // observe stale entries (shared by prompt and compact).
-    const registerInflight = (
-      id: string,
-      fiber: Fiber.Fiber<unknown, unknown>,
-    ): Effect.Effect<void, never, never> =>
-      Effect.gen(function* () {
-        yield* Ref.update(inflight, (m) => new Map(m).set(id, fiber));
-        yield* Effect.forkDetach(
-          Fiber.join(fiber).pipe(
-            Effect.flatMap(() =>
-              Ref.update(inflight, (m) => {
-                if (m.get(id) !== fiber) return m;
-                const next = new Map(m);
-                next.delete(id);
-                return next;
-              })
-            ),
-          ),
-        );
-      });
+    };
 
     // Background compaction (the /compact command): compactSession replays
     // the log, summarizes, and appends a compaction.performed event.
@@ -530,8 +718,25 @@ export const makeSessionManager = (
     // last-resort console.error for dep-wiring panics. (compactSession
     // itself already falls back to the template summary when the LLM call
     // fails, so reaching catchCause means replay/append broke.)
+    const finalizeCompaction = (
+      sessionId: string,
+      token: object,
+    ): Effect.Effect<void, never, never> =>
+      withSessionLock(
+        sessionId,
+        Effect.gen(function* () {
+          const state = executionFor(sessionId);
+          const active = state.active;
+          if (active?.kind !== "compaction" || active.token !== token) return;
+          state.active = undefined;
+          const next = state.fifo.shift();
+          if (next) yield* startTurnLocked(sessionId, state, next);
+        }),
+      );
+
     const runCompaction = (
       sessionId: string,
+      token: object,
     ): Effect.Effect<void, never, never> =>
       Effect.gen(function* () {
         const info = yield* kernel.projection().pipe(
@@ -561,6 +766,7 @@ export const makeSessionManager = (
           ),
         );
       }).pipe(
+        Effect.ensuring(finalizeCompaction(sessionId, token)),
         Effect.catchCause((cause) =>
           Effect.sync(() => {
             console.error(`runCompaction(${sessionId}) crashed:`, cause);
@@ -568,49 +774,141 @@ export const makeSessionManager = (
         ),
       );
 
-    const prompt: SessionManager["prompt"] = (id, parts) =>
+    const startCompactionLocked = (
+      sessionId: string,
+      state: SessionExecution,
+    ): Effect.Effect<void, never, never> =>
       Effect.gen(function* () {
-        // Cancel any in-flight turn for this session before starting a new one.
-        const existing = (yield* Ref.get(inflight)).get(id);
-        if (existing) {
-          yield* Fiber.interrupt(existing);
-        }
-        const fiber = yield* Effect.forkDetach(runAgentTurn(id, parts));
-        yield* registerInflight(id, fiber);
+        const token = {};
+        const active: ActiveCompaction = { kind: "compaction", token };
+        state.active = active;
+        const fiber = yield* Effect.forkDetach(
+          runCompaction(sessionId, token),
+        );
+        active.fiber = fiber;
+      });
+
+    const prompt: SessionManager["prompt"] = (id, input) =>
+      Effect.gen(function* () {
+        const info = yield* kernel.projection().pipe(
+          Effect.flatMap((p) => Effect.promise(() => p.getSession(id))),
+        );
+        const workspace = info?.workspace ?? infra.defaultWorkspace;
+        const expanded = yield* expandSlashCommand(
+          infra,
+          workspace,
+          input.parts,
+        );
+        const pending: PendingInput = {
+          parts: expanded.parts,
+          sourceText: input.sourceText,
+          ...(expanded.sourceText !== undefined
+            ? { eventSourceText: expanded.sourceText }
+            : {}),
+        };
+
+        return yield* withSessionLock(
+          id,
+          Effect.gen(function* () {
+            const state = executionFor(id);
+            const active = state.active;
+            if (!active) {
+              yield* startTurnLocked(id, state, pending);
+              return { disposition: "started" as const };
+            }
+
+            const mode: InputDelivery = infra.inputDelivery?.() ?? "steer";
+            if (
+              active.kind === "turn" &&
+              active.phase === "accepting" &&
+              mode === "steer"
+            ) {
+              active.pending.push(pending);
+              return { disposition: "steered" as const };
+            }
+
+            // Queue mode, compaction, or a Turn whose admission has already
+            // closed all land in the future-Turn FIFO.
+            state.fifo.push(pending);
+            return { disposition: "queued" as const };
+          }),
+        );
       });
 
     const compact: SessionManager["compact"] = (id) =>
-      Effect.gen(function* () {
-        // A turn (or an earlier compaction) is still writing to this log —
-        // refuse rather than interleave replay/append with live turn events.
-        const existing = (yield* Ref.get(inflight)).get(id);
-        if (existing) {
-          return yield* Effect.fail(new TurnInFlightError({ sessionId: id }));
-        }
-        const fiber = yield* Effect.forkDetach(runCompaction(id));
-        yield* registerInflight(id, fiber);
-        return { accepted: true as const };
-      });
+      withSessionLock(
+        id,
+        Effect.gen(function* () {
+          const state = executionFor(id);
+          if (state.active) {
+            return yield* Effect.fail(
+              new TurnInFlightError({ sessionId: id }),
+            );
+          }
+          yield* startCompactionLocked(id, state);
+          return { accepted: true as const };
+        }),
+      );
 
     const interrupt: SessionManager["interrupt"] = (id) =>
       Effect.gen(function* () {
-        const m = yield* Ref.get(inflight);
-        const f = m.get(id);
-        if (!f) return;
-        yield* Fiber.interrupt(f);
-        yield* Ref.update(inflight, (mm) => {
-          if (mm.get(id) !== f) return mm;
-          const next = new Map(mm);
-          next.delete(id);
-          return next;
+        // Pin this request to the Turn visible when the request enters the
+        // coordinator. If that Turn finalizes while we are waiting for the
+        // semaphore and promotes a FIFO successor, the token mismatch below
+        // prevents a late interrupt from accidentally aborting the successor.
+        const observedToken = yield* Effect.sync(() => {
+          const active = executionFor(id).active;
+          return active?.kind === "turn" ? active.token : undefined;
         });
+        if (observedToken === undefined) return [];
+
+        const target = yield* withSessionLock(
+          id,
+          Effect.sync(() => {
+            const active = executionFor(id).active;
+            if (
+              active?.kind !== "turn" ||
+              active.token !== observedToken ||
+              active.phase === "closing"
+            ) {
+              return {
+                returnedInputs: [] as Array<{ sourceText: string }>,
+                fiber: undefined,
+              };
+            }
+            if (active.phase === "interrupting") {
+              return {
+                returnedInputs: [] as Array<{ sourceText: string }>,
+                fiber: active.fiber,
+              };
+            }
+            active.phase = "interrupting";
+            const returnedInputs = active.pending.splice(0).map(
+              ({ sourceText }) => ({ sourceText }),
+            );
+            active.controller.abort("user interrupt");
+            return { returnedInputs, fiber: active.fiber };
+          }),
+        );
+        // Normal interrupt is cooperative: provider/tool/approval paths all
+        // observe the AbortSignal and let runTurn append turn.aborted. Waiting
+        // here means FIFO promotion has completed before the response returns.
+        if (target.fiber) yield* Fiber.await(target.fiber);
+        return target.returnedInputs;
       });
 
     const awaitAll: SessionManager["awaitAll"] = () =>
       Effect.gen(function* () {
-        const m = yield* Ref.get(inflight);
-        const fibers = Array.from(m.values());
-        yield* Fiber.awaitAll(fibers);
+        while (true) {
+          const fibers = Array.from(executions.values())
+            .map((state) => state.active?.fiber)
+            .filter(
+              (fiber): fiber is Fiber.Fiber<unknown, unknown> =>
+                fiber !== undefined,
+            );
+          if (fibers.length === 0) return;
+          yield* Fiber.awaitAll(fibers);
+        }
       });
 
     return {

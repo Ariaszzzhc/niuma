@@ -7,9 +7,11 @@ import {
   decode,
   EventPage,
   GetSessionRes,
+  InterruptRes,
   PromptRes,
   SessionListRes,
   SetEffortRes,
+  SetInputDeliveryRes,
   SetModelRes,
 } from "@niuma/schema";
 import { Kernel } from "./kernel.ts";
@@ -62,6 +64,7 @@ export const createServerApp = async (
     ...(boot.infra.globalConfigDir !== undefined
       ? { globalConfigDir: boot.infra.globalConfigDir }
       : {}),
+    configuration: boot.configuration,
   });
 
   const app = new Hono();
@@ -129,7 +132,13 @@ export const createServerApp = async (
   app.post("/sessions/:id/interrupt", async (c) => {
     const id = ensureSessionId(c.req.param("id"));
     const out = await handlers.interrupt(id);
-    return c.json(out);
+    return c.json(decode(InterruptRes)(out));
+  });
+
+  app.put("/config/input-delivery", async (c) => {
+    const raw = await safeJson(c);
+    const out = await handlers.setInputDelivery(raw);
+    return c.json(decode(SetInputDeliveryRes)(out));
   });
 
   app.post("/sessions/:id/model", async (c) => {

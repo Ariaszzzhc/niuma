@@ -2,7 +2,7 @@
 // @niuma/tui — built-in slash command registry + parsing (pure)
 // ---------------------------------------------------------------------------
 // The TUI owns a set of BUILT-IN slash commands (/help /exit /model /effort
-// /compact /clear /resume /mcp, plus the /quit alias) that are handled
+// /delivery /compact /clear /resume /mcp, plus the /quit alias) that are handled
 // locally: when the editor submits `/name args` and `name` is built-in, the
 // app dispatches it here instead of POSTing a prompt (custom commands/*.md
 // templates are expanded server-side, so anything NOT in this registry falls
@@ -51,6 +51,11 @@ export const BUILTIN_COMMANDS: readonly BuiltinCommand[] = [
   {
     name: "effort",
     description: "Show or set the thinking effort",
+    takesArg: true,
+  },
+  {
+    name: "delivery",
+    description: "Show or set prompt delivery (steer or queue)",
     takesArg: true,
   },
   {

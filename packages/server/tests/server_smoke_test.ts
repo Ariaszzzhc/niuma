@@ -107,7 +107,7 @@ Deno.test({
     );
     assertEquals(promptRes.status, 202);
     const body = await promptRes.json();
-    assertEquals(body.accepted, true);
+    assertEquals(body.disposition, "started");
   },
 });
 

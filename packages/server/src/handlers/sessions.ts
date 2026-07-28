@@ -1,5 +1,6 @@
 import {
   ApprovalReplyReq,
+  type ClientConfigView,
   type CommandInfo,
   CreateSessionReq,
   decode,
@@ -7,6 +8,7 @@ import {
   type RecordedEvent,
   type SessionInfo,
   SetEffortReq,
+  SetInputDeliveryReq,
   SetModelReq,
 } from "@niuma/schema";
 import { loadCommands } from "@niuma/config";
@@ -20,6 +22,7 @@ import {
   TurnInFlightError,
 } from "../session.ts";
 import { httpError } from "../error.ts";
+import type { ConfigurationRuntime } from "../configuration.ts";
 
 // The set of services the handlers need from the runtime.
 type R = Kernel | SessionManager;
@@ -29,6 +32,8 @@ export interface HandlersOptions {
   /** Global niuma config dir; level-1 root for command discovery. When
    * absent (injected test infra) only project-level commands are listed. */
   readonly globalConfigDir?: string;
+  /** Server-owned config snapshot + explicit write path. */
+  readonly configuration: ConfigurationRuntime;
 }
 
 export interface Handlers {
@@ -42,6 +47,7 @@ export interface Handlers {
     mcpServers: ReadonlyArray<{ id: string; toolCount: number }>;
     /** Custom slash commands visible to this session's workspace. */
     commands: ReadonlyArray<CommandInfo>;
+    clientConfig: ClientConfigView;
   }>;
   readonly listSessions: () => Promise<ReadonlyArray<SessionInfo>>;
   readonly getSession: (
@@ -52,9 +58,21 @@ export interface Handlers {
     contextWindow?: number;
     mcpServers: ReadonlyArray<{ id: string; toolCount: number }>;
     commands: ReadonlyArray<CommandInfo>;
+    clientConfig: ClientConfigView;
   }>;
-  readonly prompt: (id: string, raw: unknown) => Promise<{ accepted: true }>;
-  readonly interrupt: (id: string) => Promise<{ ok: true }>;
+  readonly prompt: (
+    id: string,
+    raw: unknown,
+  ) => Promise<{ disposition: "started" | "steered" | "queued" }>;
+  readonly interrupt: (
+    id: string,
+  ) => Promise<{
+    ok: true;
+    returnedInputs: ReadonlyArray<{ sourceText: string }>;
+  }>;
+  readonly setInputDelivery: (
+    raw: unknown,
+  ) => Promise<{ ok: true; config: ClientConfigView }>;
   readonly setModel: (id: string, raw: unknown) => Promise<SetModelResult>;
   readonly setEffort: (id: string, raw: unknown) => Promise<SetEffortResult>;
   readonly compact: (id: string) => Promise<{ accepted: true }>;
@@ -145,7 +163,7 @@ const listCommands = async (
 
 export const makeHandlers = (
   runtime: Rt,
-  opts: HandlersOptions = {},
+  opts: HandlersOptions,
 ): Handlers => ({
   createSession: (raw) => {
     const req = decode(CreateSessionReq)(raw);
@@ -155,7 +173,7 @@ export const makeHandlers = (
         const sm = yield* SessionManager;
         const info = yield* sm.create({
           workspace: req.workspace ?? ".",
-          model: req.model ?? "default",
+          ...(req.model !== undefined ? { model: req.model } : {}),
         });
         const env = getSessionEnv(sm);
         return {
@@ -169,6 +187,7 @@ export const makeHandlers = (
           commands: yield* Effect.promise(() =>
             listCommands(opts, info.workspace)
           ),
+          clientConfig: opts.configuration.clientConfig(),
         };
       }),
       "session_create_failed",
@@ -203,6 +222,7 @@ export const makeHandlers = (
         : {}),
       mcpServers: created.data.mcpServers,
       commands: await listCommands(opts, info.workspace),
+      clientConfig: opts.configuration.clientConfig(),
     };
   },
 
@@ -213,23 +233,40 @@ export const makeHandlers = (
       runtime,
       Effect.gen(function* () {
         const sm = yield* SessionManager;
-        yield* sm.prompt(id, [{ type: "text", text: req.text }]);
-        return { accepted: true } as const;
+        return yield* sm.prompt(id, {
+          parts: [{ type: "text", text: req.text }],
+          sourceText: req.text,
+        });
       }),
       "prompt_failed",
     );
   },
 
-  interrupt: (id) =>
-    runEffect(
+  interrupt: async (id) => {
+    await requireSession(runtime, id);
+    return await runEffect(
       runtime,
       Effect.gen(function* () {
         const sm = yield* SessionManager;
-        yield* sm.interrupt(id);
-        return { ok: true } as const;
+        const returnedInputs = yield* sm.interrupt(id);
+        return { ok: true as const, returnedInputs };
       }),
       "interrupt_failed",
-    ),
+    );
+  },
+
+  setInputDelivery: (raw) => {
+    const req = decode(SetInputDeliveryReq)(raw);
+    return runEffect(
+      runtime,
+      Effect.tryPromise(() =>
+        opts.configuration.setInputDelivery(req.inputDelivery)
+      ).pipe(
+        Effect.map((config) => ({ ok: true as const, config })),
+      ),
+      "config_update_failed",
+    );
+  },
 
   // Session-existence is checked up front (same convention as getSession) so
   // a typo'd id surfaces as session_not_found, not a generic failure code.

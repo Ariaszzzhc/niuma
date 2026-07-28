@@ -4,6 +4,7 @@
 //
 //   # Model to use, in {provider}/{model-id} form.
 //   model = "deepseek/deepseek-chat"
+//   input_delivery = "steer"      # steer (default) | queue
 //
 //   [core]
 //   log_level = "info"            # trace|debug|info|warning|error|fatal
@@ -31,6 +32,7 @@
 
 import { parse as parseToml } from "@std/toml";
 import { dirname, join, resolve } from "@std/path";
+import type { InputDelivery } from "@niuma/schema";
 import { BUILTIN_PROVIDERS, resolveProvider } from "./builtin.ts";
 
 const envGet = (name: string): string | undefined => {
@@ -64,6 +66,7 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
 export const DEFAULT_MAX_OUTPUT = 16_384;
+export const DEFAULT_INPUT_DELIVERY: InputDelivery = "steer";
 
 export interface ModelConfig {
   readonly contextWindow: number;
@@ -107,6 +110,10 @@ export interface CoreConfig {
 export interface NiumaConfig {
   /** Raw `provider/model-id` reference from the config file, if set. */
   readonly model?: string;
+  /** Server-owned prompt admission policy. Undefined means the built-in
+   * default (`steer`); it stays optional so layered config merging can
+   * distinguish "unset" from an explicit project override. */
+  readonly inputDelivery?: InputDelivery;
   readonly core: CoreConfig;
   readonly providers: Readonly<Record<string, ProviderConfig>>;
 }
@@ -171,6 +178,27 @@ const optThinkingKeep = (
     );
   }
   return v as "all" | "none";
+};
+
+const INPUT_DELIVERY_VALUES = ["steer", "queue"] as const;
+const optInputDelivery = (
+  obj: Record<string, unknown>,
+  key: string,
+  path: string,
+): InputDelivery | undefined => {
+  const v = obj[key];
+  if (v === undefined) return undefined;
+  if (
+    typeof v !== "string" ||
+    !(INPUT_DELIVERY_VALUES as readonly string[]).includes(v)
+  ) {
+    throw new ConfigError(
+      `config: ${path}.${key} must be one of ${
+        INPUT_DELIVERY_VALUES.join("|")
+      }, got ${typeof v === "string" ? `"${v}"` : typeof v}`,
+    );
+  }
+  return v as InputDelivery;
 };
 
 /** Wire-protocol flavours a provider can speak. niuma core only knows how to
@@ -273,6 +301,7 @@ export const parseConfig = (
   if (!isRecord(raw)) throw typeErr("(root)", "a table", raw);
 
   const model = optString(raw, "model", "(root)");
+  const inputDelivery = optInputDelivery(raw, "input_delivery", "(root)");
 
   const rawCore = raw.core ?? {};
   if (!isRecord(rawCore)) throw typeErr("core", "a table", rawCore);
@@ -299,6 +328,7 @@ export const parseConfig = (
 
   return {
     ...(model !== undefined ? { model } : {}),
+    ...(inputDelivery !== undefined ? { inputDelivery } : {}),
     core: {
       ...(logLevelRaw !== undefined
         ? { logLevel: logLevelRaw as LogLevel }
@@ -358,6 +388,12 @@ export const mergeConfig = (
   return {
     ...(override.model !== undefined || base.model !== undefined
       ? { model: override.model ?? base.model! }
+      : {}),
+    ...(override.inputDelivery !== undefined ||
+        base.inputDelivery !== undefined
+      ? {
+        inputDelivery: override.inputDelivery ?? base.inputDelivery!,
+      }
       : {}),
     core: {
       ...(
@@ -436,6 +472,118 @@ export const loadMergedConfig = async (
     config = mergeConfig(config, await loadConfigFile(file));
   }
   return config;
+};
+
+/**
+ * Resolve the file changed by an explicit runtime configuration update.
+ *
+ * Walk the same project hierarchy as `loadMergedConfig`, leaf-first, and use
+ * the closest EXISTING project config. When no project file exists, fall back
+ * to the global config path (including a NIUMA_CONFIG override). Runtime
+ * updates intentionally do not create a new project-level file.
+ */
+export const configWriteTarget = async (
+  globalPath: string,
+  projectDir: string,
+): Promise<string> => {
+  const global = resolve(globalPath);
+  for (const dir of projectConfigDirs(projectDir)) {
+    const candidate = resolve(
+      join(dir, PROJECT_DIR_BASENAME, PROJECT_CONFIG_BASENAME),
+    );
+    if (candidate === global) continue;
+    try {
+      if ((await Deno.stat(candidate)).isFile) return candidate;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) continue;
+      throw new ConfigError(
+        `config: failed to inspect ${candidate}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  return global;
+};
+
+/** Replace or insert the top-level input_delivery assignment without
+ * reserializing the rest of the TOML document (and therefore without
+ * discarding comments, provider-table ordering, or unknown future fields). */
+const setInputDeliveryText = (
+  text: string,
+  inputDelivery: InputDelivery,
+): string => {
+  const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  const table = /^[ \t]*\[/m.exec(text);
+  const splitAt = table?.index ?? text.length;
+  const prefix = text.slice(0, splitAt);
+  const suffix = text.slice(splitAt);
+  const assignment = `input_delivery = "${inputDelivery}"`;
+  const existing =
+    /^([ \t]*)input_delivery[ \t]*=[ \t]*(?:"(?:steer|queue)"|'(?:steer|queue)')([ \t]*(?:#.*)?)$/m;
+
+  if (existing.test(prefix)) {
+    return prefix.replace(
+      existing,
+      (_line, indent: string, trailing: string) =>
+        `${indent}${assignment}${trailing}`,
+    ) + suffix;
+  }
+
+  if (text.length === 0) return assignment + newline;
+  return assignment + newline + newline + text;
+};
+
+/**
+ * Persist the server's input-delivery mode with an atomic same-directory
+ * rename. The current file is parsed before and after patching so an explicit
+ * update never papers over malformed TOML. Returns the concrete file written.
+ */
+export const writeInputDelivery = async (
+  globalPath: string,
+  projectDir: string,
+  inputDelivery: InputDelivery,
+): Promise<string> => {
+  const target = await configWriteTarget(globalPath, projectDir);
+  let current = "";
+  try {
+    current = await Deno.readTextFile(target);
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) {
+      throw new ConfigError(
+        `config: failed to read ${target}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  parseConfig(current, target);
+  const next = setInputDeliveryText(current, inputDelivery);
+  parseConfig(next, target);
+
+  const dir = dirname(target);
+  await Deno.mkdir(dir, { recursive: true });
+  const temp = await Deno.makeTempFile({
+    dir,
+    prefix: ".niuma-config-",
+    suffix: ".tmp",
+  });
+  try {
+    await Deno.writeTextFile(temp, next);
+    await Deno.rename(temp, target);
+  } catch (error) {
+    try {
+      await Deno.remove(temp);
+    } catch {
+      // Best-effort cleanup; preserve the original write failure.
+    }
+    throw new ConfigError(
+      `config: failed to write ${target}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return target;
 };
 
 /**

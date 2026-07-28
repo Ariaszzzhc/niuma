@@ -1,8 +1,14 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { Effect, Stream } from "effect";
-import { ConfigError, parseConfig, setAuth } from "@niuma/config";
-import { buildProvider } from "../src/bootstrap.ts";
+import {
+  ConfigError,
+  KIMI_PLATFORM_DEFAULT_MODEL,
+  parseConfig,
+  setAuth,
+} from "@niuma/config";
+import { createServerApp } from "../src/app.ts";
+import { bootstrap, buildProvider } from "../src/bootstrap.ts";
 
 // Exercises the server-side wiring (contract §6) that makeProviderFromConfig
 // delegates to: the three-way auth lookup (api / oauth / {env:VAR}) and the
@@ -360,6 +366,44 @@ Deno.test({
       assertEquals(url, "https://api.kimi.com/coding/v1/chat/completions");
       assertEquals(auth, "Bearer at-fresh");
     });
+  },
+});
+
+Deno.test({
+  name:
+    "bootstrap gives sessions the same login-and-go model selected by the provider",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const root = await Deno.makeTempDir({ prefix: "niuma_boot_default_" });
+    const authPath = join(root, "auth.json");
+    await setAuth(authPath, "kimi", { type: "api", key: "sk-kimi" });
+    const boot = await bootstrap({
+      paths: {
+        root,
+        sessions: join(root, "sessions"),
+        db: join(root, "niuma.db"),
+      },
+      config: parseConfig(""),
+      mcpConfig: {},
+      authPath,
+    });
+    const server = await createServerApp({ bootstrap: boot });
+    try {
+      const response = await server.app.fetch(
+        new Request("http://niuma.internal/sessions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ workspace: root }),
+        }),
+      );
+      assertEquals(response.status, 201);
+      const created = await response.json();
+      assertEquals(created.model, KIMI_PLATFORM_DEFAULT_MODEL);
+      assertEquals(created.contextWindow, 262_144);
+    } finally {
+      await server.close();
+    }
   },
 });
 

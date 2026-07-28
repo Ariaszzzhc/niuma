@@ -51,6 +51,10 @@ import {
   kernelEventLog,
 } from "./agent_deps.ts";
 import { makeOAuthTokenSource } from "./oauth_source.ts";
+import {
+  type ConfigurationRuntime,
+  makeConfigurationRuntime,
+} from "./configuration.ts";
 
 export interface BootstrapDeps {
   readonly paths?: DataPaths;
@@ -69,6 +73,9 @@ export interface BootstrapDeps {
    * built for the provider the user actually picked. Ignored when
    * `deps.infra.provider` is injected (tests/smoke own the provider then). */
   readonly defaultModelRef?: string;
+  /** Credential file override for isolated tests/embedders. Production uses
+   * niumaPaths().authFile. */
+  readonly authPath?: string;
 }
 
 export interface BootstrapResult {
@@ -78,6 +85,8 @@ export interface BootstrapResult {
   readonly bus: EventBus;
   readonly infra: SessionManagerInfra;
   readonly config: NiumaConfig;
+  /** Server-owned effective configuration and explicit write path. */
+  readonly configuration: ConfigurationRuntime;
   /** Connected MCP servers (from the merged mcp.json levels). Callers that
    * own the process lifecycle may close() them on shutdown; the worker
    * exiting also reaps stdio subprocesses. */
@@ -239,6 +248,14 @@ export const bootstrap = async (
   const workspace = envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
   const config = deps.config ??
     await loadMergedConfig(niumaPaths().configFile, { projectDir: workspace });
+  const configuration = makeConfigurationRuntime({
+    config,
+    workspace,
+    globalConfigPath: niumaPaths().configFile,
+    // Injected config is test/application-owned and must not cause writes to
+    // the user's real config.toml.
+    persist: deps.config === undefined,
+  });
 
   // ---- MCP servers (mcp.json: global < project .niuma/ dirs < workspace/.mcp.json). ----
   // Connected before the pipelines are built so their tools land in the one
@@ -265,14 +282,19 @@ export const bootstrap = async (
   // makeOpenAIAdapter only touches the network on stream()/listModels(),
   // so constructing it here never fetches.
   const engine = new MemoryPermissionEngine({ cwd: workspace });
+  const authPath = deps.authPath ?? niumaPaths().authFile;
 
-  // Default model: deps.defaultModelRef (the one-shot CLI's --model / config
-  // default) wins, then the merged config's top-level `model`
-  // (provider/model-id). A test/smoke may inject BOTH the provider and a
-  // default model (e.g. the smoke harness pins "mock-model"); injecting a
-  // provider alone still takes model + limits from the config so a mock
-  // provider can be driven at realistic window sizes.
-  const defaultRef = deps.defaultModelRef ?? config.model;
+  // Default model: the raw CLI override wins, then the merged config's
+  // top-level `model`, then the unique authenticated built-in. The last step
+  // must happen here (not only inside the provider factory), because session
+  // creation and per-model limits need the same resolved ref the adapter uses.
+  // Injected providers intentionally skip auth.json and retain the lightweight
+  // test fallback when neither a ref nor an explicit defaultModel is supplied.
+  let defaultRef = deps.defaultModelRef ?? config.model;
+  if (defaultRef === undefined && deps.infra?.provider === undefined) {
+    const auth = await readAuthFile(authPath);
+    defaultRef = defaultModelRef((id) => auth[id]);
+  }
   let defaultModel = deps.infra?.defaultModel ?? "";
   let defaultContextWindow = deps.infra?.defaultContextWindow;
   let defaultMaxTokens = deps.infra?.defaultMaxTokens;
@@ -289,7 +311,7 @@ export const bootstrap = async (
 
   const provider = deps.infra?.provider !== undefined
     ? withDefaultModel(deps.infra.provider, defaultModel)
-    : await makeProviderFromConfig(config, deps.defaultModelRef);
+    : await buildProvider(config, authPath, defaultRef);
 
   // The spawner owns lineage/depth. Its injected runner owns only the child
   // agent loop, which breaks the recursive pipeline dependency at a narrow
@@ -353,12 +375,14 @@ export const bootstrap = async (
     tools,
     defaultModel,
     defaultWorkspace: workspace,
+    inputDelivery: () => configuration.clientConfig().inputDelivery,
     globalConfigDir: deps.infra?.globalConfigDir ?? niumaPaths().config,
     // Runtime model switching (SessionManager.setModel): the merged config
     // resolves provider/model-id refs, the factory rebuilds the adapter on a
     // cross-provider switch. Tests may inject both through deps.infra.
     config: deps.infra?.config ?? config,
-    makeProvider: deps.infra?.makeProvider ?? makeProviderFromConfig,
+    makeProvider: deps.infra?.makeProvider ??
+      ((nextConfig, ref) => buildProvider(nextConfig, authPath, ref)),
     ...(defaultProviderId !== undefined ? { defaultProviderId } : {}),
     ...(defaultContextWindow !== undefined ? { defaultContextWindow } : {}),
     ...(defaultMaxTokens !== undefined ? { defaultMaxTokens } : {}),
@@ -422,6 +446,7 @@ export const bootstrap = async (
     bus,
     infra,
     config,
+    configuration,
     mcpServers,
     close,
     kernelLayer,

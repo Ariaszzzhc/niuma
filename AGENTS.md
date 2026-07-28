@@ -26,7 +26,10 @@ CLI (main thread)
                       └─ permission engine authorizes each tool call
 ```
 
-The TUI is a separate client process that talks to the server over HTTP/SSE.
+The shipped TUI and one-shot modes are Clients in the main isolate of the same
+binary; they talk over a fetch-shaped `MessageChannel` tunnel to a Server Worker
+in that binary. `serve` exposes the same HTTP+SSE app directly, but is currently
+a debugging surface rather than the primary product topology.
 
 ## Repository layout
 
@@ -41,8 +44,8 @@ re-exports only), `src/` (implementation), `tests/` (`*_test.ts`).
 | `packages/permission` | Stateless permission policy primitives: glob compilation/matching, sensitive-path detection, and ordered `allow`/`deny`/`ask` evaluation. The session-scoped mutable engine lives in `packages/tools`.                                                                                                                                                                                                          |
 | `packages/tools`      | Built-in tools (`bash`, `read`, `write`, `edit`, `glob`, `grep`, `apply_patch`, `question`, `spawn_subagent`, `update_plan`) under `src/tools/`, plus the tool pipeline (authorize → execute), scheduler, output truncation/spill, and path resolution confined to the workspace root.                                                                                                                          |
 | `packages/agent`      | Agent core: `runTurn` loop, event→message context projection (replay folds `compaction.performed`), history compaction/summarization (`compactSession`), system-prompt builder, and the adapter from the agent tool port to `@niuma/tools`. Session and approval lifecycles belong to `packages/server`; the agent depends only on ports (`deps.ts`).                                                            |
-| `packages/server`     | HTTP+SSE server (Hono): canonical JSONL `EventLog` (source of truth), SQLite `Projection` (via kysely over the vendored `node:sqlite` dialect in `vendor/`), `Kernel` (append/replay/subscribe), session manager (prompt/compact/model/effort), event bus, bootstrap wiring (Effect Layers), handlers for sessions and events.                                                                                  |
-| `packages/config`     | Configuration: `config.toml` parsing and user/project merge, built-in providers (`builtin.ts`: kimi/openai login-and-go definitions + user-table overlay), `auth.json` credentials (API keys + OAuth), OAuth flows (ChatGPT in `oauth.ts`, Kimi device-code in `kimi_oauth.ts`), MCP config, custom slash commands (`commands/*.md` discovery + template expansion), `niumaPaths()` directory layout, `VERSION`. |
+| `packages/server`     | HTTP+SSE server (Hono): canonical JSONL `EventLog` (source of truth), SQLite `Projection` (via kysely over the vendored `node:sqlite` dialect in `vendor/`), `Kernel` (append/replay/subscribe), Server-owned input coordination and configuration, session manager (prompt/compact/model/effort), event bus, bootstrap wiring (Effect Layers), handlers for sessions and events.                               |
+| `packages/config`     | Configuration: `config.toml` parsing, user/project merge and closest-level writes, built-in providers (`builtin.ts`: kimi/openai login-and-go definitions + user-table overlay), `auth.json` credentials (API keys + OAuth), OAuth flows (ChatGPT in `oauth.ts`, Kimi device-code in `kimi_oauth.ts`), MCP config, custom slash commands (`commands/*.md` discovery + template expansion), paths and `VERSION`. |
 | `packages/mcp`        | MCP client: connects to configured MCP servers and adapts MCP tools into niuma tools (`@modelcontextprotocol/sdk`).                                                                                                                                                                                                                                                                                              |
 | `packages/cli`        | Entrypoint (`src/main.ts`): subcommands `tui` (default), `-p` one-shot, `serve`, `auth`; argument parsing; server-worker spawn + fetch tunnel; stdin approval plumbing.                                                                                                                                                                                                                                         |
 | `packages/tuikit`     | Terminal toolkit: TEA-style `run` loop, `Frame`, `KeyParser`, `Terminal`, width/style helpers. Hot paths (width, cell buffer, diff, keys, SGR) live in a Rust cdylib (`native/`) loaded via `Deno.dlopen`; `src/binding_contract.ts` is the authoritative FFI symbol contract.                                                                                                                                  |
@@ -146,6 +149,31 @@ Notes:
   (JSONL event logs), and `niuma.db`. Project-level
   `<workspace>/.niuma/config.toml` merges over the user config but never holds
   data.
+- Configuration is Server-owned. The CLI/TUI do not read or merge `config.toml`;
+  session create/resume responses carry a typed, sanitized `clientConfig` view.
+  There is no automatic reload. An explicit runtime update is persisted first
+  and then replaces only that Server's in-memory snapshot.
+- Top-level `input_delivery = "steer" | "queue"` controls prompts submitted
+  while a Turn is active and defaults to `steer`. `/delivery [steer|queue]`
+  updates it through `PUT /config/input-delivery`. The write target is the
+  closest existing project `.niuma/config.toml` found by the same upward walk
+  used for reads; if none exists, the user config (or `NIUMA_CONFIG`) is updated.
+  Other TOML content and comments are preserved.
+- Prompt admission is coordinated per session by the Server. A response
+  disposition is `started`, `steered`, or `queued`; queue entries are FIFO, each
+  becomes its own Turn, survive interrupt/failure, and continue automatically.
+  Prompts arriving during compaction always queue.
+- A Turn-bound input is consumed only when the Server atomically appends its
+  `user.message` immediately before the next provider request. On explicit
+  interrupt or terminal Turn failure, any accepted but still-unconsumed inputs
+  are returned to the Client as original `sourceText` drafts and are never
+  auto-submitted. The TUI restores the first only when its editor is empty and
+  keeps later drafts in order; if the editor already contains text, it preserves
+  that text and discards all inputs returned by that recovery.
+- Different niuma processes may share the data directory while working on
+  different sessions. Concurrent cross-process mutation of the same session is
+  deliberately undefined behavior; do not add locks, leases, or recovery
+  machinery for it unless that product decision changes.
 - Custom slash commands are markdown prompt templates: user-level
   `~/.niuma/commands/*.md` plus project-level `<dir>/.niuma/commands/*.md` (same
   upward discovery + closest-wins merge as `config.toml`/`mcp.json`). Optional
@@ -169,12 +197,13 @@ Notes:
   commands: `/help`, `/exit` (alias `/quit`), `/model [ref]` (server
   `POST /sessions/:id/model`; persists to the projection, rebuilds the provider
   adapter on cross-provider refs), `/effort [level]` (server
-  `POST /sessions/:id/effort`; per-session thinking override), `/compact`
-  (server `POST /sessions/:id/compact` → `compactSession` in `@niuma/agent`;
-  `compaction.performed` carries the summary so replay folds history across
-  turns), `/clear` (new session), `/resume [id]` (list / re-attach a past
-  session and rebuild from its history), `/mcp` (list MCP servers). Their output
-  renders as `notice` rows in the transcript.
+  `POST /sessions/:id/effort`; per-session thinking override),
+  `/delivery [mode]` (Server config read/write; mode is `steer` or `queue`),
+  `/compact` (server `POST /sessions/:id/compact` → `compactSession` in
+  `@niuma/agent`; `compaction.performed` carries the summary so replay folds
+  history across turns), `/clear` (new session), `/resume [id]` (list /
+  re-attach a past session and rebuild from its history), `/mcp` (list MCP
+  servers). Their output renders as `notice` rows in the transcript.
 - Model selection is `provider/model-id` via `--model` or the top-level `model`
   key in `config.toml`; credentials live in `auth.json` (managed by
   `niuma auth login|logout|status`).
@@ -195,9 +224,10 @@ Notes:
   don't add one.
 - CLI grammar: `niuma` / `niuma tui` (interactive, needs a TTY),
   `niuma -p
-  <prompt>` (one-shot), `niuma serve --port <port>` (HTTP+SSE server),
-  `niuma
-  auth <action>`; `--mock-provider` exists for the smoke harness only.
+  <prompt>` (one-shot), `niuma serve --port <port>` (debug HTTP+SSE
+  server), `niuma
+  auth <action>`; `--mock-provider` exists for the smoke
+  harness only.
 
 ## Security considerations
 

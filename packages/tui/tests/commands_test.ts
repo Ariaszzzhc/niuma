@@ -18,10 +18,20 @@ import {
   slashCommandCandidates,
 } from "../src/commands.ts";
 
-Deno.test("registry covers the eight built-ins", () => {
+Deno.test("registry covers the nine built-ins", () => {
   assertEquals(
     BUILTIN_COMMANDS.map((c) => c.name),
-    ["help", "exit", "model", "effort", "compact", "clear", "resume", "mcp"],
+    [
+      "help",
+      "exit",
+      "model",
+      "effort",
+      "delivery",
+      "compact",
+      "clear",
+      "resume",
+      "mcp",
+    ],
   );
 });
 
@@ -93,8 +103,8 @@ Deno.test("formatSessionList renders id/status/model/title rows", () => {
 
 Deno.test("slashCommandCandidates: prefix filter, sorted, with descriptions", () => {
   const all = slashCommandCandidates("", []);
-  // 8 built-ins + the /quit alias
-  assertEquals(all.length, 9);
+  // 9 built-ins + the /quit alias
+  assertEquals(all.length, 10);
   assertEquals(all[0].name, "clear");
   assertEquals(
     all.every((c) => c.description !== undefined && c.builtin),

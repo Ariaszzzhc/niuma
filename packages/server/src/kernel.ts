@@ -53,6 +53,7 @@ export interface Kernel {
     callId: string,
     name: string,
     input: unknown,
+    signal?: AbortSignal,
   ) => Effect.Effect<ApprovalResolvedData, never, never>;
 }
 
@@ -217,6 +218,7 @@ export const makeKernel = (
       callId,
       name,
       input,
+      signal,
     ) =>
       Effect.gen(function* () {
         const approvalId = newApprovalId();
@@ -233,15 +235,54 @@ export const makeKernel = (
             sessionId,
             data: request,
           });
+          const waitForDecision = signal
+            ? Effect.race(
+              Deferred.await(deferred).pipe(
+                Effect.map((value) => ({
+                  kind: "resolved" as const,
+                  value,
+                })),
+              ),
+              Effect.callback<"aborted">((resume) => {
+                const onAbort = (): void => {
+                  resume(Effect.succeed("aborted"));
+                };
+                if (signal.aborted) {
+                  onAbort();
+                  return;
+                }
+                signal.addEventListener("abort", onAbort, { once: true });
+                return Effect.sync(() =>
+                  signal.removeEventListener("abort", onAbort)
+                );
+              }).pipe(
+                Effect.map(() => ({ kind: "aborted" as const })),
+              ),
+            )
+            : Deferred.await(deferred).pipe(
+              Effect.map((value) => ({
+                kind: "resolved" as const,
+                value,
+              })),
+            );
           return yield* Effect.uninterruptibleMask((restore) =>
             Effect.flatMap(
-              restore(Deferred.await(deferred)),
-              (resolved) =>
-                append({
+              restore(waitForDecision),
+              (outcome) => {
+                const resolved: ApprovalResolvedData =
+                  outcome.kind === "resolved"
+                    ? outcome.value
+                    : {
+                      approvalId,
+                      decision: "reject",
+                      feedback: "aborted",
+                    };
+                return append({
                   type: "approval.resolved",
                   sessionId,
                   data: resolved,
-                }).pipe(Effect.as(resolved)),
+                }).pipe(Effect.as(resolved));
+              },
             )
           );
         });

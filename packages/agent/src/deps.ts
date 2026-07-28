@@ -4,6 +4,7 @@ import type {
   LiveEvent,
   RecordedEvent,
   ToolResultContent,
+  UserMessageEvent,
 } from "@niuma/schema";
 import type {
   ProviderAdapter,
@@ -94,6 +95,21 @@ export interface ApprovalGateway {
   ) => Effect.Effect<ApprovalOutcome>;
 }
 
+export type TurnCloseDecision = "continue" | "close" | "interrupted";
+
+/**
+ * Server-owned admission seam for inputs already bound to this Turn.
+ *
+ * `claim` atomically records pending user messages before returning them, so
+ * every returned event is consumed and safe to fold into the Agent's local
+ * context mirror. `tryClose` serializes final completion against concurrent
+ * steer admission and explicit interrupt.
+ */
+export interface TurnInput {
+  readonly claim: () => Effect.Effect<ReadonlyArray<UserMessageEvent>>;
+  readonly tryClose: () => Effect.Effect<TurnCloseDecision>;
+}
+
 export interface RunTurnDeps {
   readonly event_log: EventLog;
   readonly provider: ProviderAdapter;
@@ -109,6 +125,7 @@ export interface RunTurnDeps {
   // projection in the context layer (see context.ts projectEvent).
   readonly thinking?: ThinkingConfig;
   readonly signal?: AbortSignal;
+  readonly input?: TurnInput;
   // Live-only sink (SSE). Never persisted; server routes to the frontend.
   readonly emitLive?: (event: LiveEvent) => void;
 }
