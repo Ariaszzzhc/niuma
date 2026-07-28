@@ -50,7 +50,7 @@ const main = async (): Promise<number> => {
   }
 
   // One-shot mode.
-  const { prompt, workspace, mockProvider } = parsed.args;
+  const { bypassPermissions, prompt, workspace, mockProvider } = parsed.args;
 
   // Resolve the model: --model flag wins, else config.toml's top-level
   // `model` (provider/model-id). Validated here so a typo fails fast with a
@@ -115,6 +115,7 @@ const main = async (): Promise<number> => {
       {
         prompt,
         workspace,
+        bypassPermissions,
         ...(model !== undefined ? { model } : {}),
       },
       tunnel.fetch,

@@ -1,12 +1,13 @@
 // One-shot runner.
 //
-// Implements the MANUAL permission UX:
+// Implements the permission UX:
 //   - POST /sessions to create a session
 //   - GET /events?session=<id>&cursor=0 to open the SSE stream (before
 //     prompting so we never miss an early event)
 //   - POST /sessions/:id/prompt to kick off the agent turn
-//   - For each approval.requested event: prompt on stdin
-//       y = allow once    a = always (synthesize a rule)    n = reject
+//   - For each approval.requested event: either prompt on stdin
+//       y = allow once    a = always (synthesize a rule)    n = reject,
+//     or auto-approve once when the explicitly dangerous benchmark flag is set
 //     then POST /sessions/:id/approvals/:approvalId with the decision
 //   - When turn.completed (or turn.aborted) arrives, stop reading,
 //     print the most recent assistant.message text to stdout, and exit.
@@ -29,6 +30,9 @@ export interface RunOptions {
    * so the server falls back to the same literal "default" the server smoke
    * tests use (the scripted mock accepts any model). */
   readonly model?: string;
+  /** Auto-resolve approval requests as "once". This does not bypass tool
+   * validation, policy hard-denies, path confinement, scheduling, or logging. */
+  readonly bypassPermissions?: boolean;
   /** Suppress non-essential stderr output (tool call banners, etc.). */
   readonly quiet?: boolean;
 }
@@ -167,7 +171,9 @@ export const runOneshot = async (
             : undefined;
           const name = typeof data["name"] === "string" ? data["name"] : "tool";
           if (!approvalId) break;
-          const decision = await promptApproval(name, data["input"]);
+          const decision: ApprovalDecision = opts.bypassPermissions
+            ? { decision: "once" }
+            : await promptApproval(name, data["input"]);
           try {
             const res = await fetchImpl(
               `${BASE}/sessions/${encodeURIComponent(sessionId)}/approvals/${

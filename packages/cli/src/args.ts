@@ -32,6 +32,9 @@ export interface OneShotArgs {
   readonly workspace: string;
   /** Explicit --model override; undefined means "use config.toml's model". */
   readonly model?: string;
+  /** Automatically approve every permission request in one-shot mode.
+   * Intended for isolated benchmark/sandbox environments only. */
+  readonly bypassPermissions: boolean;
   /** Smoke-harness only: inject the scripted network-free provider into the
    * server worker. */
   readonly mockProvider: boolean;
@@ -113,7 +116,12 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
 
   const parsed = parseArgs(argv, {
     string: ["prompt", "workspace", "model"],
-    boolean: ["version", "help", "mock-provider"],
+    boolean: [
+      "version",
+      "help",
+      "mock-provider",
+      "dangerously-bypass-permissions",
+    ],
     alias: {
       p: "prompt",
       h: "help",
@@ -173,6 +181,7 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
       subcommand: "oneshot",
       prompt,
       workspace,
+      bypassPermissions: parsed["dangerously-bypass-permissions"] === true,
       mockProvider: parsed["mock-provider"] === true,
       ...(parsed.model !== undefined ? { model: parsed.model } : {}),
     },
@@ -355,6 +364,9 @@ ONE-SHOT OPTIONS
   -p, --prompt <text>                 Prompt text (required for one-shot).
       --workspace <path>              Workspace path (default: current dir).
       --model <provider/model-id>     Model to use (default: config.toml's "model").
+      --dangerously-bypass-permissions
+                                      Auto-approve permission requests. Use only
+                                      inside an isolated benchmark/sandbox.
 
 SERVE OPTIONS
       --port <number>                 TCP port (default: 4096).

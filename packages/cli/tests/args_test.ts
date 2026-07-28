@@ -13,6 +13,24 @@
 import { assertEquals } from "@std/assert";
 import { parseCliArgs } from "../src/args.ts";
 
+Deno.test("args: one-shot permission bypass is explicit and defaults off", () => {
+  const normal = parseCliArgs(["-p", "task"]);
+  if (!normal.ok || normal.args.subcommand !== "oneshot") {
+    throw new Error("expected one-shot args");
+  }
+  assertEquals(normal.args.bypassPermissions, false);
+
+  const bypass = parseCliArgs([
+    "-p",
+    "task",
+    "--dangerously-bypass-permissions",
+  ]);
+  if (!bypass.ok || bypass.args.subcommand !== "oneshot") {
+    throw new Error("expected one-shot args");
+  }
+  assertEquals(bypass.args.bypassPermissions, true);
+});
+
 Deno.test("args: `niuma tui` refuses a non-TTY stdin with help + exit 2", () => {
   if (Deno.stdin.isTerminal()) return; // no-op in an interactive terminal
   const r = parseCliArgs(["tui"]);
