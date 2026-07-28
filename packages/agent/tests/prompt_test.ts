@@ -37,6 +37,35 @@ Deno.test("buildSystemPrompt: renders <environment_context> block", async () => 
   }
 });
 
+Deno.test("buildSystemPrompt: includes safety and authorization boundaries", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    const prompt = await buildSystemPrompt(tmp);
+    assertEquals(
+      prompt.includes("Explicit constraints are hard requirements"),
+      true,
+    );
+    assertEquals(prompt.includes("keep it byte-for-byte unchanged"), true);
+    assertEquals(
+      prompt.includes("mutations followed by rollback still count"),
+      true,
+    );
+    assertEquals(
+      prompt.includes("--dangerously-bypass-permissions only removes"),
+      true,
+    );
+    assertEquals(prompt.includes("suitably larger timeout_ms"), true);
+    assertEquals(
+      prompt.includes(
+        "never mutate a\n  protected input merely to make verification faster",
+      ),
+      true,
+    );
+  } finally {
+    await scrub(tmp);
+  }
+});
+
 Deno.test("listWorkspaceFiles: git ls-files lists tracked paths", async () => {
   const tmp = await Deno.makeTempDir();
   try {
@@ -184,6 +213,13 @@ Deno.test("buildSystemPrompt: still appends AGENTS.md (regression)", async () =>
     const prompt = await buildSystemPrompt(tmp);
     assertEquals(prompt.includes("AGENTS.md"), true);
     assertEquals(prompt.includes("be concise and kind"), true);
+    assertEquals(prompt.includes("<project_instructions>"), true);
+    assertEquals(prompt.includes("</project_instructions>"), true);
+    assertEquals(
+      prompt.indexOf("Explicit constraints are hard requirements") <
+        prompt.indexOf("<project_instructions>"),
+      true,
+    );
     // environment block still present alongside AGENTS.md
     assertEquals(prompt.includes("<environment_context>"), true);
   } finally {
