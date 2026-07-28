@@ -73,6 +73,7 @@ export async function* parseAnthropicSSE(
   let eventType = "";
   let inputTokens = 0;
   let pendingFinish: FinishReason | undefined;
+  let pendingUsage: Usage | undefined;
   let emittedFinish = false;
   // tool_use blocks stream their arguments as input_json_delta fragments; the
   // completed call is emitted whole on content_block_stop (same shape as the
@@ -80,14 +81,28 @@ export async function* parseAnthropicSSE(
   let currentTool: { id: string; name: string; args: string } | undefined;
   let currentRedactedData: string | undefined;
 
-  const emitFinish = function* (usage?: Usage): Generator<StreamEvent> {
+  const emitFinish = function* (terminal: string): Generator<StreamEvent> {
     if (emittedFinish) return;
+    // Anthropic reports the semantic terminal reason in message_delta. A bare
+    // EOF / [DONE] / message_stop without it is an interrupted or malformed
+    // stream, not a clean end_turn. Surface it as retryable Network so the
+    // agent's mid-stream retry path discards partial deltas and re-samples.
+    if (pendingFinish === undefined) {
+      throw new Network({
+        cause: new Error(
+          `Anthropic SSE reached ${terminal} without a stop_reason`,
+        ),
+      });
+    }
     emittedFinish = true;
-    const reason = pendingFinish ?? "stop";
-    if (usage) {
-      yield { _tag: "Finish" as const, reason, usage };
+    if (pendingUsage) {
+      yield {
+        _tag: "Finish" as const,
+        reason: pendingFinish,
+        usage: pendingUsage,
+      };
     } else {
-      yield { _tag: "Finish" as const, reason };
+      yield { _tag: "Finish" as const, reason: pendingFinish };
     }
   };
 
@@ -166,12 +181,12 @@ export async function* parseAnthropicSSE(
         }
         const outputTokens = evt.usage?.output_tokens;
         if (outputTokens !== undefined) {
-          yield* emitFinish(toUsage(inputTokens, outputTokens));
+          pendingUsage = toUsage(inputTokens, outputTokens);
         }
         break;
       }
       case "message_stop":
-        yield* emitFinish();
+        yield* emitFinish("message_stop");
         break;
       case "ping":
         break;
@@ -213,7 +228,7 @@ export async function* parseAnthropicSSE(
 
         const payload = line.slice(5).trimStart();
         if (payload === "[DONE]") {
-          yield* emitFinish();
+          yield* emitFinish("[DONE]");
           return;
         }
 
@@ -230,7 +245,8 @@ export async function* parseAnthropicSSE(
         eventType = "";
       }
     }
-    yield* emitFinish();
+    if (signal.aborted) return;
+    yield* emitFinish("EOF");
   } finally {
     try {
       reader.releaseLock();

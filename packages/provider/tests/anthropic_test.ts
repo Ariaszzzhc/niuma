@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { Effect, Stream } from "effect";
 import { VERSION } from "@niuma/config";
 import {
@@ -8,6 +8,7 @@ import {
 } from "../src/anthropic.ts";
 import { parseAnthropicSSE } from "../src/anthropic_sse.ts";
 import type { ChatRequest, StreamEvent } from "../src/domain.ts";
+import { Network } from "../src/errors.ts";
 
 // SSE for the Anthropic stream parser is keyed by `event:` headers rather than
 // the data JSON, so each chunk of an event-stream run needs both labels —
@@ -43,6 +44,19 @@ const collectSSE = async (
     out.push(event);
   }
   return out;
+};
+
+const drainSSE = async (
+  body: ReadableStream<Uint8Array>,
+): Promise<void> => {
+  for await (
+    const _event of parseAnthropicSSE(
+      body,
+      new AbortController().signal,
+    )
+  ) {
+    // Drain the stream so parser failures surface to the caller.
+  }
 };
 
 Deno.test("parseAnthropicSSE emits full event sequence ending in tool_calls Finish", async () => {
@@ -185,12 +199,93 @@ Deno.test("parseAnthropicSSE maps stop_reasons end_turn / max_tokens / tool_use"
   ]);
 });
 
+Deno.test("parseAnthropicSSE rejects EOF without a stop_reason as retryable Network", async () => {
+  await assertRejects(
+    () =>
+      drainSSE(
+        sseBody(
+          ["message_start", {
+            message: { usage: { input_tokens: 3 } },
+          }],
+          ["content_block_delta", {
+            index: 0,
+            delta: { type: "text_delta", text: "partial" },
+          }],
+        ),
+      ),
+    Network,
+  );
+});
+
+Deno.test("parseAnthropicSSE accepts EOF after an explicit stop_reason", async () => {
+  const events = await collectSSE(
+    ["message_start", { message: { usage: { input_tokens: 3 } } }],
+    ["content_block_delta", {
+      index: 0,
+      delta: { type: "text_delta", text: "complete" },
+    }],
+    ["message_delta", {
+      delta: { stop_reason: "end_turn" },
+      usage: { output_tokens: 2 },
+    }],
+  );
+
+  assertEquals(events, [
+    { _tag: "TextDelta", text: "complete" },
+    {
+      _tag: "Finish",
+      reason: "stop",
+      usage: {
+        promptTokens: 3,
+        completionTokens: 2,
+        totalTokens: 5,
+      },
+    },
+  ]);
+});
+
+Deno.test("parseAnthropicSSE rejects usage without a stop_reason", async () => {
+  await assertRejects(
+    () =>
+      drainSSE(
+        sseBody(
+          ["message_start", {
+            message: { usage: { input_tokens: 3 } },
+          }],
+          ["message_delta", {
+            delta: { stop_reason: null },
+            usage: { output_tokens: 2 },
+          }],
+        ),
+      ),
+    Network,
+  );
+});
+
+Deno.test("parseAnthropicSSE rejects DONE without a stop_reason as retryable Network", async () => {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+
+  await assertRejects(
+    () => drainSSE(body),
+    Network,
+  );
+});
+
 // =============================================================================
 // buildBody
 // =============================================================================
 const captureBodyAndHeaders = async (
   req: ChatRequest,
-  sseText = "data: [DONE]\n",
+  sseText = sseEvent("message_delta", {
+    delta: { stop_reason: "end_turn" },
+    usage: { output_tokens: 0 },
+  }) + "data: [DONE]\n\n",
 ): Promise<{
   body: Record<string, unknown>;
   headers: HeadersInit;
