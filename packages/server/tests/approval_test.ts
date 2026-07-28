@@ -6,27 +6,31 @@ import {
   type ApprovalRegistry,
   makeApprovalRegistry,
 } from "../src/event_bus.ts";
-import { makeEventLog } from "../src/event_log.ts";
 import { makeKernel } from "../src/kernel.ts";
-import { ensureSchema } from "../src/projection.ts";
+import { makeSessionStore, type SessionStore } from "../src/session_store.ts";
+import {
+  ensureWorkspaceLayout,
+  makeWorkspaceLayout,
+} from "../src/workspace_layout.ts";
 
 const makeFixture = async () => {
   const root = await Deno.makeTempDir({ prefix: "niuma_approval_" });
-  const sessions = join(root, "sessions");
-  await Deno.mkdir(sessions, { recursive: true });
-  const eventLog = makeEventLog({ sessionsDir: sessions });
+  const workspace = join(root, "workspace");
+  await Deno.mkdir(workspace, { recursive: true });
+  const layout = makeWorkspaceLayout(root, workspace);
+  await ensureWorkspaceLayout(layout);
+  const store = makeSessionStore({ layout });
   const approvals = await Effect.runPromise(makeApprovalRegistry());
   const kernel = await Effect.runPromise(makeKernel({
-    event_log: eventLog,
-    projection: await ensureSchema(join(root, "niuma.db")),
+    store,
     approvals,
   }));
   await Effect.runPromise(kernel.append({
     type: "session.created",
     sessionId: "session",
-    data: { workspace: root, model: "test-model", mcpServers: [] },
+    data: { workspace, model: "test-model", mcpServers: [] },
   }));
-  return { approvals, eventLog, kernel };
+  return { approvals, store, kernel };
 };
 
 const waitForPending = async (approvals: ApprovalRegistry) => {
@@ -39,15 +43,15 @@ const waitForPending = async (approvals: ApprovalRegistry) => {
 };
 
 const replay = async (
-  eventLog: ReturnType<typeof makeEventLog>,
+  store: SessionStore,
 ): Promise<RecordedEvent[]> => {
   const events: RecordedEvent[] = [];
-  for await (const event of eventLog.replay("session")) events.push(event);
+  for await (const event of store.replay("session")) events.push(event);
   return events;
 };
 
 Deno.test("Kernel approval resolves once and records both lifecycle events", async () => {
-  const { approvals, eventLog, kernel } = await makeFixture();
+  const { approvals, store, kernel } = await makeFixture();
   const fiber = Effect.runFork(
     kernel.askForApproval("session", "call", "bash", { command: "pwd" }),
   );
@@ -66,7 +70,7 @@ Deno.test("Kernel approval resolves once and records both lifecycle events", asy
   assertEquals(await Effect.runPromise(Fiber.join(fiber)), resolved);
   assertEquals(await Effect.runPromise(approvals.pending()), []);
 
-  const events = await replay(eventLog);
+  const events = await replay(store);
   assertEquals(
     events.filter((event) =>
       event.type === "approval.requested" ||
@@ -77,7 +81,7 @@ Deno.test("Kernel approval resolves once and records both lifecycle events", asy
 });
 
 Deno.test("Kernel approval interruption rejects, cleans pending state, and cannot resolve late", async () => {
-  const { approvals, eventLog, kernel } = await makeFixture();
+  const { approvals, store, kernel } = await makeFixture();
   const fiber = Effect.runFork(
     kernel.askForApproval("session", "call", "write", { path: "a.txt" }),
   );
@@ -95,7 +99,7 @@ Deno.test("Kernel approval interruption rejects, cleans pending state, and canno
     false,
   );
 
-  const resolved = (await replay(eventLog)).findLast((event) =>
+  const resolved = (await replay(store)).findLast((event) =>
     event.type === "approval.resolved"
   );
   assertEquals(resolved?.type, "approval.resolved");

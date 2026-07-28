@@ -582,9 +582,8 @@ Deno.test("parseResponsesSSE: response.failed surfaces the error.code when messa
 });
 
 Deno.test("parseResponsesSSE: usage breakdown is preserved when only reasoning_tokens is reported", async () => {
-  // Some Responses completions report only the reasoning_tokens breakdown
-  // (no input_tokens/output_tokens totals). The parser fills in 0 for the
-  // missing primary counts and totalTokens defaults to input+output = 0.
+  // Some Responses completions report only the reasoning_tokens breakdown.
+  // Missing primary counts remain unknown rather than becoming fake zeroes.
   const events = await collect(
     evt("response.completed", {
       response: {
@@ -598,9 +597,6 @@ Deno.test("parseResponsesSSE: usage breakdown is preserved when only reasoning_t
       _tag: "Finish",
       reason: "stop",
       usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
         reasoningTokens: 7,
       },
     },

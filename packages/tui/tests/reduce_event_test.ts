@@ -72,7 +72,6 @@ describe("reduce_event: streaming text accumulation", () => {
       ev("text.delta", { delta: "draft" }),
       ev("assistant.message", {
         parts: [],
-        usage: { inputTokens: 0, outputTokens: 0 },
       }),
     ]);
     assertStrictEquals(m.streaming, null);
@@ -120,7 +119,6 @@ describe("reduce_event: streaming thinking accumulation", () => {
       ev("thinking.delta", { delta: "reasoning only" }),
       ev("assistant.message", {
         parts: [],
-        usage: { inputTokens: 0, outputTokens: 0 },
       }),
     ]);
     assertStrictEquals(m.streaming, null);
@@ -153,7 +151,6 @@ describe("reduce_event: streaming thinking accumulation", () => {
           { type: "thinking", text: "let me reason", encrypted: "sig-abc123" },
           { type: "text", text: "the answer" },
         ],
-        usage: { inputTokens: 0, outputTokens: 0 },
       }),
     ]);
     assertStrictEquals(m.messages.length, 1);
@@ -176,7 +173,6 @@ describe("reduce_event: streaming thinking accumulation", () => {
           { type: "text", text: "bridge " },
           { type: "thinking", text: "second" },
         ],
-        usage: { inputTokens: 0, outputTokens: 0 },
       }),
     ]);
     assertStrictEquals(m.messages[0].thinking, "first second");
@@ -193,7 +189,6 @@ describe("reduce_event: streaming thinking accumulation", () => {
           text: "I will not comply",
           encrypted: "sig-r",
         }],
-        usage: { inputTokens: 0, outputTokens: 0 },
       }),
     ]);
     assertStrictEquals(m.messages.length, 1);
@@ -210,7 +205,6 @@ describe("reduce_event: tool call lifecycle", () => {
           { type: "tool_call", id: "c1", name: "read", input: {} },
           { type: "tool_call", id: "c2", name: "read", input: {} },
         ],
-        usage: { inputTokens: 0, outputTokens: 0 },
       }),
       ev("tool.call.requested", { callId: "c1", name: "read" }),
       ev("tool.call.requested", { callId: "c2", name: "read" }),
@@ -221,7 +215,6 @@ describe("reduce_event: tool call lifecycle", () => {
           name: "read",
           input: {},
         }],
-        usage: { inputTokens: 0, outputTokens: 0 },
       }),
       ev("tool.call.requested", { callId: "c3", name: "read" }),
     ]);
@@ -370,17 +363,65 @@ describe("reduce_event: notices + turn state", () => {
   });
 
   it("turn.started marks the turn active", () => {
-    const m = reduceEventSequence([ev("turn.started", {})]);
+    const m = reduceEventSequence([
+      ev("turn.started", { turnId: "turn-1" }),
+    ]);
     assertStrictEquals(m.turnActive, true);
+  });
+
+  it("model.call.completed is the only source of token totals", () => {
+    const m = reduceEventSequence([
+      ev("model.call.completed", {
+        callId: "call-1",
+        turnId: "turn-1",
+        purpose: "agent",
+        actor: "main",
+        providerId: "openai",
+        modelId: "gpt-5",
+        billingMode: "subscription",
+        durationMs: 20,
+        attempts: 1,
+        finishReason: "stop",
+        usage: {
+          inputTokens: 120,
+          outputTokens: 30,
+          reasoningTokens: 10,
+          cachedInputTokens: 80,
+          cacheWriteTokens: null,
+        },
+      }),
+      ev("model.call.completed", {
+        callId: "call-2",
+        turnId: "turn-1",
+        purpose: "compaction",
+        actor: "main",
+        providerId: "openai",
+        modelId: "gpt-5",
+        billingMode: "subscription",
+        durationMs: 30,
+        attempts: 1,
+        finishReason: "stop",
+        usage: {
+          inputTokens: 50,
+          outputTokens: 5,
+          reasoningTokens: null,
+          cachedInputTokens: null,
+          cacheWriteTokens: null,
+        },
+      }),
+    ]);
+    assertStrictEquals(m.tokensIn, 170);
+    assertStrictEquals(m.tokensOut, 35);
+    assertStrictEquals(m.lastInputTokens, 120);
   });
 
   it("turn.completed stops the turn and flushes streaming", () => {
     const m = reduceEventSequence([
-      ev("turn.started", {}),
+      ev("turn.started", { turnId: "turn-1" }),
       ev("text.delta", { delta: "tail without finalize" }),
       ev("turn.completed", {
+        turnId: "turn-1",
         stopReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 2 },
       }),
     ]);
     assertStrictEquals(m.turnActive, false);
@@ -393,8 +434,8 @@ describe("reduce_event: notices + turn state", () => {
 
   it("turn.aborted records an abort notice + reason and stops the turn", () => {
     const m = reduceEventSequence([
-      ev("turn.started", {}),
-      ev("turn.aborted", { reason: "interrupted" }),
+      ev("turn.started", { turnId: "turn-1" }),
+      ev("turn.aborted", { turnId: "turn-1", reason: "interrupted" }),
     ]);
     assertStrictEquals(m.turnActive, false);
     assertStrictEquals(m.lastStopReason, "abort");
@@ -409,7 +450,7 @@ describe("reduce_event: end-to-end canned sequence", () => {
     const m = reduceEventSequence([
       ev("session.created", { workspace: "/w", model: "p/m" }),
       ev("user.message", { parts: [{ type: "text", text: "run it" }] }),
-      ev("turn.started", {}),
+      ev("turn.started", { turnId: "turn-1" }),
       ev("text.delta", { delta: "sure, " }),
       ev("text.delta", { delta: "running" }),
       ev("tool.call.requested", {
@@ -426,7 +467,6 @@ describe("reduce_event: end-to-end canned sequence", () => {
       // assistant.message finalizes the streamed text BEFORE the tool result
       ev("assistant.message", {
         parts: [],
-        usage: { inputTokens: 0, outputTokens: 0 },
       }),
       ev("approval.resolved", { approvalId: "a1", decision: "once" }),
       ev("tool.result", {
@@ -435,7 +475,10 @@ describe("reduce_event: end-to-end canned sequence", () => {
         isError: false,
         durationMs: 5,
       }),
-      ev("turn.aborted", { reason: "user interrupt" }),
+      ev("turn.aborted", {
+        turnId: "turn-1",
+        reason: "user interrupt",
+      }),
     ]);
 
     // messages: user + finalized assistant

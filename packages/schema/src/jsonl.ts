@@ -6,7 +6,7 @@ type RecordedEventT = Schema.Schema.Type<typeof RecordedEvent>;
 export const decode = Schema.decodeUnknownSync;
 export const encode = Schema.encodeUnknownSync;
 
-// Parse a single JSONL line from the event log into a fully-validated
+// Parse a single Session Journal line into a fully-validated
 // RecordedEvent. Throws a Schema ParseError on malformed lines.
 export function parseEventLine(line: string): RecordedEventT {
   return Schema.decodeUnknownSync(RecordedEvent)(JSON.parse(line));
@@ -17,7 +17,7 @@ export function stringifyEventLine(event: RecordedEventT): string {
   return JSON.stringify(Schema.encodeUnknownSync(RecordedEvent)(event));
 }
 
-// Generic JSON-line helpers for any schema (projection snapshots, config, ...).
+// Generic JSON-line helpers for any schema (archives, config, ...).
 export function parseJsonLine<S extends Schema.Codec<unknown>>(
   schema: S,
   line: string,

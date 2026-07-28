@@ -49,7 +49,7 @@ Deno.test("RuleAction / SessionStatus / ApprovalDecisionType: multi-value litera
   for (const a of ["allow", "deny", "ask"] as const) {
     assertEquals(dec(RuleAction)(a), a);
   }
-  for (const s of ["idle", "running", "waiting_approval", "aborted"] as const) {
+  for (const s of ["idle", "running", "waiting_approval"] as const) {
     assertEquals(dec(SessionStatus)(s), s);
   }
   for (const d of ["once", "always", "reject"] as const) {
@@ -253,7 +253,6 @@ Deno.test("parseEventLine/stringifyEventLine: round-trip every RecordedEvent var
       type: "assistant.message",
       data: {
         parts: [{ type: "text", text: "hello" }],
-        usage: { inputTokens: 1, outputTokens: 2 },
       },
     },
     {
@@ -284,20 +283,26 @@ Deno.test("parseEventLine/stringifyEventLine: round-trip every RecordedEvent var
       type: "tool.result",
       data: { callId: "c1", content: "done", isError: false, durationMs: 10 },
     },
-    { seq: 8, ts: 8, sessionId: "s", type: "turn.started", data: {} },
+    {
+      seq: 8,
+      ts: 8,
+      sessionId: "s",
+      type: "turn.started",
+      data: { turnId: "t1" },
+    },
     {
       seq: 9,
       ts: 9,
       sessionId: "s",
       type: "turn.completed",
-      data: { stopReason: "stop", usage: { inputTokens: 1, outputTokens: 2 } },
+      data: { turnId: "t1", stopReason: "stop" },
     },
     {
       seq: 10,
       ts: 10,
       sessionId: "s",
       type: "turn.aborted",
-      data: { reason: "user" },
+      data: { turnId: "t1", reason: "user" },
     },
     {
       seq: 11,
@@ -343,8 +348,65 @@ Deno.test("parseEventLine/stringifyEventLine: round-trip every RecordedEvent var
       type: "error.occurred",
       data: { message: "boom", retryable: false },
     },
+    {
+      seq: 16,
+      ts: 16,
+      sessionId: "s",
+      type: "session.model.changed",
+      data: { model: "openai/gpt-5", contextWindow: 400_000 },
+    },
+    {
+      seq: 17,
+      ts: 17,
+      sessionId: "s",
+      type: "session.effort.changed",
+      data: { effort: "high" },
+    },
+    {
+      seq: 18,
+      ts: 18,
+      sessionId: "s",
+      type: "model.call.completed",
+      data: {
+        callId: "mc1",
+        turnId: "t1",
+        purpose: "agent",
+        actor: "main",
+        providerId: "openai",
+        modelId: "gpt-5",
+        billingMode: "subscription",
+        durationMs: 10,
+        attempts: 1,
+        finishReason: "stop",
+        usage: {
+          inputTokens: 10,
+          outputTokens: 2,
+          reasoningTokens: null,
+          cachedInputTokens: null,
+          cacheWriteTokens: null,
+        },
+      },
+    },
+    {
+      seq: 19,
+      ts: 19,
+      sessionId: "s",
+      type: "model.call.failed",
+      data: {
+        callId: "mc2",
+        turnId: "t1",
+        purpose: "compaction",
+        actor: "main",
+        providerId: "openai",
+        modelId: "gpt-5",
+        billingMode: "subscription",
+        durationMs: 10,
+        attempts: 2,
+        error: "Overloaded",
+      },
+    },
   ];
-  assertEquals(samples.length, 15);
+  assertEquals(samples.length, 19);
 
   for (const ev of samples) {
     const line = stringifyEventLine(ev);
@@ -356,7 +418,7 @@ Deno.test("parseEventLine/stringifyEventLine: round-trip every RecordedEvent var
 });
 
 Deno.test("parseEventLine: rejects unknown event type (closed RecordedEventType literal)", () => {
-  // A bogus `type` must be rejected — this is what makes the event log
+  // A bogus `type` must be rejected — this is what makes the Session Journal
   // append-only / typed. Locks the multi-value RecordedEventType Literals.
   const bogus = JSON.stringify({
     seq: 1,
@@ -486,7 +548,6 @@ Deno.test("parseEventLine/stringifyEventLine: assistant.message with a ThinkingP
         { type: "text", text: "answer" },
         { type: "thinking", text: "second" },
       ],
-      usage: { inputTokens: 1, outputTokens: 2 },
     },
   };
   const line = stringifyEventLine(withThinking);
@@ -500,7 +561,6 @@ Deno.test("parseEventLine/stringifyEventLine: assistant.message with a ThinkingP
     type: "assistant.message",
     data: {
       parts: [{ type: "text", text: "hi" }],
-      usage: { inputTokens: 1, outputTokens: 2 },
     },
   };
   assertEquals(parseEventLine(stringifyEventLine(textOnly)), textOnly);

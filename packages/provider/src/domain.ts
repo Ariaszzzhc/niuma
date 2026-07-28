@@ -31,13 +31,17 @@ export interface ToolDef {
 }
 
 export interface Usage {
-  readonly promptTokens: number;
-  readonly completionTokens: number;
-  readonly totalTokens: number;
+  readonly promptTokens?: number;
+  readonly completionTokens?: number;
+  readonly totalTokens?: number;
   // Reasoning/thinking token consumption, when the provider breaks it out
   // (OpenAI: completion_tokens_details.reasoning_tokens). Absent when the
   // provider does not report it.
   readonly reasoningTokens?: number;
+  /** Provider-reported input tokens served from a prompt cache. */
+  readonly cachedInputTokens?: number;
+  /** Provider-reported input tokens written into a prompt cache. */
+  readonly cacheWriteTokens?: number;
 }
 
 export interface ModelRef {

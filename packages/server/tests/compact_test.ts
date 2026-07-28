@@ -5,31 +5,26 @@ import type { ProviderAdapter, StreamEvent } from "@niuma/provider";
 import { parseConfig } from "@niuma/config";
 import { createServerApp } from "../mod.ts";
 import { bootstrap } from "../src/bootstrap.ts";
-import { makeEventLog } from "../src/event_log.ts";
-import { ensureSchema } from "../src/projection.ts";
-import { makeEventBus } from "../src/event_bus.ts";
+import { dataPaths } from "../src/paths.ts";
 import type { Kernel } from "../src/kernel.ts";
 
 // POST /sessions/:id/compact — the /compact command endpoint. The handler
 // forks compactSession (@niuma/agent) on a background fiber: it replays the
-// event log, summarizes the history (LLM, template fallback), and appends a
+// Session Journal, summarizes the history (LLM, template fallback), and
 // summary-bearing compaction.performed event. Too-short histories record
 // nothing; a session with a turn in flight is refused with 409
 // turn_in_flight.
 
 interface Fixture {
   readonly root: string;
-  readonly sessionsDir: string;
   readonly workspace: string;
 }
 
 const makeFixture = async (): Promise<Fixture> => {
   const root = await Deno.makeTempDir({ prefix: "niuma_compact_" });
-  const sessionsDir = join(root, "sessions");
   const workspace = join(root, "ws");
-  await Deno.mkdir(sessionsDir, { recursive: true });
   await Deno.mkdir(workspace, { recursive: true });
-  return { root, sessionsDir, workspace };
+  return { root, workspace };
 };
 
 const FINISH: StreamEvent = {
@@ -73,16 +68,8 @@ const makeBlockingProvider = (
 });
 
 const buildApp = async (f: Fixture, provider: ProviderAdapter) => {
-  const bus = await Effect.runPromise(makeEventBus());
   const boot = await bootstrap({
-    paths: {
-      root: f.root,
-      sessions: f.sessionsDir,
-      db: join(f.root, "niuma.db"),
-    },
-    event_log: makeEventLog({ sessionsDir: f.sessionsDir }),
-    projection: await ensureSchema(join(f.root, "niuma.db")),
-    bus,
+    paths: dataPaths(f.root, f.workspace),
     config: parseConfig(""),
     infra: { provider },
   });
@@ -91,12 +78,12 @@ const buildApp = async (f: Fixture, provider: ProviderAdapter) => {
 
 type App = { fetch: (req: Request) => Response | Promise<Response> };
 
-const createSession = async (app: App, f: Fixture): Promise<string> => {
+const createSession = async (app: App, _f: Fixture): Promise<string> => {
   const res = await app.fetch(
     new Request("http://niuma.internal/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspace: f.workspace, model: "model-a" }),
+      body: JSON.stringify({ model: "model-a" }),
     }),
   );
   assertEquals(res.status, 201);
@@ -145,7 +132,7 @@ const waitForCompaction = async (
   throw new Error("compaction.performed never appeared in history");
 };
 
-// Append one user/assistant round straight to the event log, bypassing the
+// Append one user/assistant round straight to the Journal, bypassing the
 // agent loop (the compaction path only reads the log).
 const appendRound = async (
   kernel: Kernel,
@@ -165,7 +152,6 @@ const appendRound = async (
       sessionId,
       data: {
         parts: [{ type: "text", text: `answer ${i}` }],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     }),
   );

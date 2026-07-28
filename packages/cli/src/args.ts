@@ -3,8 +3,8 @@
 // Grammar:
 //   niuma [options]                       interactive TUI (default; needs a TTY)
 //   niuma tui [options]                   interactive TUI (explicit form)
-//   niuma -p <prompt> [options]           one-shot mode
-//   niuma serve [--port <port>] [--host]  TCP server mode
+//   niuma -p <prompt> [--resume <id>]     one-shot mode
+//   niuma serve [--port <port>] [--host]  debug TCP server mode
 //   niuma auth login|logout|status [...]  credential management
 //   niuma --version | -V                  print version
 //   niuma --help | -h                     print help
@@ -32,6 +32,7 @@ export interface OneShotArgs {
   readonly workspace: string;
   /** Explicit --model override; undefined means "use config.toml's model". */
   readonly model?: string;
+  readonly resume?: string;
   /** Automatically approve every permission request in one-shot mode.
    * Intended for isolated benchmark/sandbox environments only. */
   readonly bypassPermissions: boolean;
@@ -45,6 +46,7 @@ export interface InteractiveArgs {
   readonly workspace: string;
   /** Explicit --model override; undefined means "use config.toml's model". */
   readonly model?: string;
+  readonly resume?: string;
   /** Smoke-harness only: same flag as one-shot. */
   readonly mockProvider: boolean;
 }
@@ -53,6 +55,7 @@ export interface ServeArgs {
   readonly subcommand: "serve";
   readonly port: number;
   readonly host: string;
+  readonly workspace: string;
 }
 
 /** `niuma auth` — credential management over ~/.niuma/auth.json.
@@ -100,6 +103,14 @@ export type ParseResult =
 const DEFAULT_PORT = 4096;
 const DEFAULT_HOST = "127.0.0.1";
 
+const defaultWorkspace = (): string => {
+  try {
+    return Deno.env.get("NIUMA_WORKSPACE") ?? Deno.cwd();
+  } catch {
+    return Deno.cwd();
+  }
+};
+
 export const parseCliArgs = (argv: string[]): ParseResult => {
   // Subcommand dispatch on the first non-flag positional. `serve`, `tui`, and
   // `auth` are the named subcommands; anything else is parsed as a flag
@@ -115,7 +126,7 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
   }
 
   const parsed = parseArgs(argv, {
-    string: ["prompt", "workspace", "model"],
+    string: ["prompt", "workspace", "model", "resume"],
     boolean: [
       "version",
       "help",
@@ -165,12 +176,13 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
       args: toInteractiveArgs(
         parsed.workspace,
         parsed.model,
+        parsed.resume,
         parsed["mock-provider"],
       ),
     };
   }
 
-  const workspaceArg = parsed.workspace ?? Deno.cwd();
+  const workspaceArg = parsed.workspace ?? defaultWorkspace();
   const workspace = resolve(workspaceArg);
   // Model comes from --model or config.toml's top-level `model` key; there
   // is no env var. The resolved reference (which may come from the config)
@@ -184,13 +196,14 @@ export const parseCliArgs = (argv: string[]): ParseResult => {
       bypassPermissions: parsed["dangerously-bypass-permissions"] === true,
       mockProvider: parsed["mock-provider"] === true,
       ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+      ...(parsed.resume !== undefined ? { resume: parsed.resume } : {}),
     },
   };
 };
 
 const parseInteractiveArgs = (argv: string[]): ParseResult => {
   const parsed = parseArgs(argv, {
-    string: ["workspace", "model"],
+    string: ["workspace", "model", "resume"],
     boolean: ["help", "mock-provider"],
     alias: { h: "help" },
     unknown: (name) => {
@@ -222,6 +235,7 @@ const parseInteractiveArgs = (argv: string[]): ParseResult => {
     args: toInteractiveArgs(
       parsed.workspace,
       parsed.model,
+      parsed.resume,
       parsed["mock-provider"],
     ),
   };
@@ -230,20 +244,22 @@ const parseInteractiveArgs = (argv: string[]): ParseResult => {
 const toInteractiveArgs = (
   workspace: string | undefined,
   model: string | undefined,
+  resume: string | undefined,
   mockProvider: boolean | undefined,
 ): InteractiveArgs => {
-  const workspaceArg = workspace ?? Deno.cwd();
+  const workspaceArg = workspace ?? defaultWorkspace();
   return {
     subcommand: "interactive",
     workspace: resolve(workspaceArg),
     mockProvider: mockProvider === true,
     ...(model !== undefined ? { model } : {}),
+    ...(resume !== undefined ? { resume } : {}),
   };
 };
 
 const parseServeArgs = (argv: string[]): ParseResult => {
   const parsed = parseArgs(argv, {
-    string: ["port", "host"],
+    string: ["port", "host", "workspace"],
     boolean: ["help"],
     alias: { h: "help" },
     default: { port: String(DEFAULT_PORT), host: DEFAULT_HOST },
@@ -276,6 +292,7 @@ const parseServeArgs = (argv: string[]): ParseResult => {
       subcommand: "serve",
       port: portNum,
       host: parsed.host ?? DEFAULT_HOST,
+      workspace: resolve(parsed.workspace ?? defaultWorkspace()),
     },
   };
 };
@@ -359,11 +376,13 @@ USAGE
 INTERACTIVE / TUI OPTIONS
       --workspace <path>              Workspace path (default: current dir).
       --model <provider/model-id>     Model to use (default: config.toml's "model").
+      --resume <session-id>           Resume a Session in the current workspace.
 
 ONE-SHOT OPTIONS
   -p, --prompt <text>                 Prompt text (required for one-shot).
       --workspace <path>              Workspace path (default: current dir).
       --model <provider/model-id>     Model to use (default: config.toml's "model").
+      --resume <session-id>           Resume before submitting the prompt.
       --dangerously-bypass-permissions
                                       Auto-approve permission requests. Use only
                                       inside an isolated benchmark/sandbox.
@@ -371,11 +390,13 @@ ONE-SHOT OPTIONS
 SERVE OPTIONS
       --port <number>                 TCP port (default: 4096).
       --host <addr>                   Bind address (default: 127.0.0.1).
+      --workspace <path>              Workspace served (default: current dir).
 
 CONFIGURATION
   ~/.niuma/config.toml                 Server-owned settings. Example:
                                         model = "deepseek/deepseek-chat"
                                         input_delivery = "steer"
+                                        session_retention_days = 30
                                         [core]
                                         log_level = "info"
                                         [provider.deepseek]
@@ -422,11 +443,12 @@ export const printServeHelp = (): void => {
   const text = `niuma ${VERSION} serve — debug HTTP + SSE server
 
 USAGE
-  niuma serve [--port <port>] [--host <addr>]
+  niuma serve [--port <port>] [--host <addr>] [--workspace <path>]
 
 OPTIONS
       --port <number>     TCP port (default: 4096).
       --host <addr>       Bind address (default: 127.0.0.1).
+      --workspace <path>  Workspace served (default: current dir).
   -h, --help              Show this help.
 
 This temporary debugging command exposes the same Server Worker REST + SSE API

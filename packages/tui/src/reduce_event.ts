@@ -88,11 +88,11 @@ export interface TuiModelState {
   readonly contextWindow: number | null;
   /** MCP servers connected at boot (empty until session.created arrives). */
   readonly mcpServers: ReadonlyArray<{ id: string; toolCount: number }>;
-  /** Cumulative billed tokens this session (assistant.message usage). */
+  /** Cumulative provider-reported tokens from model.call.completed events. */
   readonly tokensIn: number;
   readonly tokensOut: number;
-  /** Latest assistant.message inputTokens — the best proxy for how full the
-   * context window currently is. */
+  /** Latest agent Model Call inputTokens — the best proxy for how full the
+   * context window currently is. Compaction calls do not replace it. */
   readonly lastInputTokens: number;
   readonly messages: readonly TuiMessage[];
   readonly streaming: StreamingText | null;
@@ -221,14 +221,13 @@ const extractResultLines = (content: unknown): string[] => {
   return out;
 };
 
-/** Extract `{inputTokens, outputTokens}` from a `usage` payload, tolerantly. */
+/** Extract nullable token counts from a `usage` payload, tolerantly. */
 const extractUsage = (
   usage: unknown,
-): { input: number; output: number } | null => {
+): { input: number | null; output: number | null } | null => {
   if (usage === null || typeof usage !== "object") return null;
   const input = asNumber((usage as { inputTokens?: unknown }).inputTokens);
   const output = asNumber((usage as { outputTokens?: unknown }).outputTokens);
-  if (input === null || output === null) return null;
   return { input, output };
 };
 
@@ -317,6 +316,16 @@ export const reduceEvent = (
       };
     }
 
+    case "session.model.changed":
+      return {
+        ...model,
+        model: asString(d["model"]) ?? model.model,
+        contextWindow: asNumber(d["contextWindow"]) ?? model.contextWindow,
+      };
+
+    case "session.effort.changed":
+      return model;
+
     case "turn.started":
       return { ...model, turnActive: true };
 
@@ -368,6 +377,24 @@ export const reduceEvent = (
       // deliberately has no second copy of those unconsumed inputs.
       return model;
 
+    case "model.call.completed": {
+      const usage = extractUsage(d["usage"]);
+      const input = usage?.input ?? null;
+      const output = usage?.output ?? null;
+      const isAgentCall = d["purpose"] === "agent";
+      return {
+        ...model,
+        tokensIn: model.tokensIn + (input ?? 0),
+        tokensOut: model.tokensOut + (output ?? 0),
+        lastInputTokens: isAgentCall && input !== null
+          ? input
+          : model.lastInputTokens,
+      };
+    }
+
+    case "model.call.failed":
+      return model;
+
     case "assistant.message": {
       const toolBatch = model.toolBatch + 1;
       const streamingText = model.streaming?.text ?? "";
@@ -382,17 +409,8 @@ export const reduceEvent = (
         return { ...model, streaming: null, toolBatch };
       }
       const id = model.streaming?.id ?? nextId("a");
-      // Accumulate billed usage; keep the latest inputTokens as the
-      // context-fullness proxy for the footer.
-      const usage = extractUsage(d["usage"]);
-      const tokensIn = model.tokensIn + (usage?.input ?? 0);
-      const tokensOut = model.tokensOut + (usage?.output ?? 0);
-      const lastInputTokens = usage?.input ?? model.lastInputTokens;
       return {
         ...model,
-        tokensIn,
-        tokensOut,
-        lastInputTokens,
         toolBatch,
         messages: [
           ...model.messages,
@@ -495,7 +513,7 @@ export const reduceEvent = (
 
     // -- compaction --------------------------------------------------------
     case "compaction.performed": {
-      // Surface the mode ("llm" / "template"); data.summary is projection
+      // Surface the mode ("llm" / "template"); data.summary is model-context
       // material, never display text.
       const mode = ev.data.mode;
       return {

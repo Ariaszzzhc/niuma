@@ -15,7 +15,13 @@
 // All diagnostics (tool call logs, errors, approval prompts) go to stderr
 // so stdout contains exactly the final assistant text.
 
-import { decode, parseSseStream, SseEvent as WireSseEvent } from "@niuma/schema";
+import {
+  decode,
+  GetSessionRes,
+  parseSseStream,
+  SetModelRes,
+  SseEvent as WireSseEvent,
+} from "@niuma/schema";
 import { readStdinLine } from "./stdin.ts";
 
 // Fake host used by the tunnel — Hono routes on the path; the host is
@@ -30,6 +36,8 @@ export interface RunOptions {
    * so the server falls back to the same literal "default" the server smoke
    * tests use (the scripted mock accepts any model). */
   readonly model?: string;
+  /** Existing Session Journal to resume in the Server's current Workspace. */
+  readonly resume?: string;
   /** Auto-resolve approval requests as "once". This does not bypass tool
    * validation, policy hard-denies, path confinement, scheduling, or logging. */
   readonly bypassPermissions?: boolean;
@@ -56,28 +64,59 @@ export const runOneshot = async (
     if (!opts.quiet) console.error(line);
   };
 
-  // ---- 1. Create session --------------------------------------------------
+  // ---- 1. Create or explicitly resume a session --------------------------
   let sessionId: string | undefined;
+  let cursor = 0;
   try {
-    const res = await fetchImpl(`${BASE}/sessions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        workspace: opts.workspace,
-        ...(opts.model !== undefined ? { model: opts.model } : {}),
-      }),
-    });
+    const res = opts.resume === undefined
+      ? await fetchImpl(`${BASE}/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...(opts.model !== undefined ? { model: opts.model } : {}),
+        }),
+      })
+      : await fetchImpl(`${BASE}/sessions/${encodeURIComponent(opts.resume)}`);
     if (!res.ok) {
       const body = await safeText(res);
       console.error(
-        `niuma: failed to create session (${res.status}) ${body}`,
+        `niuma: failed to ${
+          opts.resume === undefined ? "create" : "resume"
+        } session (${res.status}) ${body}`,
       );
       return { exitCode: 1, sessionId: undefined, finalText: "" };
     }
-    const created = (await res.json()) as { sessionId: string };
-    sessionId = created.sessionId;
+    if (opts.resume === undefined) {
+      const created = (await res.json()) as { sessionId: string };
+      sessionId = created.sessionId;
+    } else {
+      const resumed = decode(GetSessionRes)(await res.json());
+      sessionId = resumed.info.sessionId;
+      cursor = resumed.history.reduce(
+        (max, event) => Math.max(max, event.seq),
+        0,
+      ) + 1;
+      if (opts.model !== undefined) {
+        const modelRes = await fetchImpl(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/model`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ model: opts.model }),
+          },
+        );
+        if (!modelRes.ok) {
+          const body = await safeText(modelRes);
+          console.error(
+            `niuma: failed to set resumed session model (${modelRes.status}) ${body}`,
+          );
+          return { exitCode: 1, sessionId, finalText: "" };
+        }
+        decode(SetModelRes)(await modelRes.json());
+      }
+    }
   } catch (err) {
-    console.error(`niuma: session create error: ${errorMessage(err)}`);
+    console.error(`niuma: session setup error: ${errorMessage(err)}`);
     return { exitCode: 1, sessionId: undefined, finalText: "" };
   }
 
@@ -87,7 +126,7 @@ export const runOneshot = async (
   // between prompt() and the GET.
   const eventsUrl = `${BASE}/events?session=${
     encodeURIComponent(sessionId)
-  }&cursor=0`;
+  }&cursor=${cursor}`;
   let sseRes: Response;
   try {
     sseRes = await fetchImpl(eventsUrl);

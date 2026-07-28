@@ -19,7 +19,7 @@
 // remaining arguments (opencode's semantics). When the template has no
 // placeholders at all and arguments were given, they are appended at the
 // end. Expansion happens server-side (packages/server) so every client —
-// TUI, one-shot, serve — shares one code path and the event log records the
+// TUI, one-shot, serve — shares one code path and the Session Journal records
 // expanded text.
 //
 // The user's typed input (e.g. `/review src/foo.ts`) is preserved separately

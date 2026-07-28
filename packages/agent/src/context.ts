@@ -79,7 +79,7 @@ export const ABORTED_TOOL_OUTPUT = "aborted";
 // assistant message with tool_calls that isn't followed by a tool message
 // per call, and any tool message without a matching call. Without this, a
 // turn that died mid-batch (interrupt, pending approval, crash) poisons every
-// subsequent turn with an HTTP 400. The event log is untouched — pairing is
+// subsequent turn with an HTTP 400. The Journal is untouched — pairing is
 // a view concern, not a history rewrite.
 export const projectEvent = (
   out: ProviderMessage[],
@@ -264,7 +264,7 @@ const closePendingToolCalls = (out: ProviderMessage[]): void => {
   }
 };
 
-// Replay the event log into the provider message list the model consumes.
+// Replay the Session Journal into the provider message list the model consumes.
 // user.message / assistant.message / tool.result map 1:1; turn markers,
 // approvals and errors are orchestration metadata; a summary-bearing
 // compaction.performed folds prior history into its bridge message (see

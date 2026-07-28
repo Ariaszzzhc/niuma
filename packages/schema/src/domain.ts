@@ -81,10 +81,16 @@ const Part_ = Schema.Union([
 export type Part = Schema.Schema.Type<typeof Part_>;
 export const Part: Schema.Codec<Part> = Part_;
 
+// Token counts are nullable rather than defaulting to zero. A provider that
+// omitted usage reported "unknown", not "no tokens consumed"; preserving that
+// distinction is required for honest long-term analytics.
 // deno-lint-ignore no-slow-types
 const Usage_ = Schema.Struct({
-  inputTokens: Schema.Number,
-  outputTokens: Schema.Number,
+  inputTokens: Schema.NullOr(Schema.Number),
+  outputTokens: Schema.NullOr(Schema.Number),
+  reasoningTokens: Schema.optional(Schema.NullOr(Schema.Number)),
+  cachedInputTokens: Schema.optional(Schema.NullOr(Schema.Number)),
+  cacheWriteTokens: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 export type Usage = Schema.Schema.Type<typeof Usage_>;
 export const Usage: Schema.Codec<Usage> = Usage_;

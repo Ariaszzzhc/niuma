@@ -9,6 +9,7 @@ import {
   GetSessionRes,
   InterruptRes,
   PromptRes,
+  SessionIdListRes,
   SessionListRes,
   SetEffortRes,
   SetInputDeliveryRes,
@@ -21,6 +22,8 @@ import { makeHandlers } from "./handlers/sessions.ts";
 import { handleEvents } from "./handlers/events.ts";
 import { HttpError, httpError } from "./error.ts";
 import { log } from "./logger.ts";
+import { makeRetention } from "./retention.ts";
+import { makeUsageArchive } from "./usage_archive.ts";
 
 const ensureSessionId = (id: string): string => {
   if (!id || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)) {
@@ -43,7 +46,9 @@ export interface ServerApp {
     unknown
   >;
   readonly bootstrap: BootstrapResult;
-  /** Dispose the Effect runtime, MCP transports, and projection. Idempotent. */
+  /** Background Retention sweep when session_retention_days is configured. */
+  readonly retentionTask?: Promise<void>;
+  /** Dispose the Effect runtime, MCP transports, and event bus. Idempotent. */
   readonly close: () => Promise<void>;
 }
 
@@ -66,6 +71,39 @@ export const createServerApp = async (
       : {}),
     configuration: boot.configuration,
   });
+  const retentionLog = log("niuma.server.retention");
+  const retentionTask = boot.config.sessionRetentionDays === undefined
+    ? undefined
+    : makeRetention({
+      store: boot.store,
+      archive: makeUsageArchive({ layout: boot.paths }),
+      retentionDays: boot.config.sessionRetentionDays,
+      isSessionActive: (sessionId) =>
+        runtime.runPromise(sessionManager.isActive(sessionId)),
+    }).sweep().then((result) => {
+      retentionLog.info(
+        "retention inspected={inspected} archived={archived} deleted={deleted} failures={failures}",
+        {
+          inspected: result.inspected,
+          archived: result.archived,
+          deleted: result.deleted,
+          failures: result.failures.length,
+        },
+      );
+      for (const failure of result.failures) {
+        retentionLog.warn(
+          "retention kept Session Journal {sessionId}: {error}",
+          {
+            sessionId: failure.sessionId,
+            error: failure.error,
+          },
+        );
+      }
+    }).catch((error) => {
+      retentionLog.error("retention sweep failed: {error}", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
 
   const app = new Hono();
 
@@ -114,6 +152,11 @@ export const createServerApp = async (
   app.get("/sessions", async (c) => {
     const list = await handlers.listSessions();
     return c.json(decode(SessionListRes)(list));
+  });
+
+  app.get("/sessions/ids", async (c) => {
+    const ids = await handlers.listSessionIds();
+    return c.json(decode(SessionIdListRes)(ids));
   });
 
   app.get("/sessions/:id", async (c) => {
@@ -197,6 +240,7 @@ export const createServerApp = async (
     if (closed) return;
     closed = true;
     try {
+      await retentionTask;
       await runtime.dispose();
     } finally {
       await boot.close();
@@ -209,6 +253,7 @@ export const createServerApp = async (
     sessionManager,
     runtime,
     bootstrap: boot,
+    ...(retentionTask !== undefined ? { retentionTask } : {}),
     close,
   };
 };

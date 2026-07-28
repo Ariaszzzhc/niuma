@@ -3,12 +3,11 @@
 // Mirrors one-shot main.ts's Server Worker bootstrap, then hands
 // control to @niuma/tui's runTui (which owns the Terminal lifecycle, the TEA
 // program, and the live session client). The worker is terminated in a finally
-// so a leaked background fiber (SQLite projection / event bus) never outlives
-// the process.
+// so a leaked background fiber or event bus never outlives the process.
 //
 //   1. Native renderer guard: refuse early if the cdylib is missing.
 //   2. Forward the raw --model override to the Server Worker.
-//   3. setEnvIfAbsent NIUMA_WORKSPACE (inherited by the worker).
+//   3. Set NIUMA_WORKSPACE to the selected Workspace (inherited by the worker).
 //   4. spawnServerWorker(): Worker + fetch tunnel + ready handshake.
 //   5. runTui({ fetchImpl: tunnel.fetch, workspace, version }).
 //   6. terminate the worker, return runTui's exit code.
@@ -83,7 +82,7 @@ export const runInteractive = async (
   // Propagate the resolved workspace to the worker's bootstrap: the
   // permission engine reads NIUMA_WORKSPACE at startup to set its cwd.
   // Workers snapshot the parent env at spawn time, so this is inherited.
-  setEnvIfAbsent("NIUMA_WORKSPACE", workspace);
+  setWorkspaceEnv(workspace);
 
   const spawned = await spawnServerWorker({
     mockProvider,
@@ -99,6 +98,8 @@ export const runInteractive = async (
       fetchImpl: tunnel.fetch,
       workspace,
       version: VERSION,
+      ...(modelRef !== undefined ? { model: modelRef } : {}),
+      ...(args.resume !== undefined ? { resume: args.resume } : {}),
     });
   } catch (err) {
     // The native-missing case is handled by the guard above; anything that
@@ -109,7 +110,7 @@ export const runInteractive = async (
     );
     return 1;
   } finally {
-    // Ask the worker to dispose its runtime, MCP transports, and projection
+    // Ask the worker to dispose its runtime, MCP transports, and event bus
     // before terminating the isolate.
     try {
       await tunnel.close();
@@ -124,12 +125,12 @@ export const runInteractive = async (
   }
 };
 
-const setEnvIfAbsent = (name: string, value: string): void => {
-  if (!Deno.env.get(name)) {
-    try {
-      Deno.env.set(name, value);
-    } catch {
-      // Best-effort; ignore if env is not writable.
-    }
+const setWorkspaceEnv = (workspace: string): void => {
+  try {
+    // An explicit/default CLI Workspace is authoritative for this process.
+    // A stale inherited NIUMA_WORKSPACE must never redirect Session storage.
+    Deno.env.set("NIUMA_WORKSPACE", workspace);
+  } catch {
+    // Best-effort; bootstrap still falls back to its process cwd.
   }
 };

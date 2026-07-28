@@ -2,32 +2,18 @@ import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { createServerApp } from "../mod.ts";
 import { bootstrap } from "../src/bootstrap.ts";
-import { makeEventLog } from "../src/event_log.ts";
-import { ensureSchema } from "../src/projection.ts";
-import { makeEventBus } from "../src/event_bus.ts";
+import { dataPaths } from "../src/paths.ts";
 import { makeMockProvider } from "@niuma/provider";
 import { parseConfig } from "@niuma/config";
-import { Effect } from "effect";
 
 // Use a temp data dir so the smoke test never touches ~/.niuma.
 const TMP_DIR = await Deno.makeTempDir({ prefix: "niuma_smoke_" });
-const sessionsDir = join(TMP_DIR, "sessions");
-const dbPath = join(TMP_DIR, "niuma.db");
-await Deno.mkdir(sessionsDir, { recursive: true });
+const WORKSPACE = join(TMP_DIR, "workspace");
+await Deno.mkdir(WORKSPACE, { recursive: true });
 
 async function buildApp() {
-  const bus = await Effect.runPromise(makeEventBus());
-  const event_log = makeEventLog({ sessionsDir });
-  const projection = await ensureSchema(dbPath);
   const boot = await bootstrap({
-    paths: {
-      root: TMP_DIR,
-      sessions: sessionsDir,
-      db: dbPath,
-    },
-    event_log,
-    projection,
-    bus,
+    paths: dataPaths(TMP_DIR, WORKSPACE),
     // Inject the network-free provider and an in-memory config so the test
     // never reads config.toml / auth.json / the real backend.
     config: parseConfig(""),
@@ -60,13 +46,13 @@ Deno.test({
       new Request("http://niuma.internal/sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workspace: "/tmp", model: "smoke-model" }),
+        body: JSON.stringify({ model: "smoke-model" }),
       }),
     );
     assertEquals(create.status, 201);
     const created = await create.json();
     assert(typeof created.sessionId === "string");
-    assertEquals(created.workspace, "/tmp");
+    assertEquals(created.workspace, WORKSPACE);
     assertEquals(created.model, "smoke-model");
 
     const listRes = await app.fetch(
@@ -93,7 +79,7 @@ Deno.test({
       new Request("http://niuma.internal/sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workspace: "/tmp", model: "smoke-model" }),
+        body: JSON.stringify({ model: "smoke-model" }),
       }),
     );
     const { sessionId } = await create.json();
@@ -121,7 +107,7 @@ Deno.test({
       new Request("http://niuma.internal/sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workspace: "/tmp", model: "smoke-model" }),
+        body: JSON.stringify({ model: "smoke-model" }),
       }),
     );
     const { sessionId } = await create.json();
@@ -161,7 +147,7 @@ Deno.test({
     await Effect.runPromise(kernel.append({
       type: "session.created",
       sessionId: "sse_smoke",
-      data: { workspace: "/tmp", model: "smoke-model", mcpServers: [] },
+      data: { workspace: WORKSPACE, model: "smoke-model", mcpServers: [] },
     }));
     await Effect.runPromise(kernel.append({
       type: "user.message",
@@ -210,7 +196,7 @@ Deno.test({
     await Effect.runPromise(kernel.append({
       type: "session.created",
       sessionId: "sse_live",
-      data: { workspace: "/tmp", model: "smoke-model", mcpServers: [] },
+      data: { workspace: WORKSPACE, model: "smoke-model", mcpServers: [] },
     }));
 
     const res = await app.fetch(

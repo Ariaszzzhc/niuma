@@ -1,7 +1,9 @@
 import type { Effect } from "effect";
 import type {
   ApprovalDecisionType,
+  BillingMode,
   LiveEvent,
+  ModelCallActor,
   RecordedEvent,
   ToolResultContent,
   UserMessageEvent,
@@ -23,13 +25,13 @@ type WithoutMeta<T> = T extends unknown ? Omit<T, "seq" | "ts" | "sessionId">
   : never;
 export type EventInput = WithoutMeta<RecordedEvent>;
 
-export interface EventLog {
-  // Assigns seq/ts/sessionId, appends to the JSONL log, returns the envelope.
+export interface SessionJournal {
+  // Assigns seq/ts/sessionId, appends to the Journal, returns the envelope.
   readonly append: (
     sessionId: string,
     input: EventInput,
   ) => Effect.Effect<RecordedEvent>;
-  // Full ordered replay of a session's log — the agent's only history source.
+  // Full ordered replay of a Journal — the agent's only history source.
   readonly replay: (
     sessionId: string,
   ) => Effect.Effect<ReadonlyArray<RecordedEvent>>;
@@ -111,11 +113,17 @@ export interface TurnInput {
 }
 
 export interface RunTurnDeps {
-  readonly event_log: EventLog;
+  readonly journal: SessionJournal;
   readonly provider: ProviderAdapter;
   readonly tools: ToolPipeline;
   readonly approvals: ApprovalGateway;
   readonly model: string;
+  /** Stable provider identity and billing lane recorded with every Model Call. */
+  readonly providerId?: string;
+  readonly billingMode?: BillingMode;
+  readonly actor?: ModelCallActor;
+  /** Server-assigned Turn identity; generated locally only for direct tests. */
+  readonly turnId?: string;
   readonly workspace: string;
   readonly mode?: ToolMode;
   readonly contextWindow?: number;

@@ -19,12 +19,13 @@
 // Session switching:
 //
 //   - `newSession()` repeats steps 1-2 (fresh session, cursor 0).
-//   - `listSessions()` is `GET /sessions` (projection read model).
+//   - `listSessions()` is `GET /sessions` (recent folded Session State).
+//   - `listSessionIds()` reads filenames only for prefix resolution.
 //   - `resume(id)` is `GET /sessions/:id` -> { info, history }, then re-opens
 //     the SSE stream at `max(history.seq) + 1` so the live tail never
 //     re-delivers an event already present in the returned history (the
 //     server's replay emits `seq >= cursor`; see packages/server/src/
-//     event_log.ts).
+//     session_store.ts).
 //
 // SSE SWITCH CONTRACT (consumed by app.ts's sseSub):
 // `eventsStream` and `streamVersion` are getters over mutable current-session
@@ -50,6 +51,7 @@ import {
   InterruptRes as InterruptResponse,
   PromptRes as PromptResponse,
   type RecordedEvent,
+  SessionIdListRes,
   type SessionInfo,
   SessionListRes,
   SetEffortRes as SetEffortResponse,
@@ -138,9 +140,11 @@ export interface TuiClientOptions {
   readonly workspace: string;
   /** Bare model id recorded on the session; omit for the mock provider. */
   readonly model?: string;
+  /** Existing Session Journal to open instead of creating a fresh Session. */
+  readonly resume?: string;
 }
 
-/** The payload `resume()` hands back: the session's projection row plus its
+/** The payload `resume()` hands back: folded Session State plus its
  * recorded history events (already reflected in the log — do NOT expect them
  * on the new SSE stream, which starts strictly after them). */
 export interface ResumeResult {
@@ -184,8 +188,10 @@ export interface TuiClient {
   /** Create a fresh session and switch to it (SSE re-opened at cursor 0,
    * `streamVersion` bumped). Rejects on a server/stream failure. */
   readonly newSession: () => Promise<void>;
-  /** List known sessions (projection read model) for the /resume picker. */
+  /** List the most recently touched Sessions for the /resume picker. */
   readonly listSessions: () => Promise<ReadonlyArray<SessionInfo>>;
+  /** List Session ids from Journal filenames without folding every Journal. */
+  readonly listSessionIds: () => Promise<ReadonlyArray<string>>;
   /** Switch to an existing session: fetches its info + full recorded history,
    * re-opens the SSE stream after the last recorded seq, and bumps
    * `streamVersion`. Rejects when the session is unknown or the stream fails
@@ -276,7 +282,7 @@ const createSessionOnServer = async (
     | "inputDelivery"
   >
 > => {
-  const createBody: Record<string, unknown> = { workspace: opts.workspace };
+  const createBody: Record<string, unknown> = {};
   if (opts.model !== undefined) createBody.model = opts.model;
   try {
     const res = await fetchImpl(`${BASE}/sessions`, {
@@ -330,12 +336,26 @@ const openEventStream = async (
   return sseRes.body;
 };
 
+const getSessionOnServer = async (
+  fetchImpl: typeof fetch,
+  sessionId: string,
+) => {
+  const res = await fetchImpl(`${BASE}/sessions/${enc(sessionId)}`);
+  if (!res.ok) {
+    throw new Error(
+      `niuma: session resume failed (${res.status}) ${await safeText(res)}`,
+    );
+  }
+  return decode(GetSessionRes)(await res.json());
+};
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 /**
- * Create the first session and open its SSE stream, then return a session
+ * Create or explicitly resume the first Session and open its SSE stream, then
+ * return a session
  * manager bound to that session. Resolves once both have succeeded (the
  * stream is open but NOT yet consumed — the app starts a Sub for that).
  * Rejects on a session-create or stream-open failure so `runTui` can surface
@@ -345,9 +365,50 @@ export const createTuiClient = async (
   fetchImpl: typeof fetch,
   opts: TuiClientOptions,
 ): Promise<TuiClient> => {
-  // 1. Create the initial session + open its stream (same boot ordering as
-  // before: stream open BEFORE any prompt so no early event is missed).
-  const created = await createSessionOnServer(fetchImpl, opts);
+  // 1. A default boot creates a Session without scanning the Session
+  // directory. An explicit --resume reads exactly the requested Journal.
+  let created: Pick<
+    SessionState,
+    | "sessionId"
+    | "contextWindow"
+    | "mcpServers"
+    | "commands"
+    | "inputDelivery"
+  >;
+  if (opts.resume === undefined) {
+    created = await createSessionOnServer(fetchImpl, opts);
+  } else {
+    const payload = await getSessionOnServer(fetchImpl, opts.resume);
+    let contextWindow = payload.contextWindow ?? null;
+    if (opts.model !== undefined) {
+      const res = await fetchImpl(
+        `${BASE}/sessions/${enc(opts.resume)}/model`,
+        {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify({ model: opts.model }),
+        },
+      );
+      if (!res.ok) {
+        throw new Error(
+          `niuma: resumed session model update failed (${res.status}) ${await safeText(
+            res,
+          )}`,
+        );
+      }
+      const model = decode(SetModelResponse)(await res.json());
+      contextWindow = model.contextWindow ?? contextWindow;
+    }
+    created = {
+      sessionId: payload.info.sessionId,
+      contextWindow,
+      mcpServers: payload.mcpServers,
+      commands: payload.commands,
+      inputDelivery: payload.clientConfig.inputDelivery,
+    };
+  }
+  // Cursor 0 lets the initial app build its transcript from the Journal. No
+  // separate in-memory history injection is needed during boot.
   const firstStream = await openEventStream(fetchImpl, created.sessionId, 0);
 
   const state: SessionState = {
@@ -379,14 +440,18 @@ export const createTuiClient = async (
     return decode(SessionListRes)(await res.json());
   };
 
-  const resume = async (sessionId: string): Promise<ResumeResult> => {
-    const res = await fetchImpl(`${BASE}/sessions/${enc(sessionId)}`);
+  const listSessionIds = async (): Promise<ReadonlyArray<string>> => {
+    const res = await fetchImpl(`${BASE}/sessions/ids`);
     if (!res.ok) {
       throw new Error(
-        `niuma: session resume failed (${res.status}) ${await safeText(res)}`,
+        `niuma: session id list failed (${res.status}) ${await safeText(res)}`,
       );
     }
-    const payload = decode(GetSessionRes)(await res.json());
+    return decode(SessionIdListRes)(await res.json());
+  };
+
+  const resume = async (sessionId: string): Promise<ResumeResult> => {
+    const payload = await getSessionOnServer(fetchImpl, sessionId);
     const history = payload.history;
     // The server replays `seq >= cursor`, so start strictly AFTER the last
     // recorded event to avoid re-delivering history on the new stream.
@@ -633,6 +698,7 @@ export const createTuiClient = async (
     interrupt,
     newSession,
     listSessions,
+    listSessionIds,
     resume,
     setModel,
     setEffort,

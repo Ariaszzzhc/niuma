@@ -3,7 +3,7 @@ import { Part, StopReason, ToolResultContent, Usage } from "./domain.ts";
 import { ApprovalDecisionType, PermissionRule } from "./permission.ts";
 
 // ============================================================================
-// Recorded events — appended to the per-session JSONL event log (source of
+// Recorded events — appended to the per-Session JSONL Journal (source of
 // truth). Each variant is a full envelope: { seq, ts, sessionId, type, data }.
 // The union is discriminated on `type`; `data` carries the type-specific
 // payload. Empty payloads use `Schema.Struct({})`.
@@ -30,6 +30,7 @@ export const McpServerStatus: Schema.Codec<McpServerStatus> = McpServerStatus_;
 const SessionCreatedData_ = Schema.Struct({
   workspace: Schema.String,
   model: Schema.String,
+  effort: Schema.optional(Schema.String),
   contextWindow: Schema.optional(Schema.Number),
   mcpServers: Schema.Array(McpServerStatus_),
 });
@@ -44,6 +45,45 @@ export const SessionCreatedEvent = Schema.Struct({
 });
 export type SessionCreatedEvent = Schema.Schema.Type<
   typeof SessionCreatedEvent
+>;
+
+// deno-lint-ignore no-slow-types
+const SessionModelChangedData_ = Schema.Struct({
+  model: Schema.String,
+  contextWindow: Schema.optional(Schema.Number),
+});
+export type SessionModelChangedData = Schema.Schema.Type<
+  typeof SessionModelChangedData_
+>;
+export const SessionModelChangedData: Schema.Codec<SessionModelChangedData> =
+  SessionModelChangedData_;
+
+export const SessionModelChangedEvent = Schema.Struct({
+  ...recordedBase,
+  type: Schema.Literal("session.model.changed"),
+  data: SessionModelChangedData,
+});
+export type SessionModelChangedEvent = Schema.Schema.Type<
+  typeof SessionModelChangedEvent
+>;
+
+// deno-lint-ignore no-slow-types
+const SessionEffortChangedData_ = Schema.Struct({
+  effort: Schema.String,
+});
+export type SessionEffortChangedData = Schema.Schema.Type<
+  typeof SessionEffortChangedData_
+>;
+export const SessionEffortChangedData: Schema.Codec<SessionEffortChangedData> =
+  SessionEffortChangedData_;
+
+export const SessionEffortChangedEvent = Schema.Struct({
+  ...recordedBase,
+  type: Schema.Literal("session.effort.changed"),
+  data: SessionEffortChangedData,
+});
+export type SessionEffortChangedEvent = Schema.Schema.Type<
+  typeof SessionEffortChangedEvent
 >;
 
 // deno-lint-ignore no-slow-types
@@ -70,7 +110,6 @@ export const UserMessageEvent: Schema.Codec<UserMessageEvent> =
 
 export const AssistantMessageData = Schema.Struct({
   parts: Schema.Array(Part),
-  usage: Usage,
 });
 export type AssistantMessageData = Schema.Schema.Type<
   typeof AssistantMessageData
@@ -161,7 +200,9 @@ export type ToolResultEvent = Schema.Schema.Type<typeof ToolResultEvent_>;
 export const ToolResultEvent: Schema.Codec<ToolResultEvent> = ToolResultEvent_;
 
 // deno-lint-ignore no-slow-types
-const TurnStartedData_ = Schema.Struct({});
+const TurnStartedData_ = Schema.Struct({
+  turnId: Schema.String,
+});
 export type TurnStartedData = Schema.Schema.Type<typeof TurnStartedData_>;
 export const TurnStartedData: Schema.Codec<TurnStartedData> = TurnStartedData_;
 
@@ -177,8 +218,8 @@ export const TurnStartedEvent: Schema.Codec<TurnStartedEvent> =
 
 // deno-lint-ignore no-slow-types
 const TurnCompletedData_ = Schema.Struct({
+  turnId: Schema.String,
   stopReason: StopReason,
-  usage: Usage,
 });
 export type TurnCompletedData = Schema.Schema.Type<typeof TurnCompletedData_>;
 export const TurnCompletedData: Schema.Codec<TurnCompletedData> =
@@ -196,6 +237,7 @@ export const TurnCompletedEvent: Schema.Codec<TurnCompletedEvent> =
 
 // deno-lint-ignore no-slow-types
 const TurnAbortedData_ = Schema.Struct({
+  turnId: Schema.String,
   reason: Schema.String,
 });
 export type TurnAbortedData = Schema.Schema.Type<typeof TurnAbortedData_>;
@@ -211,13 +253,79 @@ export type TurnAbortedEvent = Schema.Schema.Type<typeof TurnAbortedEvent_>;
 export const TurnAbortedEvent: Schema.Codec<TurnAbortedEvent> =
   TurnAbortedEvent_;
 
+const ModelCallPurpose_ = Schema.Literals(["agent", "compaction"]);
+export type ModelCallPurpose = Schema.Schema.Type<typeof ModelCallPurpose_>;
+export const ModelCallPurpose: Schema.Codec<ModelCallPurpose> =
+  ModelCallPurpose_;
+
+const ModelCallActor_ = Schema.Literals(["main", "subagent"]);
+export type ModelCallActor = Schema.Schema.Type<typeof ModelCallActor_>;
+export const ModelCallActor: Schema.Codec<ModelCallActor> = ModelCallActor_;
+
+const BillingMode_ = Schema.Literals(["subscription", "api", "unknown"]);
+export type BillingMode = Schema.Schema.Type<typeof BillingMode_>;
+export const BillingMode: Schema.Codec<BillingMode> = BillingMode_;
+
+const modelCallBase = {
+  callId: Schema.String,
+  turnId: Schema.String,
+  purpose: ModelCallPurpose_,
+  actor: ModelCallActor_,
+  providerId: Schema.String,
+  modelId: Schema.String,
+  billingMode: BillingMode_,
+  durationMs: Schema.Number,
+  attempts: Schema.Number,
+};
+
+// deno-lint-ignore no-slow-types
+const ModelCallCompletedData_ = Schema.Struct({
+  ...modelCallBase,
+  finishReason: StopReason,
+  usage: Usage,
+});
+export type ModelCallCompletedData = Schema.Schema.Type<
+  typeof ModelCallCompletedData_
+>;
+export const ModelCallCompletedData: Schema.Codec<ModelCallCompletedData> =
+  ModelCallCompletedData_;
+
+export const ModelCallCompletedEvent = Schema.Struct({
+  ...recordedBase,
+  type: Schema.Literal("model.call.completed"),
+  data: ModelCallCompletedData,
+});
+export type ModelCallCompletedEvent = Schema.Schema.Type<
+  typeof ModelCallCompletedEvent
+>;
+
+// deno-lint-ignore no-slow-types
+const ModelCallFailedData_ = Schema.Struct({
+  ...modelCallBase,
+  error: Schema.String,
+});
+export type ModelCallFailedData = Schema.Schema.Type<
+  typeof ModelCallFailedData_
+>;
+export const ModelCallFailedData: Schema.Codec<ModelCallFailedData> =
+  ModelCallFailedData_;
+
+export const ModelCallFailedEvent = Schema.Struct({
+  ...recordedBase,
+  type: Schema.Literal("model.call.failed"),
+  data: ModelCallFailedData,
+});
+export type ModelCallFailedEvent = Schema.Schema.Type<
+  typeof ModelCallFailedEvent
+>;
+
 export const CompactionPerformedData = Schema.Struct({
   summaryMessageId: Schema.String,
   // "llm" = model-generated handoff summary (the summarizer call succeeded
   // and returned non-empty text); "template" = deterministic fallback used
   // when the summary call failed or returned empty.
   mode: Schema.Literals(["llm", "template"]),
-  // The summary BODY (no SUMMARY_PREFIX — the projection layer re-wraps it
+  // The summary BODY (no SUMMARY_PREFIX — the context fold re-wraps it
   // when folding the event into the bridge message, so the marker convention
   // stays single-sourced). Replay replaces everything projected so far with
   // the bridge message.
@@ -315,6 +423,8 @@ export const ErrorOccurredEvent: Schema.Codec<ErrorOccurredEvent> =
 // deno-lint-ignore no-slow-types
 const RecordedEvent_ = Schema.Union([
   SessionCreatedEvent,
+  SessionModelChangedEvent,
+  SessionEffortChangedEvent,
   UserMessageEvent,
   AssistantMessageEvent,
   ToolCallRequestedEvent,
@@ -324,6 +434,8 @@ const RecordedEvent_ = Schema.Union([
   TurnStartedEvent,
   TurnCompletedEvent,
   TurnAbortedEvent,
+  ModelCallCompletedEvent,
+  ModelCallFailedEvent,
   CompactionPerformedEvent,
   ApprovalRequestedEvent,
   ApprovalResolvedEvent,
@@ -336,6 +448,8 @@ export const RecordedEvent: Schema.Codec<RecordedEvent> = RecordedEvent_;
 // deno-lint-ignore no-slow-types
 const RecordedEventType_ = Schema.Literals([
   "session.created",
+  "session.model.changed",
+  "session.effort.changed",
   "user.message",
   "assistant.message",
   "tool.call.requested",
@@ -345,6 +459,8 @@ const RecordedEventType_ = Schema.Literals([
   "turn.started",
   "turn.completed",
   "turn.aborted",
+  "model.call.completed",
+  "model.call.failed",
   "compaction.performed",
   "approval.requested",
   "approval.resolved",

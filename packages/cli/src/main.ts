@@ -8,7 +8,7 @@
 //
 // One-shot mode wiring (the worker bootstrap lives in worker.ts):
 //   1. Forward the raw --model override, if any, to the Server Worker.
-//   2. setEnvIfAbsent NIUMA_WORKSPACE (inherited by the worker).
+//   2. Set NIUMA_WORKSPACE to the selected Workspace (inherited by the worker).
 //   3. spawnServerWorker(): Worker + fetch tunnel + ready handshake.
 //   4. runOneshot(prompt, fetch=tunnel.fetch).
 //   5. worker.terminate() + return exit code.
@@ -34,6 +34,7 @@ const main = async (): Promise<number> => {
   }
 
   if (parsed.args.subcommand === "serve") {
+    setWorkspaceEnv(parsed.args.workspace);
     return await runServe({
       port: parsed.args.port,
       host: parsed.args.host,
@@ -49,7 +50,13 @@ const main = async (): Promise<number> => {
   }
 
   // One-shot mode.
-  const { bypassPermissions, prompt, workspace, mockProvider } = parsed.args;
+  const {
+    bypassPermissions,
+    prompt,
+    workspace,
+    mockProvider,
+    resume,
+  } = parsed.args;
 
   // The CLI never reads config.toml. The Server Worker resolves its effective
   // config and validates this optional raw provider/model-id override.
@@ -60,7 +67,7 @@ const main = async (): Promise<number> => {
   // rule evaluation aligns with the session's workspace rather than the
   // CLI's launch dir. Setting it here is inherited by the worker because
   // Workers snapshot the parent env at spawn time.
-  setEnvIfAbsent("NIUMA_WORKSPACE", workspace);
+  setWorkspaceEnv(workspace);
 
   const spawned = await spawnServerWorker({
     mockProvider,
@@ -78,6 +85,8 @@ const main = async (): Promise<number> => {
         prompt,
         workspace,
         bypassPermissions,
+        ...(modelRef !== undefined ? { model: modelRef } : {}),
+        ...(resume !== undefined ? { resume } : {}),
       },
       tunnel.fetch,
     );
@@ -90,7 +99,7 @@ const main = async (): Promise<number> => {
     );
     exitCode = 1;
   } finally {
-    // Ask the worker to dispose its runtime, MCP transports, and projection
+    // Ask the worker to dispose its runtime, MCP transports, and event bus
     // before terminating the isolate.
     try {
       await tunnel.close();
@@ -107,13 +116,13 @@ const main = async (): Promise<number> => {
   return exitCode;
 };
 
-const setEnvIfAbsent = (name: string, value: string): void => {
-  if (!Deno.env.get(name)) {
-    try {
-      Deno.env.set(name, value);
-    } catch {
-      // Best-effort; ignore if env is not writable.
-    }
+const setWorkspaceEnv = (workspace: string): void => {
+  try {
+    // An explicit/default CLI Workspace is authoritative for this process.
+    // A stale inherited NIUMA_WORKSPACE must never redirect Session storage.
+    Deno.env.set("NIUMA_WORKSPACE", workspace);
+  } catch {
+    // Best-effort; bootstrap still falls back to its process cwd.
   }
 };
 

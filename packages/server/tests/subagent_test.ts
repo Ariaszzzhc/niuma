@@ -5,30 +5,32 @@ import type { RecordedEvent } from "@niuma/schema";
 import type { SubagentResult } from "@niuma/tools";
 import { makeSubagentSpawner, type SubagentRequest } from "../src/bootstrap.ts";
 import { makeEventBus } from "../src/event_bus.ts";
-import { makeEventLog } from "../src/event_log.ts";
 import { makeKernel } from "../src/kernel.ts";
-import { ensureSchema } from "../src/projection.ts";
+import { makeSessionStore, type SessionStore } from "../src/session_store.ts";
+import {
+  ensureWorkspaceLayout,
+  makeWorkspaceLayout,
+} from "../src/workspace_layout.ts";
 
 const replay = async (
-  eventLog: ReturnType<typeof makeEventLog>,
+  store: SessionStore,
   sessionId: string,
 ): Promise<RecordedEvent[]> => {
   const events: RecordedEvent[] = [];
-  for await (const event of eventLog.replay(sessionId)) events.push(event);
+  for await (const event of store.replay(sessionId)) events.push(event);
   return events;
 };
 
 Deno.test("server subagent spawner records lineage and rejects depth two", async () => {
   const root = await Deno.makeTempDir({ prefix: "niuma_subagent_" });
-  const sessions = join(root, "sessions");
   const workspace = join(root, "workspace");
-  await Deno.mkdir(sessions, { recursive: true });
   await Deno.mkdir(workspace, { recursive: true });
 
-  const eventLog = makeEventLog({ sessionsDir: sessions });
+  const layout = makeWorkspaceLayout(root, workspace);
+  await ensureWorkspaceLayout(layout);
+  const store = makeSessionStore({ layout });
   const kernel = await Effect.runPromise(makeKernel({
-    event_log: eventLog,
-    projection: await ensureSchema(join(root, "niuma.db")),
+    store,
     bus: await Effect.runPromise(makeEventBus()),
   }));
   const parentSessionId = "parent";
@@ -65,7 +67,7 @@ Deno.test("server subagent spawner records lineage and rejects depth two", async
   assertEquals(runChildMode, "read-only");
   assertStringIncludes(result.text, "Subagent depth limit reached");
 
-  const parentEvents = await replay(eventLog, parentSessionId);
+  const parentEvents = await replay(store, parentSessionId);
   const lineage = parentEvents.find((event) =>
     event.type === "subagent.spawned"
   );
@@ -76,7 +78,7 @@ Deno.test("server subagent spawner records lineage and rejects depth two", async
   assertEquals(lineage.data.childSessionId, result.sessionId);
   assertEquals(lineage.data.prompt, "inspect the code");
 
-  const childEvents = await replay(eventLog, result.sessionId);
+  const childEvents = await replay(store, result.sessionId);
   assertEquals(
     childEvents.map((event) => event.type),
     ["session.created", "user.message"],
@@ -90,7 +92,7 @@ Deno.test("server subagent spawner records lineage and rejects depth two", async
     }]);
   }
   assertEquals(
-    await eventLog.listSessions(),
+    await store.listIds(),
     [
       parentSessionId,
       result.sessionId,

@@ -11,6 +11,7 @@
 // ===========================================================================
 
 import { assertEquals } from "@std/assert";
+import { resolve } from "@std/path";
 import { parseCliArgs } from "../src/args.ts";
 
 Deno.test("args: one-shot permission bypass is explicit and defaults off", () => {
@@ -29,6 +30,66 @@ Deno.test("args: one-shot permission bypass is explicit and defaults off", () =>
     throw new Error("expected one-shot args");
   }
   assertEquals(bypass.args.bypassPermissions, true);
+});
+
+Deno.test("args: one-shot carries explicit workspace, model, and resume", () => {
+  const parsed = parseCliArgs([
+    "-p",
+    "continue",
+    "--workspace",
+    ".",
+    "--model",
+    "openai/gpt-5",
+    "--resume",
+    "session-1",
+  ]);
+  if (!parsed.ok || parsed.args.subcommand !== "oneshot") {
+    throw new Error("expected one-shot args");
+  }
+  assertEquals(parsed.args.model, "openai/gpt-5");
+  assertEquals(parsed.args.resume, "session-1");
+  assertEquals(parsed.args.workspace.startsWith("/"), true);
+});
+
+Deno.test("args: serve binds one explicit workspace", () => {
+  const parsed = parseCliArgs([
+    "serve",
+    "--workspace",
+    ".",
+    "--port",
+    "4100",
+  ]);
+  if (!parsed.ok || parsed.args.subcommand !== "serve") {
+    throw new Error("expected serve args");
+  }
+  assertEquals(parsed.args.workspace.startsWith("/"), true);
+  assertEquals(parsed.args.port, 4100);
+});
+
+Deno.test("args: explicit workspace wins, otherwise NIUMA_WORKSPACE is the default", () => {
+  const previous = Deno.env.get("NIUMA_WORKSPACE");
+  try {
+    Deno.env.set("NIUMA_WORKSPACE", resolve("env-workspace"));
+    const inherited = parseCliArgs(["-p", "task"]);
+    if (!inherited.ok || inherited.args.subcommand !== "oneshot") {
+      throw new Error("expected one-shot args");
+    }
+    assertEquals(inherited.args.workspace, resolve("env-workspace"));
+
+    const explicit = parseCliArgs([
+      "-p",
+      "task",
+      "--workspace",
+      "explicit-workspace",
+    ]);
+    if (!explicit.ok || explicit.args.subcommand !== "oneshot") {
+      throw new Error("expected one-shot args");
+    }
+    assertEquals(explicit.args.workspace, resolve("explicit-workspace"));
+  } finally {
+    if (previous === undefined) Deno.env.delete("NIUMA_WORKSPACE");
+    else Deno.env.set("NIUMA_WORKSPACE", previous);
+  }
 });
 
 Deno.test("args: `niuma tui` refuses a non-TTY stdin with help + exit 2", () => {

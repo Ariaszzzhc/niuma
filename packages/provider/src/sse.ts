@@ -38,6 +38,9 @@ interface OpenAIStreamChunk {
     completion_tokens_details?: {
       reasoning_tokens?: number;
     };
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+    };
   };
 }
 
@@ -57,11 +60,19 @@ const parseFinishReason = (
 };
 
 const toUsage = (u: NonNullable<OpenAIStreamChunk["usage"]>): Usage => ({
-  promptTokens: u.prompt_tokens ?? 0,
-  completionTokens: u.completion_tokens ?? 0,
-  totalTokens: u.total_tokens ?? 0,
-  // Left undefined when the provider doesn't break out reasoning tokens.
-  reasoningTokens: u.completion_tokens_details?.reasoning_tokens,
+  ...(u.prompt_tokens !== undefined ? { promptTokens: u.prompt_tokens } : {}),
+  ...(u.completion_tokens !== undefined
+    ? { completionTokens: u.completion_tokens }
+    : {}),
+  ...(u.total_tokens !== undefined ? { totalTokens: u.total_tokens } : {}),
+  ...(u.completion_tokens_details?.reasoning_tokens !== undefined
+    ? {
+      reasoningTokens: u.completion_tokens_details.reasoning_tokens,
+    }
+    : {}),
+  ...(u.prompt_tokens_details?.cached_tokens !== undefined
+    ? { cachedInputTokens: u.prompt_tokens_details.cached_tokens }
+    : {}),
 });
 
 export async function* parseOpenAISSE(

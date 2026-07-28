@@ -5,6 +5,7 @@
 //   # Model to use, in {provider}/{model-id} form.
 //   model = "deepseek/deepseek-chat"
 //   input_delivery = "steer"      # steer (default) | queue
+//   session_retention_days = 30    # optional; absent disables cleanup
 //
 //   [core]
 //   log_level = "info"            # trace|debug|info|warning|error|fatal
@@ -48,7 +49,8 @@ const home = (): string =>
 
 /** Project-level directory name: config and resources live in
  * `<dir>/.niuma/` for every dir on the projectConfigDirs path. Data
- * (sessions, db, logs) NEVER goes here — user-level ~/.niuma only. */
+ * (Session Journals, Usage Archives, logs) NEVER goes here — user-level
+ * ~/.niuma only. */
 export const PROJECT_DIR_BASENAME = ".niuma";
 
 /** Project-level config file: `<dir>/.niuma/config.toml`. */
@@ -114,6 +116,9 @@ export interface NiumaConfig {
    * default (`steer`); it stays optional so layered config merging can
    * distinguish "unset" from an explicit project override. */
   readonly inputDelivery?: InputDelivery;
+  /** Optional age threshold for Session Journal cleanup. Undefined disables
+   * Retention entirely; Usage Archives are never subject to this setting. */
+  readonly sessionRetentionDays?: number;
   readonly core: CoreConfig;
   readonly providers: Readonly<Record<string, ProviderConfig>>;
 }
@@ -302,6 +307,11 @@ export const parseConfig = (
 
   const model = optString(raw, "model", "(root)");
   const inputDelivery = optInputDelivery(raw, "input_delivery", "(root)");
+  const sessionRetentionDays = optPositiveInt(
+    raw,
+    "session_retention_days",
+    "(root)",
+  );
 
   const rawCore = raw.core ?? {};
   if (!isRecord(rawCore)) throw typeErr("core", "a table", rawCore);
@@ -329,6 +339,7 @@ export const parseConfig = (
   return {
     ...(model !== undefined ? { model } : {}),
     ...(inputDelivery !== undefined ? { inputDelivery } : {}),
+    ...(sessionRetentionDays !== undefined ? { sessionRetentionDays } : {}),
     core: {
       ...(logLevelRaw !== undefined
         ? { logLevel: logLevelRaw as LogLevel }
@@ -393,6 +404,13 @@ export const mergeConfig = (
         base.inputDelivery !== undefined
       ? {
         inputDelivery: override.inputDelivery ?? base.inputDelivery!,
+      }
+      : {}),
+    ...(override.sessionRetentionDays !== undefined ||
+        base.sessionRetentionDays !== undefined
+      ? {
+        sessionRetentionDays: override.sessionRetentionDays ??
+          base.sessionRetentionDays!,
       }
       : {}),
     core: {

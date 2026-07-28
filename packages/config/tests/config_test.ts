@@ -20,6 +20,7 @@ Deno.test("parseConfig: empty text yields defaults", () => {
   const c = parseConfig("");
   assertEquals(c.model, undefined);
   assertEquals(c.inputDelivery, undefined);
+  assertEquals(c.sessionRetentionDays, undefined);
   assertEquals(DEFAULT_INPUT_DELIVERY, "steer");
   // Unset, NOT "info": the fallback lives in consumers, so a project-level
   // file can override the global one in mergeConfig.
@@ -31,6 +32,7 @@ Deno.test("parseConfig: full document", () => {
   const c = parseConfig(`
 model = "deepseek/deepseek-chat"
 input_delivery = "queue"
+session_retention_days = 30
 
 [core]
 log_level = "debug"
@@ -45,6 +47,7 @@ max_output = 8192
 `);
   assertEquals(c.model, "deepseek/deepseek-chat");
   assertEquals(c.inputDelivery, "queue");
+  assertEquals(c.sessionRetentionDays, 30);
   assertEquals(c.core.logLevel, "debug");
   const p = c.providers.deepseek!;
   assertEquals(p.name, "DeepSeek");
@@ -123,6 +126,16 @@ context_window = "128k"
     () => parseConfig(`input_delivery = "replace"`),
     ConfigError,
     "input_delivery must be one of steer|queue",
+  );
+  assertThrows(
+    () => parseConfig(`session_retention_days = 0`),
+    ConfigError,
+    "positive integer",
+  );
+  assertThrows(
+    () => parseConfig(`session_retention_days = 1.5`),
+    ConfigError,
+    "positive integer",
   );
 });
 
@@ -263,6 +276,7 @@ Deno.test("mergeConfig: override wins on scalars, providers/models merge per id"
   const base = parseConfig(`
 model = "a/m1"
 input_delivery = "steer"
+session_retention_days = 90
 
 [core]
 log_level = "debug"
@@ -278,6 +292,7 @@ max_output = 20
   const override = parseConfig(`
 model = "b/m9"
 input_delivery = "queue"
+session_retention_days = 14
 
 [provider.a.models.m1]
 context_window = 111
@@ -288,6 +303,7 @@ base_url = "https://b"
   const merged = mergeConfig(base, override);
   assertEquals(merged.model, "b/m9");
   assertEquals(merged.inputDelivery, "queue");
+  assertEquals(merged.sessionRetentionDays, 14);
   // core not set in the override → base survives
   assertEquals(merged.core.logLevel, "debug");
   // per-model merge: m1 overridden, m2 inherited from base

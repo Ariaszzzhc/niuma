@@ -1,9 +1,6 @@
 {
   "nodeModulesDir": "auto",
   "version": "0.0.1",
-  "exclude": [
-    "packages/server/vendor/"
-  ],
   "workspace": [
     "packages/schema",
     "packages/provider",
@@ -22,7 +19,6 @@
     "effect/": "npm:/effect@^4.0.0-beta.100/",
     "hono": "npm:hono@^4.6.0",
     "zod": "npm:zod@^4.0.0",
-    "kysely": "npm:kysely@^0.28.0",
     "@logtape/logtape": "npm:@logtape/logtape@^1.0.0",
     "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.17.0",
     "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@^1.17.0/",

@@ -12,6 +12,7 @@ interface ResponsesUsageWire {
   readonly output_tokens?: number;
   readonly total_tokens?: number;
   readonly output_tokens_details?: { readonly reasoning_tokens?: number };
+  readonly input_tokens_details?: { readonly cached_tokens?: number };
 }
 
 interface ResponsesItemWire {
@@ -45,15 +46,20 @@ interface ResponsesEvent {
 // domain field's semantics and the Anthropic parser, so assertEquals does not
 // see a present-but-undefined key).
 const toUsage = (u: ResponsesUsageWire): Usage => {
-  const prompt = u.input_tokens ?? 0;
-  const completion = u.output_tokens ?? 0;
-  const total = u.total_tokens ?? (prompt + completion);
+  const prompt = u.input_tokens;
+  const completion = u.output_tokens;
+  const total = u.total_tokens ??
+    (prompt !== undefined && completion !== undefined
+      ? prompt + completion
+      : undefined);
   const reasoning = u.output_tokens_details?.reasoning_tokens;
+  const cached = u.input_tokens_details?.cached_tokens;
   return {
-    promptTokens: prompt,
-    completionTokens: completion,
-    totalTokens: total,
+    ...(prompt !== undefined ? { promptTokens: prompt } : {}),
+    ...(completion !== undefined ? { completionTokens: completion } : {}),
+    ...(total !== undefined ? { totalTokens: total } : {}),
     ...(reasoning !== undefined ? { reasoningTokens: reasoning } : {}),
+    ...(cached !== undefined ? { cachedInputTokens: cached } : {}),
   };
 };
 

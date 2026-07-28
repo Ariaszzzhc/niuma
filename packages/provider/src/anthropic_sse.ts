@@ -4,6 +4,8 @@ import { InvalidResponse, Network } from "./errors.ts";
 interface AnthropicUsage {
   input_tokens?: number;
   output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
 }
 
 interface AnthropicContentBlock {
@@ -55,10 +57,17 @@ const parseFinishReason = (
 // Anthropic reports input_tokens on message_start and output_tokens on
 // message_delta; thinking tokens are not broken out (billed as part of
 // output_tokens), so reasoningTokens stays undefined.
-const toUsage = (input: number, output: number): Usage => ({
+const toUsage = (
+  input: number,
+  output: number,
+  cachedInput?: number,
+  cacheWrite?: number,
+): Usage => ({
   promptTokens: input,
   completionTokens: output,
   totalTokens: input + output,
+  ...(cachedInput !== undefined ? { cachedInputTokens: cachedInput } : {}),
+  ...(cacheWrite !== undefined ? { cacheWriteTokens: cacheWrite } : {}),
 });
 
 export async function* parseAnthropicSSE(
@@ -72,6 +81,8 @@ export async function* parseAnthropicSSE(
   // payload with one, and the JSON body does not always repeat it.
   let eventType = "";
   let inputTokens = 0;
+  let cachedInputTokens: number | undefined;
+  let cacheWriteTokens: number | undefined;
   let pendingFinish: FinishReason | undefined;
   let pendingUsage: Usage | undefined;
   let emittedFinish = false;
@@ -110,6 +121,10 @@ export async function* parseAnthropicSSE(
     switch (eventType || evt.type) {
       case "message_start":
         inputTokens = evt.message?.usage?.input_tokens ?? inputTokens;
+        cachedInputTokens = evt.message?.usage?.cache_read_input_tokens ??
+          cachedInputTokens;
+        cacheWriteTokens = evt.message?.usage?.cache_creation_input_tokens ??
+          cacheWriteTokens;
         break;
       case "content_block_start": {
         const block = evt.content_block;
@@ -181,7 +196,12 @@ export async function* parseAnthropicSSE(
         }
         const outputTokens = evt.usage?.output_tokens;
         if (outputTokens !== undefined) {
-          pendingUsage = toUsage(inputTokens, outputTokens);
+          pendingUsage = toUsage(
+            inputTokens,
+            outputTokens,
+            cachedInputTokens,
+            cacheWriteTokens,
+          );
         }
         break;
       }

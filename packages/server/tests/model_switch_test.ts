@@ -5,13 +5,11 @@ import type { ChatRequest, ProviderAdapter, StreamEvent } from "@niuma/provider"
 import { type NiumaConfig, parseConfig } from "@niuma/config";
 import { createServerApp } from "../mod.ts";
 import { bootstrap } from "../src/bootstrap.ts";
-import { makeEventLog } from "../src/event_log.ts";
-import { ensureSchema } from "../src/projection.ts";
-import { makeEventBus } from "../src/event_bus.ts";
+import { dataPaths } from "../src/paths.ts";
 
 // Runtime model/effort switching: POST /sessions/:id/model and
 // /sessions/:id/effort reroute the session's NEXT turn — the model id lands
-// in the projection, per-model limits + thinking + a rebuilt adapter (on
+// in Session State, per-model limits + thinking + a rebuilt adapter (on
 // cross-provider switches) live in the SessionManager's in-memory overrides.
 
 const CONFIG_TOML = `
@@ -58,17 +56,14 @@ const makeCaptureProvider = (sink: ChatRequest[]): ProviderAdapter => ({
 
 interface Fixture {
   readonly root: string;
-  readonly sessionsDir: string;
   readonly workspace: string;
 }
 
 const makeFixture = async (): Promise<Fixture> => {
   const root = await Deno.makeTempDir({ prefix: "niuma_model_" });
-  const sessionsDir = join(root, "sessions");
   const workspace = join(root, "ws");
-  await Deno.mkdir(sessionsDir, { recursive: true });
   await Deno.mkdir(workspace, { recursive: true });
-  return { root, sessionsDir, workspace };
+  return { root, workspace };
 };
 
 interface BuildOptions {
@@ -80,16 +75,8 @@ interface BuildOptions {
 }
 
 const buildApp = async (f: Fixture, opts: BuildOptions) => {
-  const bus = await Effect.runPromise(makeEventBus());
   const boot = await bootstrap({
-    paths: {
-      root: f.root,
-      sessions: f.sessionsDir,
-      db: join(f.root, "niuma.db"),
-    },
-    event_log: makeEventLog({ sessionsDir: f.sessionsDir }),
-    projection: await ensureSchema(join(f.root, "niuma.db")),
-    bus,
+    paths: dataPaths(f.root, f.workspace),
     config: parseConfig(CONFIG_TOML),
     infra: {
       provider: opts.provider,
@@ -103,12 +90,12 @@ const buildApp = async (f: Fixture, opts: BuildOptions) => {
 
 type App = { fetch: (req: Request) => Response | Promise<Response> };
 
-const createSession = async (app: App, f: Fixture): Promise<string> => {
+const createSession = async (app: App, _f: Fixture): Promise<string> => {
   const res = await app.fetch(
     new Request("http://niuma.internal/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspace: f.workspace, model: "model-a" }),
+      body: JSON.stringify({ model: "model-a" }),
     }),
   );
   assertEquals(res.status, 201);
@@ -171,14 +158,14 @@ Deno.test({
     assertEquals(res.status, 200);
     const body = await res.json();
     assertEquals(body.ok, true);
-    assertEquals(body.model, "model-b");
+    assertEquals(body.model, "p1/model-b");
     assertEquals(body.contextWindow, 50000);
 
-    // The projection carries the new model id.
+    // Folded Session State carries the canonical provider/model ref.
     const info = await (await app.fetch(
       new Request(`http://niuma.internal/sessions/${sessionId}`),
     )).json();
-    assertEquals(info.info.model, "model-b");
+    assertEquals(info.info.model, "p1/model-b");
 
     const promptRes = await post(app, `/sessions/${sessionId}/prompt`, {
       text: "hello",
@@ -246,7 +233,7 @@ Deno.test({
     assertEquals(res.status, 200);
     const body = await res.json();
     assertEquals(body.ok, true);
-    assertEquals(body.model, "model-c");
+    assertEquals(body.model, "p2/model-c");
     assertEquals(body.contextWindow, 64000);
     assertEquals(factoryCalls, ["p2/model-c"]);
 

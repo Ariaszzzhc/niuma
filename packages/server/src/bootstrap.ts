@@ -1,10 +1,4 @@
 import { Effect, Layer } from "effect";
-import { ensureSchema, type Projection } from "./projection.ts";
-import {
-  CorruptSessionError,
-  type EventLog,
-  makeEventLog,
-} from "./event_log.ts";
 import { Kernel, makeKernel } from "./kernel.ts";
 import { type EventBus, makeEventBus } from "./event_bus.ts";
 import {
@@ -14,6 +8,8 @@ import {
   type SessionManagerInfra,
 } from "./session.ts";
 import { type DataPaths, dataPaths } from "./paths.ts";
+import { makeSessionStore, type SessionStore } from "./session_store.ts";
+import { ensureWorkspaceLayout } from "./workspace_layout.ts";
 import {
   makeAnthropicAdapter,
   makeOpenAIAdapter,
@@ -48,7 +44,7 @@ import { makeToolPipeline, runTurn } from "@niuma/agent";
 import {
   kernelApprovalGateway,
   kernelEmitLive,
-  kernelEventLog,
+  kernelSessionJournal,
 } from "./agent_deps.ts";
 import { makeOAuthTokenSource } from "./oauth_source.ts";
 import {
@@ -58,8 +54,7 @@ import {
 
 export interface BootstrapDeps {
   readonly paths?: DataPaths;
-  readonly event_log?: EventLog;
-  readonly projection?: Projection;
+  readonly store?: SessionStore;
   readonly bus?: EventBus;
   readonly infra?: Partial<SessionManagerInfra>;
   /** Pre-loaded config; tests/smoke inject this to skip the filesystem. */
@@ -80,8 +75,7 @@ export interface BootstrapDeps {
 
 export interface BootstrapResult {
   readonly paths: DataPaths;
-  readonly event_log: EventLog;
-  readonly projection: Projection;
+  readonly store: SessionStore;
   readonly bus: EventBus;
   readonly infra: SessionManagerInfra;
   readonly config: NiumaConfig;
@@ -91,7 +85,7 @@ export interface BootstrapResult {
    * own the process lifecycle may close() them on shutdown; the worker
    * exiting also reaps stdio subprocesses. */
   readonly mcpServers: ReadonlyArray<McpServerHandle>;
-  /** Release MCP transports and the SQLite projection. Idempotent. */
+  /** Release MCP transports and the event bus. Idempotent. */
   readonly close: () => Promise<void>;
   readonly kernelLayer: Layer.Layer<Kernel, never, never>;
   readonly sessionLayer: Layer.Layer<SessionManager, never, Kernel>;
@@ -134,34 +128,6 @@ export interface SubagentSpawnerDeps {
     mode: "full" | "read-only",
   ) => Promise<string>;
 }
-
-const validateEventLogs = async (
-  eventLog: EventLog,
-  projection: Projection,
-): Promise<void> => {
-  const sessionIds = await eventLog.listSessions();
-  const sourceSessions = new Set(sessionIds);
-
-  for (const sessionId of sessionIds) {
-    try {
-      for await (const _event of eventLog.replay(sessionId)) {
-        // Validation happens before replay yields its first event.
-      }
-    } catch (error) {
-      if (!(error instanceof CorruptSessionError)) throw error;
-      sourceSessions.delete(sessionId);
-      await projection.resetSession(sessionId);
-    }
-  }
-
-  // The JSONL log is the source of truth. Derived rows without a source log
-  // cannot describe a live session and are removed at startup.
-  for (const session of await projection.listSessions()) {
-    if (!sourceSessions.has(session.sessionId)) {
-      await projection.resetSession(session.sessionId);
-    }
-  }
-};
 
 // Own the child-session lifecycle in one server seam. The tool adapter only
 // invokes this closure; it does not know about event lineage or recursion.
@@ -221,17 +187,12 @@ export const makeSubagentSpawner = (
 export const bootstrap = async (
   deps: BootstrapDeps = {},
 ): Promise<BootstrapResult> => {
-  const paths = deps.paths ?? dataPaths();
+  const workspace = deps.paths?.workspace ??
+    envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
+  const paths = deps.paths ?? dataPaths(undefined, workspace);
   await Deno.mkdir(paths.root, { recursive: true });
-  await Deno.mkdir(paths.sessions, { recursive: true });
-
-  const projection = deps.projection ?? await ensureSchema(paths.db);
-  const event_log = deps.event_log ??
-    makeEventLog({
-      sessionsDir: paths.sessions,
-      onCorrupt: (sessionId) => projection.resetSession(sessionId),
-    });
-  await validateEventLogs(event_log, projection);
+  await ensureWorkspaceLayout(paths);
+  const store = deps.store ?? makeSessionStore({ layout: paths });
   const bus = deps.bus ?? await Effect.runPromise(makeEventBus());
 
   // ---- Configuration: config.toml + auth.json. ----
@@ -245,7 +206,6 @@ export const bootstrap = async (
   // a project can pick its own default model or tune per-model limits without
   // restating provider credentials.
   const registry = new ToolRegistry();
-  const workspace = envGet("NIUMA_WORKSPACE") ?? Deno.cwd();
   const config = deps.config ??
     await loadMergedConfig(niumaPaths().configFile, { projectDir: workspace });
   const configuration = makeConfigurationRuntime({
@@ -275,7 +235,7 @@ export const bootstrap = async (
   // it. The Layer we hand downstream wraps the same value (Layer.succeed),
   // keeping a single kernel instance across the bootstrap + session layer.
   const kernel = await Effect.runPromise(
-    makeKernel({ event_log, projection, bus }),
+    makeKernel({ store, bus }),
   );
 
   // ---- Agent infra: provider + tool pipeline. ----
@@ -308,6 +268,25 @@ export const bootstrap = async (
     defaultThinking = thinkingFromModel(resolved.model);
     defaultProviderId = resolved.provider.id;
   }
+  const billingModeForProvider = deps.infra?.billingModeForProvider ??
+    (async (providerId: string) => {
+      if (deps.infra?.provider !== undefined) {
+        return deps.infra.defaultBillingMode ?? "unknown";
+      }
+      const auth = await readAuthFile(authPath);
+      const credential = auth[providerId];
+      return credential?.type === "api"
+        ? "api"
+        : credential?.type === "oauth"
+        ? "subscription"
+        : "unknown";
+    });
+  const defaultBillingMode = deps.infra?.defaultBillingMode ??
+    (defaultProviderId !== undefined
+      ? await billingModeForProvider(defaultProviderId)
+      : "unknown");
+  const defaultSessionModelRef = deps.infra?.defaultModelRef ?? defaultRef ??
+    defaultModel;
 
   const provider = deps.infra?.provider !== undefined
     ? withDefaultModel(deps.infra.provider, defaultModel)
@@ -319,7 +298,7 @@ export const bootstrap = async (
   const spawnSubagent = makeSubagentSpawner({
     kernel,
     workspace,
-    model: defaultModel,
+    model: defaultSessionModelRef,
     mcpServers: mcpServers.map((server) => ({
       id: server.id,
       toolCount: server.tools.length,
@@ -327,12 +306,17 @@ export const bootstrap = async (
     runChild: async (childId, _prompt, mode) => {
       const result = await Effect.runPromise(
         runTurn(childId, {
-          event_log: kernelEventLog(kernel),
+          journal: kernelSessionJournal(kernel),
           provider,
           tools: toolsForSubagent,
           approvals: kernelApprovalGateway(kernel),
           emitLive: kernelEmitLive(kernel),
           model: defaultModel,
+          ...(defaultProviderId !== undefined
+            ? { providerId: defaultProviderId }
+            : {}),
+          billingMode: defaultBillingMode,
+          actor: "subagent",
           workspace,
           mode,
           ...(defaultContextWindow !== undefined
@@ -348,7 +332,13 @@ export const bootstrap = async (
           Effect.catchCause((cause) =>
             Effect.sync(() => ({
               stopReason: "stop" as const,
-              usage: { inputTokens: 0, outputTokens: 0 },
+              usage: {
+                inputTokens: 0,
+                outputTokens: 0,
+                reasoningTokens: 0,
+                cachedInputTokens: 0,
+                cacheWriteTokens: 0,
+              },
               text: `error: ${String(cause)}`,
             }))
           ),
@@ -374,6 +364,10 @@ export const bootstrap = async (
     provider,
     tools,
     defaultModel,
+    ...(defaultSessionModelRef.length > 0
+      ? { defaultModelRef: defaultSessionModelRef }
+      : {}),
+    defaultBillingMode,
     defaultWorkspace: workspace,
     inputDelivery: () => configuration.clientConfig().inputDelivery,
     globalConfigDir: deps.infra?.globalConfigDir ?? niumaPaths().config,
@@ -384,6 +378,7 @@ export const bootstrap = async (
     makeProvider: deps.infra?.makeProvider ??
       ((nextConfig, ref) => buildProvider(nextConfig, authPath, ref)),
     ...(defaultProviderId !== undefined ? { defaultProviderId } : {}),
+    billingModeForProvider,
     ...(defaultContextWindow !== undefined ? { defaultContextWindow } : {}),
     ...(defaultMaxTokens !== undefined ? { defaultMaxTokens } : {}),
     ...(defaultThinking !== undefined ? { defaultThinking } : {}),
@@ -429,11 +424,6 @@ export const bootstrap = async (
     } catch (error) {
       failures.push(error);
     }
-    try {
-      projection.close();
-    } catch (error) {
-      failures.push(error);
-    }
     if (failures.length > 0) {
       throw new AggregateError(failures, "failed to close server resources");
     }
@@ -441,8 +431,7 @@ export const bootstrap = async (
 
   return {
     paths,
-    event_log,
-    projection,
+    store,
     bus,
     infra,
     config,
@@ -655,6 +644,5 @@ export const makeProviderFromConfig = (
 export { buildProvider };
 
 export { Kernel, SessionManager };
-export { ensureSchema, makeProjection } from "./projection.ts";
-export { makeEventLog } from "./event_log.ts";
+export { makeSessionStore } from "./session_store.ts";
 export { makeEventBus } from "./event_bus.ts";

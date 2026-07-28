@@ -1,11 +1,19 @@
 import { Effect, Stream } from "effect";
-import type { RecordedEvent } from "@niuma/schema";
+import type {
+  BillingMode,
+  ModelCallActor,
+  RecordedEvent,
+  StopReason,
+} from "@niuma/schema";
 import type {
   ChatRequest,
   Message as ProviderMessage,
   ProviderAdapter,
   ProviderError,
+  Usage as ProviderUsage,
 } from "@niuma/provider";
+import type { SessionJournal } from "./deps.ts";
+import { recordModelCall } from "./model_call.ts";
 
 const MUTATING = new Set(["write", "edit", "apply_patch"]);
 const READING = new Set(["read", "grep", "glob"]);
@@ -112,8 +120,14 @@ export function compactMessages(
 }
 
 export interface SummarizeDeps {
+  readonly journal: SessionJournal;
+  readonly sessionId: string;
+  readonly turnId: string;
   readonly provider: ProviderAdapter;
+  readonly providerId?: string;
   readonly model: string;
+  readonly billingMode?: BillingMode;
+  readonly actor?: ModelCallActor;
   readonly signal?: AbortSignal;
 }
 
@@ -134,16 +148,43 @@ export function summarizeHistory(
     tools: [],
     ...(deps.signal ? { abort: deps.signal } : {}),
   };
-  return Effect.gen(function* () {
+  const operation = Effect.gen(function* () {
     let text = "";
+    let usage: ProviderUsage | undefined;
+    let finishReason: StopReason = "stop";
     yield* deps.provider.stream(req).pipe(
       Stream.runForEach((ev) =>
         Effect.sync(() => {
           if (ev._tag === "TextDelta") text += ev.text;
+          if (ev._tag === "Finish") {
+            finishReason = ev.reason;
+            usage = ev.usage;
+          }
         })
       ),
     );
     const trimmed = text.trim();
-    return trimmed.length > 0 ? trimmed : null;
+    return {
+      value: trimmed.length > 0 ? trimmed : null,
+      ...(usage !== undefined ? { usage } : {}),
+      finishReason,
+      attempts: 1,
+    };
   });
+  return recordModelCall(
+    {
+      journal: deps.journal,
+      sessionId: deps.sessionId,
+      turnId: deps.turnId,
+      purpose: "compaction",
+      actor: deps.actor ?? "main",
+      providerId: deps.providerId ?? "unknown",
+      modelId: deps.model,
+      billingMode: deps.billingMode ?? "unknown",
+    },
+    operation,
+    {
+      errorMessage: (error: ProviderError) => error._tag,
+    },
+  ).pipe(Effect.map(({ value }) => value));
 }

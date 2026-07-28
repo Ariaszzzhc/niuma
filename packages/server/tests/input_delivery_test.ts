@@ -21,6 +21,7 @@ import { parseConfig } from "@niuma/config";
 import type { SseEvent } from "@niuma/schema";
 import { createServerApp, type ServerApp } from "../mod.ts";
 import { bootstrap } from "../src/bootstrap.ts";
+import { dataPaths } from "../src/paths.ts";
 
 const FINISH: StreamEvent = {
   _tag: "Finish",
@@ -110,11 +111,7 @@ const makeFixture = async (
   const workspace = join(root, "workspace");
   await Deno.mkdir(workspace, { recursive: true });
   const boot = await bootstrap({
-    paths: {
-      root,
-      sessions: join(root, "sessions"),
-      db: join(root, "niuma.db"),
-    },
+    paths: dataPaths(root, workspace),
     config: parseConfig(configText),
     mcpConfig: {},
     infra: { provider },
@@ -142,10 +139,10 @@ const jsonRequest = (
 
 const createSession = async (
   app: ServerApp,
-  workspace: string,
+  _workspace: string,
 ): Promise<{ sessionId: string; inputDelivery: string }> => {
   const response = await app.app.fetch(
-    jsonRequest("/sessions", "POST", { workspace, model: "test-model" }),
+    jsonRequest("/sessions", "POST", { model: "test-model" }),
   );
   assertEquals(response.status, 201);
   const body = await response.json();
@@ -265,7 +262,6 @@ const appendRound = async (
     sessionId,
     data: {
       parts: [{ type: "text", text: `old answer ${index}` }],
-      usage: { inputTokens: 1, outputTokens: 1 },
     },
   }));
 };

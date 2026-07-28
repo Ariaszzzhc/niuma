@@ -3,7 +3,8 @@
 // ---------------------------------------------------------------------------
 // Drives `createTuiClient` against a scripted `fetch` that records every
 // request and answers the five routes the client uses (POST /sessions,
-// GET /events, GET /sessions, GET /sessions/:id, POST mutators). Covers the
+// GET /events, GET /sessions[/ids], GET /sessions/:id, POST mutators). Covers
+// the
 // multi-session contract the /clear and /resume builtins rely on:
 //
 //   - boot creates the first session and opens its SSE stream at cursor 0
@@ -57,6 +58,7 @@ const closedStream = (): ReadableStream<Uint8Array> =>
  * per /events call; `GET /sessions/s_old` answers with two history events. */
 const fakeFetch = () => {
   const requests: RecordedReq[] = [];
+  const sessionCreateBodies: unknown[] = [];
   let created = 0;
   const fetchImpl = ((
     input: string | URL | Request,
@@ -72,6 +74,7 @@ const fakeFetch = () => {
       });
 
     if (method === "POST" && url === `${BASE}/sessions`) {
+      sessionCreateBodies.push(JSON.parse(String(init?.body)));
       created += 1;
       return Promise.resolve(
         json(
@@ -95,6 +98,9 @@ const fakeFetch = () => {
     }
     if (method === "GET" && url === `${BASE}/sessions`) {
       return Promise.resolve(json([sessionInfo("s1"), sessionInfo("s_old")]));
+    }
+    if (method === "GET" && url === `${BASE}/sessions/ids`) {
+      return Promise.resolve(json(["s1", "s_old"]));
     }
     if (method === "GET" && url === `${BASE}/sessions/s_old`) {
       return Promise.resolve(
@@ -164,11 +170,11 @@ const fakeFetch = () => {
     if (method === "POST") return Promise.resolve(json({ ok: true }));
     return Promise.resolve(json({ error: { code: "not_found" } }, 404));
   }) as typeof fetch;
-  return { fetchImpl, requests };
+  return { fetchImpl, requests, sessionCreateBodies };
 };
 
 Deno.test("boot creates the first session and opens its stream first", async () => {
-  const { fetchImpl, requests } = fakeFetch();
+  const { fetchImpl, requests, sessionCreateBodies } = fakeFetch();
   const client = await createTuiClient(fetchImpl, { workspace: "/w" });
 
   assertEquals(client.sessionId, "s1");
@@ -181,6 +187,7 @@ Deno.test("boot creates the first session and opens its stream first", async () 
 
   // Ordering: session create, then the SSE open at cursor 0 — before prompts.
   assertEquals(requests[0], { method: "POST", url: `${BASE}/sessions` });
+  assertEquals(sessionCreateBodies, [{}]);
   assertEquals(
     requests[1],
     { method: "GET", url: `${BASE}/events?session=s1&cursor=0` },
@@ -236,12 +243,42 @@ Deno.test("newSession switches the accessors and bumps streamVersion", async () 
   });
 });
 
-Deno.test("listSessions returns the projection rows", async () => {
+Deno.test("listSessions returns recent folded Session State", async () => {
   const { fetchImpl } = fakeFetch();
   const client = await createTuiClient(fetchImpl, { workspace: "/w" });
 
   const list = await client.listSessions();
   assertEquals(list, [sessionInfo("s1"), sessionInfo("s_old")]);
+});
+
+Deno.test("listSessionIds reads filename-only ids", async () => {
+  const { fetchImpl, requests } = fakeFetch();
+  const client = await createTuiClient(fetchImpl, { workspace: "/w" });
+
+  assertEquals(await client.listSessionIds(), ["s1", "s_old"]);
+  assertEquals(requests.at(-1), {
+    method: "GET",
+    url: `${BASE}/sessions/ids`,
+  });
+});
+
+Deno.test("explicit initial resume opens exactly that Session at cursor 0", async () => {
+  const { fetchImpl, requests, sessionCreateBodies } = fakeFetch();
+  const client = await createTuiClient(fetchImpl, {
+    workspace: "/w",
+    resume: "s_old",
+  });
+
+  assertEquals(client.sessionId, "s_old");
+  assertEquals(client.contextWindow, 77_000);
+  assertEquals(sessionCreateBodies, []);
+  assertEquals(requests.slice(0, 2), [
+    { method: "GET", url: `${BASE}/sessions/s_old` },
+    {
+      method: "GET",
+      url: `${BASE}/events?session=s_old&cursor=0`,
+    },
+  ]);
 });
 
 Deno.test("resume returns info+history and re-opens the stream after the last seq", async () => {

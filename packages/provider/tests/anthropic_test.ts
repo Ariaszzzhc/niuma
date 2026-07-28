@@ -61,7 +61,15 @@ const drainSSE = async (
 
 Deno.test("parseAnthropicSSE emits full event sequence ending in tool_calls Finish", async () => {
   const events = await collectSSE(
-    ["message_start", { message: { usage: { input_tokens: 12 } } }],
+    ["message_start", {
+      message: {
+        usage: {
+          input_tokens: 12,
+          cache_read_input_tokens: 5,
+          cache_creation_input_tokens: 3,
+        },
+      },
+    }],
     [
       "content_block_start",
       { index: 0, content_block: { type: "thinking", thinking: "" } },
@@ -129,6 +137,8 @@ Deno.test("parseAnthropicSSE emits full event sequence ending in tool_calls Fini
         promptTokens: 12,
         completionTokens: 7,
         totalTokens: 19,
+        cachedInputTokens: 5,
+        cacheWriteTokens: 3,
       },
     },
   ]);

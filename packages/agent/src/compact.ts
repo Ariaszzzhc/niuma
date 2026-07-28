@@ -2,27 +2,31 @@
 // compactSession — standalone compaction entry point (the /compact command
 // path). Unlike the in-turn compactNow (loop.ts), which trims the live
 // message list when the context estimate crosses the threshold, this replays
-// a session's event log, summarizes the whole history, and appends a
+// a Session Journal, summarizes the whole history, and appends a
 // summary-bearing compaction.performed event. The compression persists
 // across turns: the next replay folds the event into the bridge message
 // (context.ts projectEvent), so the compacted prefix is never re-sent.
 //
-// Deps are the minimal subset of RunTurnDeps needed for the job: the event
-// log (replay + append) and a provider + model for the LLM summary. No
+// Deps are the minimal subset of RunTurnDeps needed for the job: the Journal
+// Interface (replay + append) and a provider + model for the LLM summary. No
 // tools, approvals, or system prompt — the summarizer call is tool-free and
 // system-free (see compaction.ts summarizeHistory).
 // ============================================================================
 
 import { Effect, Result } from "effect";
+import type { BillingMode, ModelCallActor } from "@niuma/schema";
 import type { ProviderAdapter } from "@niuma/provider";
-import type { EventLog } from "./deps.ts";
+import type { SessionJournal } from "./deps.ts";
 import { eventsToMessages } from "./context.ts";
 import { buildSummary, summarizeHistory } from "./compaction.ts";
 
 export interface CompactSessionDeps {
-  readonly event_log: EventLog;
+  readonly journal: SessionJournal;
   readonly provider: ProviderAdapter;
+  readonly providerId?: string;
   readonly model: string;
+  readonly billingMode?: BillingMode;
+  readonly actor?: ModelCallActor;
   readonly signal?: AbortSignal;
 }
 
@@ -44,7 +48,7 @@ export function compactSession(
   deps: CompactSessionDeps,
 ): Effect.Effect<CompactSessionResult> {
   return Effect.gen(function* () {
-    const events = yield* deps.event_log.replay(sessionId);
+    const events = yield* deps.journal.replay(sessionId);
     const messages = eventsToMessages(events);
 
     // No-op guard, mirroring compactMessages: not enough user turns → skip
@@ -56,8 +60,18 @@ export function compactSession(
     // deterministic template, exactly like the in-turn path.
     const summarizeResult = yield* summarizeHistory(
       {
+        journal: deps.journal,
+        sessionId,
+        turnId: `compact_${crypto.randomUUID()}`,
         provider: deps.provider,
+        ...(deps.providerId !== undefined
+          ? { providerId: deps.providerId }
+          : {}),
         model: deps.model,
+        ...(deps.billingMode !== undefined
+          ? { billingMode: deps.billingMode }
+          : {}),
+        ...(deps.actor !== undefined ? { actor: deps.actor } : {}),
         ...(deps.signal ? { signal: deps.signal } : {}),
       },
       messages,
@@ -68,7 +82,7 @@ export function compactSession(
     const mode = llmText !== null ? ("llm" as const) : ("template" as const);
     const body = llmText ?? buildSummary(events);
 
-    yield* deps.event_log.append(sessionId, {
+    yield* deps.journal.append(sessionId, {
       type: "compaction.performed",
       data: { summaryMessageId: crypto.randomUUID(), mode, summary: body },
     });

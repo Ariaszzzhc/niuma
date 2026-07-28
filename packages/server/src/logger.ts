@@ -3,9 +3,8 @@
 // Level comes from `[core] log_level` in the GLOBAL config.toml (default
 // "info") — no environment variable. Project-level .niuma/config.toml files
 // are NOT consulted here: logging is per-process (one log file per PID), while
-// the
-// server can host sessions from many workspaces, so a per-project log level
-// has no coherent meaning.
+// each process owns one Workspace. Logging still boots before the Server's
+// merged project configuration and remains a process-level concern.
 //
 // The ONLY sink is a JSON-lines file under <data>/log/ (~/.niuma/log by
 // default). There is deliberately no
@@ -26,7 +25,7 @@ const CATEGORIES: ReadonlyArray<string | readonly string[]> = [
   "niuma.server",
   "niuma.server.http",
   "niuma.server.kernel",
-  "niuma.server.projection",
+  "niuma.server.retention",
 ];
 
 export interface LoggerOptions {

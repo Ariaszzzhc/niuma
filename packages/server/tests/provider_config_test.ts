@@ -9,6 +9,7 @@ import {
 } from "@niuma/config";
 import { createServerApp } from "../src/app.ts";
 import { bootstrap, buildProvider } from "../src/bootstrap.ts";
+import { dataPaths } from "../src/paths.ts";
 
 // Exercises the server-side wiring (contract §6) that makeProviderFromConfig
 // delegates to: the three-way auth lookup (api / oauth / {env:VAR}) and the
@@ -379,11 +380,7 @@ Deno.test({
     const authPath = join(root, "auth.json");
     await setAuth(authPath, "kimi", { type: "api", key: "sk-kimi" });
     const boot = await bootstrap({
-      paths: {
-        root,
-        sessions: join(root, "sessions"),
-        db: join(root, "niuma.db"),
-      },
+      paths: dataPaths(root, root),
       config: parseConfig(""),
       mcpConfig: {},
       authPath,
@@ -394,12 +391,12 @@ Deno.test({
         new Request("http://niuma.internal/sessions", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ workspace: root }),
+          body: "{}",
         }),
       );
       assertEquals(response.status, 201);
       const created = await response.json();
-      assertEquals(created.model, KIMI_PLATFORM_DEFAULT_MODEL);
+      assertEquals(created.model, `kimi/${KIMI_PLATFORM_DEFAULT_MODEL}`);
       assertEquals(created.contextWindow, 262_144);
     } finally {
       await server.close();

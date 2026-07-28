@@ -35,13 +35,13 @@ import { runTurn, type TurnResult } from "../src/loop.ts";
 import type {
   ApprovalGateway,
   EventInput,
-  EventLog,
+  SessionJournal,
   ToolMode,
   ToolPipeline,
 } from "../src/deps.ts";
 
-// In-memory event log honouring the EventLog port.
-function makeMemoryLog(): EventLog & {
+// In-memory Journal honouring the SessionJournal port.
+function makeMemoryLog(): SessionJournal & {
   dump: (id: string) => RecordedEvent[];
   replayCalls: () => number;
 } {
@@ -149,7 +149,7 @@ const noTools: ToolPipeline = {
 // Minimal test harness around runTurn. Session lifecycle and approval parking
 // belong to @niuma/server; these tests exercise only the agent loop.
 interface AgentInfra {
-  readonly event_log: EventLog;
+  readonly journal: SessionJournal;
   readonly provider: ProviderAdapter;
   readonly tools: ToolPipeline;
   readonly approvals: ApprovalGateway;
@@ -161,7 +161,7 @@ interface AgentInfra {
   readonly emitLive?: (event: LiveEvent) => void;
 }
 
-const makeApprovalGateway = (_log: EventLog): ApprovalGateway => ({
+const makeApprovalGateway = (_log: SessionJournal): ApprovalGateway => ({
   ask: () => Effect.succeed({ decision: "once" }),
 });
 
@@ -177,7 +177,7 @@ class TestSession {
 
   #deps() {
     return {
-      event_log: this.infra.event_log,
+      journal: this.infra.journal,
       provider: this.infra.provider,
       tools: this.infra.tools,
       approvals: this.infra.approvals,
@@ -202,13 +202,13 @@ class TestSession {
           Effect.suspend(() => {
             const pending = this.#pending;
             this.#pending = [];
-            const { event_log } = this.infra;
+            const { journal } = this.infra;
             const sessionId = this.id;
             return Effect.gen(function* () {
               const recorded: UserMessageEvent[] = [];
               for (const parts of pending) {
                 recorded.push(
-                  (yield* event_log.append(sessionId, {
+                  (yield* journal.append(sessionId, {
                     type: "user.message",
                     data: { parts },
                   })) as UserMessageEvent,
@@ -253,7 +253,7 @@ class SessionManager {
       opts.workspace,
       opts.model ?? this.infra.defaultModel,
     );
-    return this.infra.event_log.append(session.id, {
+    return this.infra.journal.append(session.id, {
       type: "session.created",
       data: {
         workspace: opts.workspace,
@@ -267,7 +267,7 @@ class SessionManager {
 Deno.test("runTurn: plain answer, no tools", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider: scriptedProvider([[
       { _tag: "TextDelta", text: "hello " },
       { _tag: "TextDelta", text: "world" },
@@ -299,7 +299,7 @@ Deno.test("runTurn: plain answer, no tools", async () => {
 Deno.test("runTurn: streams and persists thinking before text", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider: scriptedProvider([[
       { _tag: "ThinkingDelta", text: "reason " },
       { _tag: "ThinkingDelta", text: "carefully" },
@@ -328,7 +328,7 @@ Deno.test("runTurn: streams and persists thinking before text", async () => {
 Deno.test("runTurn: encrypted thinking closes its block", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider: scriptedProvider([[
       { _tag: "ThinkingDelta", text: "first", encrypted: "first-opaque" },
       { _tag: "TextDelta", text: "answer" },
@@ -361,7 +361,7 @@ Deno.test("runTurn: passes default thinking config to provider", async () => {
     events: [{ _tag: "Finish", reason: "stop" }],
   }]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -393,7 +393,6 @@ Deno.test("eventsToMessages projects thinking unless keep is none", () => {
         { type: "thinking", text: " two", encrypted: "opaque" },
         { type: "text", text: "answer" },
       ],
-      usage: { inputTokens: 1, outputTokens: 1 },
     },
   }];
 
@@ -453,7 +452,7 @@ Deno.test("runTurn: multi-block ThinkingDelta (text-only + encrypted) → 2-bloc
     },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -510,7 +509,6 @@ Deno.test("eventsToMessages: cross-provider replay keeps text-only and encrypted
           { type: "thinking", text: "ct reasoning" },
           { type: "text", text: "a1" },
         ],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
     {
@@ -526,7 +524,6 @@ Deno.test("eventsToMessages: cross-provider replay keeps text-only and encrypted
           { type: "thinking", text: "x reasoning", encrypted: "sig-x" },
           { type: "text", text: "a2" },
         ],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
   ];
@@ -558,7 +555,6 @@ Deno.test("eventsToMessages: keepThinking:none strips both text-only and encrypt
           { type: "thinking", text: "ct reasoning" },
           { type: "text", text: "a1" },
         ],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
     {
@@ -569,7 +565,6 @@ Deno.test("eventsToMessages: keepThinking:none strips both text-only and encrypt
           { type: "thinking", text: "x reasoning", encrypted: "sig-x" },
           { type: "text", text: "a2" },
         ],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
   ];
@@ -596,7 +591,6 @@ Deno.test("projectEvent: incremental mirror preserves multi-block reasoningConte
           { type: "text", text: "a1" },
           { type: "thinking", text: "follow-up" },
         ],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
   ];
@@ -617,7 +611,7 @@ Deno.test("projectEvent: incremental mirror preserves multi-block reasoningConte
 Deno.test("runTurn: one tool round-trip then answer", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider: scriptedProvider([
       [
         {
@@ -661,7 +655,7 @@ Deno.test("runTurn: one tool round-trip then answer", async () => {
 Deno.test("length stop with tool calls yields synthetic error result", async () => {
   const log = makeMemoryLog();
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider: scriptedProvider([
       [
         {
@@ -715,7 +709,6 @@ Deno.test("context helpers: replay, compaction, summary", () => {
           name: "write",
           input: { path: "x.ts" },
         }],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
     {
@@ -777,7 +770,7 @@ Deno.test("mid-stream Network error retries and discards partial text", async ()
     },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -822,7 +815,7 @@ Deno.test("text.reset emitted live before re-sample", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -860,7 +853,7 @@ Deno.test("retry exhaustion ends turn with stopReason error", async () => {
     { events: [], fail: new RateLimited({}) },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -887,6 +880,14 @@ Deno.test("retry exhaustion ends turn with stopReason error", async () => {
   assertEquals(errs.length, 5);
   assertEquals(errs.filter((e) => e.data.retryable).length, 4);
   assertEquals(errs[4].data.retryable, false);
+  const failedCall = log.dump(session.id).find((event) =>
+    event.type === "model.call.failed"
+  );
+  assertEquals(failedCall?.type, "model.call.failed");
+  if (failedCall?.type === "model.call.failed") {
+    assertEquals(failedCall.data.attempts, 5);
+    assertEquals(failedCall.data.purpose, "agent");
+  }
   const completed = log.dump(session.id).filter(isTurnCompleted);
   assertEquals(completed.length, 1);
   assertEquals(completed[0].data.stopReason, "error");
@@ -898,7 +899,7 @@ Deno.test("fatal provider error is not retried", async () => {
     { events: [], fail: new AuthFailed({ message: "bad key" }) },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -940,7 +941,7 @@ Deno.test("ContextOverflow force-compacts and re-samples", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -962,7 +963,6 @@ Deno.test("ContextOverflow force-compacts and re-samples", async () => {
       type: "assistant.message",
       data: {
         parts: [{ type: "text", text: a }],
-        usage: { inputTokens: 0, outputTokens: 0 },
       },
     }));
   }
@@ -1016,7 +1016,7 @@ Deno.test("runTurn replays the log once per turn", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -1064,7 +1064,7 @@ Deno.test("incremental mirror matches full replay at each sample", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -1107,7 +1107,7 @@ Deno.test("steered input is mirrored into the message list", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -1138,7 +1138,7 @@ Deno.test("steered input is mirrored into the message list", async () => {
 Deno.test("projectEvent: no-ops metadata and matches full replay", () => {
   const base = { seq: 0, ts: 0, sessionId: "s" };
   const events: RecordedEvent[] = [
-    { ...base, type: "turn.started", data: {} },
+    { ...base, type: "turn.started", data: { turnId: "turn-1" } },
     {
       ...base,
       type: "user.message",
@@ -1154,7 +1154,6 @@ Deno.test("projectEvent: no-ops metadata and matches full replay", () => {
           name: "read",
           input: { path: "x" },
         }],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
     {
@@ -1208,7 +1207,6 @@ Deno.test("orphan tool_call at end of history gets synthetic aborted output", ()
           name: "write",
           input: { path: "x" },
         }],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
     {
@@ -1216,7 +1214,11 @@ Deno.test("orphan tool_call at end of history gets synthetic aborted output", ()
       type: "tool.call.requested",
       data: { callId: "t1", name: "write", input: { path: "x" } },
     },
-    { ...base, type: "turn.aborted", data: { reason: "signal" } },
+    {
+      ...base,
+      type: "turn.aborted",
+      data: { turnId: "turn-1", reason: "signal" },
+    },
   ];
   const messages = eventsToMessages(events);
   assertEquals(messages.length, 3);
@@ -1246,7 +1248,6 @@ Deno.test("orphan tool_call is closed before the next user message", () => {
           name: "write",
           input: { path: "x" },
         }],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
     {
@@ -1264,7 +1265,6 @@ Deno.test("orphan tool_call is closed before the next user message", () => {
       type: "assistant.message",
       data: {
         parts: [{ type: "text", text: "ok" }],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
   ];
@@ -1298,7 +1298,6 @@ Deno.test("multi-call batch with partial results closes only the missing calls",
           { type: "tool_call", id: "t2", name: "read", input: { path: "b" } },
           { type: "tool_call", id: "t3", name: "write", input: { path: "c" } },
         ],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
     {
@@ -1378,7 +1377,6 @@ Deno.test("complete round-trips are untouched by pairing", () => {
           name: "read",
           input: { path: "a" },
         }],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
     {
@@ -1391,7 +1389,6 @@ Deno.test("complete round-trips are untouched by pairing", () => {
       type: "assistant.message",
       data: {
         parts: [{ type: "text", text: "done" }],
-        usage: { inputTokens: 1, outputTokens: 1 },
       },
     },
   ];
@@ -1419,7 +1416,7 @@ Deno.test("complete round-trips are untouched by pairing", () => {
 // Seed N user+assistant turns directly into the log so compactMessages has
 // enough user turns to trim. Returns nothing — the events live in `log`.
 async function seedTurns(
-  log: EventLog,
+  log: SessionJournal,
   sessionId: string,
   turns: ReadonlyArray<[string, string]>,
 ): Promise<void> {
@@ -1432,7 +1429,6 @@ async function seedTurns(
       type: "assistant.message",
       data: {
         parts: [{ type: "text", text: a }],
-        usage: { inputTokens: 0, outputTokens: 0 },
       },
     }));
   }
@@ -1455,7 +1451,7 @@ Deno.test("compaction over threshold uses LLM summary", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -1505,7 +1501,7 @@ Deno.test("summary call failure falls back to template", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -1549,7 +1545,7 @@ Deno.test("empty summary falls back to template", async () => {
     },
   ]);
   const infra: AgentInfra = {
-    event_log: log,
+    journal: log,
     provider,
     tools: noTools,
     approvals: makeApprovalGateway(log),
@@ -1589,11 +1585,27 @@ Deno.test("summarizeHistory: appends prompt as final user message, no tools", as
     { role: "user", content: "hello" },
     { role: "assistant", content: "hi" },
   ];
+  const journal = makeMemoryLog();
   const result = await Effect.runPromise(
-    summarizeHistory({ provider, model: "m" }, messages),
+    summarizeHistory({
+      journal,
+      sessionId: "s",
+      turnId: "compact-1",
+      provider,
+      model: "m",
+    }, messages),
   );
   // No TextDelta emitted → null.
   assertEquals(result, null);
+  const modelCall = journal.dump("s").find((event) =>
+    event.type === "model.call.completed"
+  );
+  assertEquals(modelCall?.type, "model.call.completed");
+  if (modelCall?.type === "model.call.completed") {
+    assertEquals(modelCall.data.purpose, "compaction");
+    assertEquals(modelCall.data.usage.inputTokens, null);
+    assertEquals(modelCall.data.usage.outputTokens, null);
+  }
   assertEquals(captured !== undefined, true);
   if (captured) {
     // No tools, no system prompt.
@@ -1650,7 +1662,6 @@ Deno.test("eventsToMessages: tool.result for a call cut by the compaction fold i
         name: "read",
         input: { path: "x" },
       }],
-      usage: { inputTokens: 0, outputTokens: 0 },
     },
   }));
   await Effect.runPromise(log.append("s", {
@@ -1688,7 +1699,7 @@ Deno.test("compactSession: LLM summary path records a persistent compaction", as
   await seedTurns(log, "s", [["u1", "r1"], ["u2", "r2"], ["u3", "r3"]]);
 
   const result = await Effect.runPromise(
-    compactSession("s", { event_log: log, provider, model: "test-model" }),
+    compactSession("s", { journal: log, provider, model: "test-model" }),
   );
   assertEquals(result, { compacted: true, mode: "llm" });
 
@@ -1716,7 +1727,7 @@ Deno.test("compactSession: summary failure falls back to template", async () => 
   await seedTurns(log, "s", [["u1", "r1"], ["u2", "r2"], ["u3", "r3"]]);
 
   const result = await Effect.runPromise(
-    compactSession("s", { event_log: log, provider, model: "test-model" }),
+    compactSession("s", { journal: log, provider, model: "test-model" }),
   );
   assertEquals(result, { compacted: true, mode: "template" });
 
@@ -1737,7 +1748,7 @@ Deno.test("compactSession: too few user turns is a no-op", async () => {
   await seedTurns(log, "s", [["u1", "r1"], ["u2", "r2"]]);
 
   const result = await Effect.runPromise(
-    compactSession("s", { event_log: log, provider, model: "test-model" }),
+    compactSession("s", { journal: log, provider, model: "test-model" }),
   );
   assertEquals(result, { compacted: false });
   assertEquals(

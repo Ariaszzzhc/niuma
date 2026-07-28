@@ -26,6 +26,7 @@ import {
   summarizeHistory,
   SUMMARY_PREFIX,
 } from "./compaction.ts";
+import { recordModelCall } from "./model_call.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const COMPACT_RATIO = 0.85;
@@ -60,20 +61,26 @@ export interface TurnResult {
   readonly error?: string;
 }
 
-const zeroUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0 });
-
-const addUsage = (a: Usage, b: Usage): Usage => ({
-  inputTokens: a.inputTokens + b.inputTokens,
-  outputTokens: a.outputTokens + b.outputTokens,
+const zeroUsage = (): Usage => ({
+  inputTokens: 0,
+  outputTokens: 0,
+  reasoningTokens: 0,
+  cachedInputTokens: 0,
+  cacheWriteTokens: 0,
 });
 
-const mapUsage = (u?: ProviderUsage): Usage =>
-  u
-    ? {
-      inputTokens: u.promptTokens ?? 0,
-      outputTokens: u.completionTokens ?? 0,
-    }
-    : zeroUsage();
+const addTokenCount = (
+  a: number | null | undefined,
+  b: number | null | undefined,
+): number | null =>
+  a === null || a === undefined || b === null || b === undefined ? null : a + b;
+const addUsage = (a: Usage, b: Usage): Usage => ({
+  inputTokens: addTokenCount(a.inputTokens, b.inputTokens),
+  outputTokens: addTokenCount(a.outputTokens, b.outputTokens),
+  reasoningTokens: addTokenCount(a.reasoningTokens, b.reasoningTokens),
+  cachedInputTokens: addTokenCount(a.cachedInputTokens, b.cachedInputTokens),
+  cacheWriteTokens: addTokenCount(a.cacheWriteTokens, b.cacheWriteTokens),
+});
 
 const parseInput = (args: string): unknown => {
   const s = args.trim();
@@ -104,10 +111,15 @@ interface SampleResult {
   readonly usage: Usage;
 }
 
+interface RawSampleResult extends Omit<SampleResult, "usage"> {
+  readonly providerUsage?: ProviderUsage;
+  readonly attempts: number;
+}
+
 // Human-readable rendering of a provider error for error.occurred / TurnResult.
 // _tag always; plus `message`/`retryAfterMs` when the variant carries them.
 // Never JSON.stringify the raw object — Network.cause is often a huge/opaque
-// Error and dumping it pollutes the event log.
+// Error and dumping it pollutes the Session Journal.
 const errorMessage = (e: ProviderError): string => {
   const parts: string[] = [e._tag];
   switch (e._tag) {
@@ -142,7 +154,7 @@ const runStreamOnce = (
     thinking: { text: string; encrypted?: string }[];
     toolCalls: SampleResult["toolCalls"][number][];
     stopReason: { v: StopReason };
-    usage: { v: Usage };
+    usage: { v: ProviderUsage | undefined };
     emittedAny: { v: boolean };
   },
 ): Effect.Effect<void, ProviderError> =>
@@ -196,7 +208,7 @@ const runStreamOnce = (
           }
           case "Finish": {
             acc.stopReason.v = ev.reason;
-            acc.usage.v = mapUsage(ev.usage);
+            acc.usage.v = ev.usage;
             break;
           }
         }
@@ -215,12 +227,13 @@ const runStreamOnce = (
 //
 // `onRetry` is an optional observation hook fired after the transient event
 // is logged and before the backoff sleep.
-const sample = (
+const sampleRaw = (
   deps: RunTurnDeps,
   sessionId: string,
   req: ChatRequest,
+  attemptCount: { v: number },
   onRetry?: (attempt: number, e: ProviderError) => Effect.Effect<void>,
-): Effect.Effect<SampleResult, ProviderError> =>
+): Effect.Effect<RawSampleResult, ProviderError> =>
   Effect.gen(function* () {
     const aborted = () => deps.signal?.aborted ?? false;
     let attempt = 0;
@@ -229,13 +242,14 @@ const sample = (
     let hadPartialStream = false;
 
     while (true) {
+      attemptCount.v = attempt + 1;
       // Per-attempt locals — discarded on retry so nothing partial commits.
       const acc = {
         text: "",
         thinking: [] as { text: string; encrypted?: string }[],
         toolCalls: [] as SampleResult["toolCalls"][number][],
         stopReason: { v: "stop" as StopReason },
-        usage: { v: zeroUsage() },
+        usage: { v: undefined as ProviderUsage | undefined },
         emittedAny: { v: false },
       };
 
@@ -249,7 +263,8 @@ const sample = (
           thinking: acc.thinking,
           toolCalls: acc.toolCalls,
           stopReason: acc.stopReason.v,
-          usage: acc.usage.v,
+          ...(acc.usage.v !== undefined ? { providerUsage: acc.usage.v } : {}),
+          attempts: attempt + 1,
         };
       }
       const e = outcome.failure;
@@ -261,7 +276,7 @@ const sample = (
           thinking: [],
           toolCalls: [],
           stopReason: "abort",
-          usage: zeroUsage(),
+          attempts: attempt + 1,
         };
       }
 
@@ -279,7 +294,7 @@ const sample = (
       // Retryable: log a transient retry, reset the live buffer if this or a
       // prior attempt streamed any deltas, back off, then loop.
       attempt++;
-      yield* deps.event_log.append(sessionId, {
+      yield* deps.journal.append(sessionId, {
         type: "error.occurred",
         data: {
           message: `${
@@ -308,6 +323,47 @@ const sample = (
     }
   });
 
+const sample = (
+  deps: RunTurnDeps,
+  sessionId: string,
+  turnId: string,
+  req: ChatRequest,
+): Effect.Effect<SampleResult, ProviderError> => {
+  const attemptCount = { v: 1 };
+  return recordModelCall(
+    {
+      journal: deps.journal,
+      sessionId,
+      turnId,
+      purpose: "agent",
+      actor: deps.actor ?? "main",
+      providerId: deps.providerId ?? "unknown",
+      modelId: deps.model,
+      billingMode: deps.billingMode ?? "unknown",
+    },
+    sampleRaw(deps, sessionId, req, attemptCount).pipe(
+      Effect.map((value) => ({
+        value,
+        usage: value.providerUsage,
+        finishReason: value.stopReason,
+        attempts: value.attempts,
+      })),
+    ),
+    {
+      attempts: () => attemptCount.v,
+      errorMessage,
+    },
+  ).pipe(
+    Effect.map(({ value, usage }) => ({
+      text: value.text,
+      thinking: value.thinking,
+      toolCalls: value.toolCalls,
+      stopReason: value.stopReason,
+      usage,
+    })),
+  );
+};
+
 export function runTurn(
   sessionId: string,
   deps: RunTurnDeps,
@@ -316,6 +372,7 @@ export function runTurn(
   const contextWindow = deps.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
   const threshold = Math.floor(contextWindow * COMPACT_RATIO);
   const aborted = () => deps.signal?.aborted ?? false;
+  const turnId = deps.turnId ?? crypto.randomUUID();
 
   return Effect.gen(function* () {
     const system = yield* Effect.promise(() =>
@@ -330,7 +387,7 @@ export function runTurn(
     // D: replay ONCE per turn, then maintain `messages`/`historyEvents` locally
     // (see header invariant). Within a turn only this loop appends message-
     // relevant events, so the local mirror stays an exact projection.
-    const replayed = yield* deps.event_log.replay(sessionId);
+    const replayed = yield* deps.journal.replay(sessionId);
     const historyEvents: RecordedEvent[] = [...replayed];
     // keepThinking gates reasoningContent projection (context.ts); driven by
     // the same ThinkingConfig that goes on the wire.
@@ -355,7 +412,7 @@ export function runTurn(
     // the fold is never observed here.
     const append = (input: EventInput): Effect.Effect<RecordedEvent> =>
       Effect.gen(function* () {
-        const ev = yield* deps.event_log.append(sessionId, input);
+        const ev = yield* deps.journal.append(sessionId, input);
         historyEvents.push(ev);
         projectEvent(messages, ev, projectOptions);
         return ev;
@@ -388,8 +445,18 @@ export function runTurn(
         const summaryId = crypto.randomUUID();
         const summarizeResult = yield* summarizeHistory(
           {
+            journal: deps.journal,
+            sessionId,
+            turnId,
             provider: deps.provider,
+            ...(deps.providerId !== undefined
+              ? { providerId: deps.providerId }
+              : {}),
             model: deps.model,
+            ...(deps.billingMode !== undefined
+              ? { billingMode: deps.billingMode }
+              : {}),
+            ...(deps.actor !== undefined ? { actor: deps.actor } : {}),
             ...(deps.signal ? { signal: deps.signal } : {}),
           },
           msgs,
@@ -406,7 +473,7 @@ export function runTurn(
         // summary-bearing compaction.performed into the mirrored `messages`
         // (splicing it down to the bridge), which would otherwise destroy
         // the tail compactMessages keeps. The event stores the bare body —
-        // the projection layer re-wraps it with SUMMARY_PREFIX on replay.
+        // the context fold re-wraps it with SUMMARY_PREFIX on replay.
         const compacted = compactMessages(msgs, summaryText, keepUserTurns);
         yield* append({
           type: "compaction.performed",
@@ -415,19 +482,19 @@ export function runTurn(
         return compacted;
       });
 
-    yield* append({ type: "turn.started", data: {} });
+    yield* append({ type: "turn.started", data: { turnId } });
 
     const finishTurn = (reason: StopReason): Effect.Effect<RecordedEvent> =>
       append({
         type: "turn.completed",
-        data: { stopReason: reason, usage: turnUsage },
+        data: { turnId, stopReason: reason },
       });
 
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       if (aborted()) {
         yield* append({
           type: "turn.aborted",
-          data: { reason: "signal" },
+          data: { turnId, reason: "signal" },
         });
         return { stopReason: "abort", usage: turnUsage, text: finalText };
       }
@@ -444,7 +511,7 @@ export function runTurn(
       if (aborted()) {
         yield* append({
           type: "turn.aborted",
-          data: { reason: "signal" },
+          data: { turnId, reason: "signal" },
         });
         return { stopReason: "abort", usage: turnUsage, text: finalText };
       }
@@ -483,7 +550,7 @@ export function runTurn(
           });
           yield* append({
             type: "turn.completed",
-            data: { stopReason: "error", usage: turnUsage },
+            data: { turnId, stopReason: "error" },
           });
           return {
             stopReason: "error",
@@ -507,7 +574,7 @@ export function runTurn(
       // effect@4 beta dropped `Effect.catchAll`; `Effect.result` deterministically
       // erases the error channel and lets us branch on the typed ProviderError.
       const outcome: Outcome = yield* Effect.gen(function* () {
-        const first = yield* sample(deps, sessionId, baseReq).pipe(
+        const first = yield* sample(deps, sessionId, turnId, baseReq).pipe(
           Effect.result,
         );
         if (Result.isSuccess(first)) return toOk(first.success);
@@ -518,7 +585,7 @@ export function runTurn(
         // list; persist it into `messages` so later iterations stay compacted.
         const compacted = yield* compactNow(messages, historyEvents, 1);
         messages = compacted;
-        const resampled = yield* sample(deps, sessionId, {
+        const resampled = yield* sample(deps, sessionId, turnId, {
           ...baseReq,
           messages: compacted,
         }).pipe(Effect.result);
@@ -541,7 +608,7 @@ export function runTurn(
       if (aborted()) {
         yield* append({
           type: "turn.aborted",
-          data: { reason: "signal" },
+          data: { turnId, reason: "signal" },
         });
         return { stopReason: "abort", usage: turnUsage, text: finalText };
       }
@@ -571,7 +638,7 @@ export function runTurn(
       }
       yield* append({
         type: "assistant.message",
-        data: { parts, usage: result.usage },
+        data: { parts },
       });
 
       for (const tc of result.toolCalls) {
@@ -597,7 +664,7 @@ export function runTurn(
         if (close === "interrupted" || aborted()) {
           yield* append({
             type: "turn.aborted",
-            data: { reason: "signal" },
+            data: { turnId, reason: "signal" },
           });
           return { stopReason: "abort", usage: turnUsage, text: finalText };
         }
@@ -652,7 +719,7 @@ export function runTurn(
       if (aborted()) {
         yield* append({
           type: "turn.aborted",
-          data: { reason: "signal" },
+          data: { turnId, reason: "signal" },
         });
         return { stopReason: "abort", usage: turnUsage, text: finalText };
       }
@@ -679,7 +746,7 @@ export function runTurn(
     if (close === "interrupted" || aborted()) {
       yield* append({
         type: "turn.aborted",
-        data: { reason: "signal" },
+        data: { turnId, reason: "signal" },
       });
       return { stopReason: "abort", usage: turnUsage, text: finalText };
     }

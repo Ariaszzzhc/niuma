@@ -1,9 +1,10 @@
 // Directory layout for niuma:
 //
 //   user-level    = ~/.niuma — the single data root: config.toml, mcp.json,
-//                   auth.json, log/, sessions/, niuma.db, tool-output spills
+//                   auth.json, log/, sessions/, usage/, tool-output spills
 //   project-level = <workspace>/.niuma — config and resources only, NEVER
-//                   data (sessions, db, logs live user-level only)
+//                   data (Session Journals, Usage Archives, and logs remain
+//                   user-level only)
 //
 // When neither HOME nor USERPROFILE is set, the user-level root falls back
 // to <cwd>/.niuma.
@@ -29,7 +30,7 @@ const home = (): string =>
   envGet("HOME") ?? envGet("USERPROFILE") ?? Deno.cwd();
 
 export interface NiumaPaths {
-  /** User-level data root: config.toml, mcp.json, sessions/, niuma.db. */
+  /** User-level data root: config.toml, mcp.json, sessions/, usage/. */
   readonly data: string;
   /** Root for user configuration — same as `data`. */
   readonly config: string;

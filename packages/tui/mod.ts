@@ -157,6 +157,8 @@ export interface RunTuiDeps {
   readonly workspace: string;
   /** Bare model id recorded on the session; omit for the mock provider. */
   readonly model?: string;
+  /** Existing Session Journal to resume in the current Workspace. */
+  readonly resume?: string;
   /** Version string shown in the banner. */
   readonly version: string;
 }
@@ -179,6 +181,7 @@ export const runTui = async (deps: RunTuiDeps): Promise<number> => {
       client = await createTuiClient(deps.fetchImpl, {
         workspace: deps.workspace,
         ...(deps.model !== undefined ? { model: deps.model } : {}),
+        ...(deps.resume !== undefined ? { resume: deps.resume } : {}),
       });
     } catch (err) {
       console.error(

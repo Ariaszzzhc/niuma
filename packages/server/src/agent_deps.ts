@@ -1,22 +1,22 @@
 import { Effect, Stream } from "effect";
-import type { LiveEvent, RecordedEvent } from "@niuma/schema";
+import type { BillingMode, LiveEvent, RecordedEvent } from "@niuma/schema";
 import type { ProviderAdapter, ThinkingConfig } from "@niuma/provider";
 import type { NiumaConfig } from "@niuma/config";
 import type { InputDelivery } from "@niuma/schema";
 import type {
   ApprovalGateway,
   ApprovalOutcome,
-  EventLog,
+  SessionJournal,
   ToolPipeline,
 } from "@niuma/agent";
 import type { Kernel } from "./kernel.ts";
 
 // ---------------------------------------------------------------------------
-// EventLog adapter: exposes kernel.append/replay as the agent's EventLog port.
+// SessionJournal adapter: exposes kernel.append/replay as the agent's SessionJournal port.
 // The kernel assigns seq/ts; the agent just hands over the type+data envelope.
 // ---------------------------------------------------------------------------
 
-export const kernelEventLog = (kernel: Kernel): EventLog => ({
+export const kernelSessionJournal = (kernel: Kernel): SessionJournal => ({
   append: (sessionId, input) =>
     kernel.append(
       {
@@ -86,6 +86,9 @@ export interface AgentInfra {
   readonly provider: ProviderAdapter;
   readonly tools: ToolPipeline;
   readonly defaultModel: string;
+  /** Canonical provider/model-id persisted in Session State. */
+  readonly defaultModelRef?: string;
+  readonly defaultBillingMode?: BillingMode;
   readonly defaultWorkspace: string;
   /** Current Server-owned prompt admission mode. Sampled for each submit;
    * explicit config updates replace the underlying runtime snapshot. */
@@ -117,4 +120,7 @@ export interface AgentInfra {
   /** Provider id of the boot adapter (from the resolved default model ref);
    * the baseline for "did the provider change" on setModel. */
   readonly defaultProviderId?: string;
+  readonly billingModeForProvider?: (
+    providerId: string,
+  ) => Promise<BillingMode>;
 }

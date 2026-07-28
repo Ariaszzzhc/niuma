@@ -9,13 +9,13 @@
 //   - The MANUAL permission UX works end-to-end: bash triggers an
 //     approval.requested event, the CLI reads "y\n" from stdin, the
 //     approval is resolved, and the bash tool executes.
-//   - The JSONL event log (source of truth) and the SQLite projection
-//     (niuma.db) both reflect the run.
+//   - The Workspace-scoped Session Journal is the only Session truth and
+//     contains durable Model Call usage facts.
 //
 // Run: `deno run --allow-all scripts/smoke.ts`
 
 import { fromFileUrl, join } from "@std/path";
-import { DatabaseSync } from "node:sqlite";
+import { workspaceKeyFromAbsolutePath } from "../packages/server/src/workspace_layout.ts";
 
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
 const ENCODER = new TextEncoder();
@@ -66,10 +66,13 @@ const main = async (): Promise<void> => {
     cwd: ROOT,
     env: {
       ...Deno.env.toObject(),
-      // Isolate the run from the developer's real ~/.niuma: sessions, the
-      // sqlite projection, and logs all land under the temp dir. The mock
+      // Isolate the run from the developer's real ~/.niuma: Session Journals,
+      // Usage Archives, and logs all land under the temp dir. The mock
       // provider means no config.toml / auth.json is consulted either.
       NIUMA_DATA_DIR: dataDir,
+      // Prove the explicit --workspace wins over stale inherited process
+      // state instead of writing the Journal under the wrong Workspace Key.
+      NIUMA_WORKSPACE: join(workspace, "stale-inherited-workspace"),
     },
     stdin: "piped",
     stdout: "piped",
@@ -108,8 +111,9 @@ const main = async (): Promise<void> => {
     fail("stdout", `expected stdout to contain "smoke done"; got: ${stdout}`);
   }
 
-  // ---- 6. Inspect the JSONL event log. ----
-  const sessionsDir = join(dataDir, "sessions");
+  // ---- 6. Inspect the current Workspace's Session Journal. ----
+  const workspaceKey = workspaceKeyFromAbsolutePath(workspace);
+  const sessionsDir = join(dataDir, "sessions", workspaceKey);
   const jsonlFiles: string[] = [];
   try {
     for await (const entry of Deno.readDir(sessionsDir)) {
@@ -130,7 +134,7 @@ const main = async (): Promise<void> => {
       newest = p;
     }
   }
-  console.error(`[smoke] newest session log: ${newest}`);
+  console.error(`[smoke] newest Session Journal: ${newest}`);
 
   const text = await Deno.readTextFile(newest);
   const lines = text.split("\n").filter((l) => l.length > 0);
@@ -149,6 +153,7 @@ const main = async (): Promise<void> => {
   const types = new Set(events.map((e) => e.type));
   const requiredTypes = [
     "session.created",
+    "model.call.completed",
     "tool.call.requested",
     "tool.result",
     "turn.completed",
@@ -157,7 +162,7 @@ const main = async (): Promise<void> => {
     if (!types.has(rt)) {
       fail(
         "jsonl",
-        `event log missing required type "${rt}"; present types: ${
+        `Session Journal missing required type "${rt}"; present types: ${
           Array.from(types).sort().join(", ")
         }`,
       );
@@ -171,6 +176,13 @@ const main = async (): Promise<void> => {
   console.error(
     `[smoke] event types present: ${Array.from(types).sort().join(", ")}`,
   );
+  const modelCalls = events.filter((e) => e.type === "model.call.completed");
+  if (modelCalls.length < 3) {
+    fail(
+      "jsonl",
+      `expected >=3 model.call.completed events, got ${modelCalls.length}`,
+    );
+  }
 
   // ---- 6b. Verify tool result content — read fetched the README, bash ran echo. ----
   // Both checks prove the pipeline actually executed the tool bodies (not just
@@ -215,35 +227,13 @@ const main = async (): Promise<void> => {
   console.error(`[smoke] read result: ${truncate(readContent, 80)}`);
   console.error(`[smoke] bash result: ${truncate(bashContent, 80)}`);
 
-  // ---- 7. Inspect niuma.db sessions table. ----
+  // ---- 7. Assert the removed SQLite sidecar is not recreated. ----
   const dbPath = join(dataDir, "niuma.db");
-  let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    await Deno.stat(dbPath);
+    fail("storage", `obsolete SQLite file was created: ${dbPath}`);
   } catch (e) {
-    fail("db", `failed to open ${dbPath}: ${(e as Error).message}`);
-  }
-  try {
-    const row = db!
-      .prepare(
-        "SELECT session_id, workspace, status FROM sessions WHERE session_id = ?",
-      )
-      .get(sessionId!) as
-        | { session_id: string; workspace: string; status: string }
-        | undefined;
-    if (!row) {
-      fail("db", `no row in sessions for sessionId=${sessionId}`);
-    }
-    console.error(`[smoke] db row: ${JSON.stringify(row)}`);
-    if (row!.session_id !== sessionId) {
-      fail("db", `session_id mismatch: ${row!.session_id} vs ${sessionId}`);
-    }
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // ignore
-    }
+    if (!(e instanceof Deno.errors.NotFound)) throw e;
   }
 
   console.error(`[smoke] PASS — cleanup: rm -rf ${dataDir} ${workspace}`);

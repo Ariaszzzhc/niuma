@@ -93,6 +93,7 @@ const fakeClient: TuiClient = {
     Promise.resolve({ ok: true, status: 200, returnedInputs: [] }),
   newSession: () => Promise.resolve(),
   listSessions: () => Promise.resolve([]),
+  listSessionIds: () => Promise.resolve([]),
   resume: () =>
     Promise.reject(new Error("fake client: resume not implemented")),
   setModel: () => Promise.resolve({ ok: true }),
@@ -331,7 +332,6 @@ Deno.test("app transcript: finalizing streaming text preserves tool-call order",
     model,
     sse("assistant.message", {
       parts: [],
-      usage: { inputTokens: 0, outputTokens: 0 },
     }),
   );
   model = u(
@@ -358,7 +358,6 @@ Deno.test("app transcript: finalizing streaming text preserves tool-call order",
     model,
     sse("assistant.message", {
       parts: [],
-      usage: { inputTokens: 0, outputTokens: 0 },
     }),
   );
   assertOrder("after assistant.message");
@@ -595,7 +594,6 @@ Deno.test("ctrl+o expands details for only the most recent three turns", () => {
           },
           { type: "text", text: `answer ${turn}` },
         ],
-        usage: { inputTokens: 0, outputTokens: 0 },
       }),
     );
   }
@@ -1563,8 +1561,7 @@ Deno.test("slash dispatch: bare /resume lists sessions", async () => {
 
 Deno.test("slash dispatch: /resume <prefix> rebuilds the session from history", async () => {
   const { calls, client } = recordingClient({
-    listSessions: () =>
-      Promise.resolve([sessionInfoRow("s1", "m1"), sessionInfoRow("s_old")]),
+    listSessionIds: () => Promise.resolve(["s1", "s_old"]),
     resume: (id: string) => {
       calls.resume.push(id);
       return Promise.resolve({
@@ -1601,7 +1598,7 @@ Deno.test("slash dispatch: /resume <prefix> rebuilds the session from history", 
 
 Deno.test("slash dispatch: /resume with an unknown id posts an error", async () => {
   const { calls, client } = recordingClient({
-    listSessions: () => Promise.resolve([sessionInfoRow("s1", "m1")]),
+    listSessionIds: () => Promise.resolve(["s1"]),
   });
   const program = programWith(client);
   const update = program.update;

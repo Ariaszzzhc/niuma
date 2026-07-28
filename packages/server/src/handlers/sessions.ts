@@ -50,6 +50,7 @@ export interface Handlers {
     clientConfig: ClientConfigView;
   }>;
   readonly listSessions: () => Promise<ReadonlyArray<SessionInfo>>;
+  readonly listSessionIds: () => Promise<ReadonlyArray<string>>;
   readonly getSession: (
     id: string,
   ) => Promise<{
@@ -172,7 +173,6 @@ export const makeHandlers = (
       Effect.gen(function* () {
         const sm = yield* SessionManager;
         const info = yield* sm.create({
-          workspace: req.workspace ?? ".",
           ...(req.model !== undefined ? { model: req.model } : {}),
         });
         const env = getSessionEnv(sm);
@@ -204,8 +204,28 @@ export const makeHandlers = (
       "session_list_failed",
     ),
 
+  listSessionIds: () =>
+    runEffect(
+      runtime,
+      Effect.gen(function* () {
+        const sm = yield* SessionManager;
+        return yield* sm.listIds();
+      }),
+      "session_id_list_failed",
+    ),
+
   getSession: async (id) => {
-    const info = await requireSession(runtime, id);
+    const info = await runEffect(
+      runtime,
+      Effect.gen(function* () {
+        const sm = yield* SessionManager;
+        return yield* sm.resume(id);
+      }),
+      "session_lookup_failed",
+    );
+    if (!info) {
+      throw httpError("session_not_found", `session ${id} not found`);
+    }
     const history = await collectReplay(runtime, id);
     const created = history.find((event) => event.type === "session.created");
     if (created === undefined) {
@@ -217,8 +237,8 @@ export const makeHandlers = (
     return {
       info,
       history,
-      ...(created.data.contextWindow !== undefined
-        ? { contextWindow: created.data.contextWindow }
+      ...(info.contextWindow !== undefined
+        ? { contextWindow: info.contextWindow }
         : {}),
       mcpServers: created.data.mcpServers,
       commands: await listCommands(opts, info.workspace),

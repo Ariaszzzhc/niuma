@@ -1312,11 +1312,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           model,
           cmd(async (): Promise<Msg> => {
             try {
-              // Resolve exact-or-unique-prefix against the projection rows so
-              // a short id prefix is enough; then switch the client over.
-              const sessions = await client.listSessions();
+              // Resolve exact-or-unique-prefix from Journal filenames only;
+              // no Session body is opened until the target is known.
               const res = resolveSessionId(
-                sessions.map((s) => s.sessionId),
+                await client.listSessionIds(),
                 query,
               );
               if (res.type === "not-found") {

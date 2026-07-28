@@ -1,5 +1,6 @@
 import { Cause, Context, Data, Effect, Fiber, Ref, Semaphore } from "effect";
 import type {
+  BillingMode,
   InputDelivery,
   Part,
   PromptRes,
@@ -18,13 +19,14 @@ import {
   type AgentInfra,
   kernelApprovalGateway,
   kernelEmitLive,
-  kernelEventLog,
+  kernelSessionJournal,
 } from "./agent_deps.ts";
+import type { SessionState } from "./session_state.ts";
 
 export interface SessionManager {
   readonly create: (
-    input: { workspace: string; model?: string },
-  ) => Effect.Effect<SessionInfo, never, never>;
+    input: { model?: string },
+  ) => Effect.Effect<SessionInfo, Error, never>;
   readonly get: (
     id: string,
   ) => Effect.Effect<SessionInfo | undefined, never, never>;
@@ -33,6 +35,14 @@ export interface SessionManager {
     never,
     never
   >;
+  readonly listIds: () => Effect.Effect<
+    ReadonlyArray<string>,
+    never,
+    never
+  >;
+  readonly resume: (
+    id: string,
+  ) => Effect.Effect<SessionInfo | undefined, never, never>;
   /** Switch the session's model for subsequent turns. Accepts a full
    * "provider/model-id" ref (cross-provider: rebuilds the adapter) or a
    * bare model-id (same provider). Fails when the session does not exist
@@ -67,6 +77,9 @@ export interface SessionManager {
     never
   >;
   readonly awaitAll: () => Effect.Effect<void, never, never>;
+  readonly isActive: (
+    id: string,
+  ) => Effect.Effect<boolean, never, never>;
 }
 
 // deno-lint-ignore no-slow-types
@@ -111,27 +124,21 @@ export class TurnInFlightError extends Data.TaggedError("TurnInFlightError")<
 }
 
 // ---------------------------------------------------------------------------
-// Per-session model/effort overrides
+// Per-session model runtime cache
 // ---------------------------------------------------------------------------
-// setModel/setEffort reroute a session's FUTURE turns without a server
-// reboot. setModel persists the model id into the projection
-// (sessions.model), which runAgentTurn already reads per prompt; everything
-// else — the rebuilt provider adapter on a cross-provider switch, per-model
-// limits, the thinking/effort knobs — lives in this in-memory map. These are
-// runtime knobs, not event-sourced state: a server restart falls back to the
-// boot defaults (the projection's model column survives, so the model name
-// itself is sticky).
+// Model and effort are Session State derived from events. This cache holds
+// only rebuilt provider adapters and resolved request limits; a restart can
+// recreate it from the Session Journal before the next Model Call.
 
-interface SessionOverride {
-  /** Provider the session's adapter is bound to (post-switch). */
+interface SessionRuntime {
+  readonly modelRef: string;
+  readonly modelId: string;
   readonly providerId?: string;
-  /** Rebuilt adapter, present only after a cross-provider setModel. */
-  readonly provider?: ProviderAdapter;
+  readonly provider: ProviderAdapter;
+  readonly billingMode: BillingMode;
   readonly contextWindow?: number;
   readonly maxTokens?: number;
-  /** Model-scoped thinking config (from config.toml [provider.*.models.*]). */
   readonly thinking?: ThinkingConfig;
-  /** Explicit effort override; merged over `thinking` at turn time. */
   readonly effort?: string;
 }
 
@@ -160,7 +167,7 @@ const thinkingFromModelConfig = (
 // ---------------------------------------------------------------------------
 // A prompt whose text is `/name args...` is expanded server-side against the
 // user/project `commands/*.md` templates (@niuma/config) so every client —
-// TUI, one-shot, serve — shares one code path and the event log records the
+// TUI, one-shot, serve — shares one code path and the Session Journal records
 // expanded text (replay-safe). The typed input is preserved as `sourceText`
 // on the user.message event for display surfaces. An unmatched `/whatever`
 // passes through as a plain message (no error), and any discovery failure
@@ -262,6 +269,7 @@ type TurnTermination = "completed" | "interrupted" | "failed";
 interface ActiveTurn {
   readonly kind: "turn";
   readonly token: object;
+  readonly turnId: string;
   readonly controller: AbortController;
   phase: TurnPhase;
   readonly pending: PendingInput[];
@@ -288,7 +296,7 @@ export const makeSessionManager = (
 ): Effect.Effect<SessionManager, never, Kernel> =>
   Effect.gen(function* () {
     const kernel = yield* Kernel;
-    const overrides = yield* Ref.make(new Map<string, SessionOverride>());
+    const runtimes = yield* Ref.make(new Map<string, SessionRuntime>());
     const executions = new Map<string, SessionExecution>();
     const locks = new Map<
       string,
@@ -318,169 +326,223 @@ export const makeSessionManager = (
       effect: Effect.Effect<A, E, R>,
     ): Effect.Effect<A, E, R> => lockFor(id).withPermit(effect);
 
-    const create: SessionManager["create"] = ({ workspace, model }) =>
+    const canonicalModelRef = (
+      requested: string,
+      current?: string,
+    ): string => {
+      if (requested.includes("/")) return requested;
+      const currentProvider = current?.includes("/")
+        ? current.slice(0, current.indexOf("/"))
+        : infra.defaultProviderId;
+      return currentProvider ? `${currentProvider}/${requested}` : requested;
+    };
+
+    const buildRuntime = (
+      modelRef: string,
+      effort?: string,
+    ): Effect.Effect<SessionRuntime, Error, never> =>
+      Effect.gen(function* () {
+        let modelId = modelRef;
+        let providerId = infra.defaultProviderId;
+        let provider = infra.provider;
+        let contextWindow = infra.defaultContextWindow;
+        let maxTokens = infra.defaultMaxTokens;
+        let thinking = infra.defaultThinking;
+
+        if (modelRef.includes("/")) {
+          const slash = modelRef.indexOf("/");
+          providerId = modelRef.slice(0, slash);
+          modelId = modelRef.slice(slash + 1);
+          if (infra.config) {
+            const resolved = yield* Effect.try(() =>
+              resolveModelRef(infra.config!, modelRef)
+            );
+            providerId = resolved.provider.id;
+            modelId = resolved.modelId;
+            contextWindow = resolved.model.contextWindow;
+            maxTokens = resolved.model.maxOutput;
+            thinking = thinkingFromModelConfig(resolved.model);
+            if (providerId !== infra.defaultProviderId) {
+              if (!infra.makeProvider) {
+                return yield* Effect.fail(
+                  new Error(
+                    `model ${modelRef} needs a provider factory`,
+                  ),
+                );
+              }
+              provider = yield* Effect.tryPromise(() =>
+                infra.makeProvider!(infra.config!, modelRef)
+              );
+            }
+          }
+        }
+
+        const billingMode = providerId && infra.billingModeForProvider
+          ? yield* Effect.tryPromise(() =>
+            infra.billingModeForProvider!(providerId!)
+          )
+          : infra.defaultBillingMode ?? "unknown";
+        return {
+          modelRef,
+          modelId,
+          ...(providerId !== undefined ? { providerId } : {}),
+          provider,
+          billingMode,
+          ...(contextWindow !== undefined ? { contextWindow } : {}),
+          ...(maxTokens !== undefined ? { maxTokens } : {}),
+          ...(thinking !== undefined ? { thinking } : {}),
+          ...(effort !== undefined ? { effort } : {}),
+        };
+      });
+
+    const runtimeFor = (
+      id: string,
+      state: SessionState,
+    ): Effect.Effect<SessionRuntime, Error, never> =>
+      Effect.gen(function* () {
+        const cached = (yield* Ref.get(runtimes)).get(id);
+        if (
+          cached?.modelRef === state.info.model &&
+          cached.effort === state.effort
+        ) {
+          return cached;
+        }
+        const runtime = yield* buildRuntime(state.info.model, state.effort);
+        yield* Ref.update(runtimes, (map) => new Map(map).set(id, runtime));
+        return runtime;
+      });
+
+    const recoverState = (
+      id: string,
+      state: SessionState,
+    ): Effect.Effect<SessionState, never, never> =>
+      Effect.gen(function* () {
+        if (executions.get(id)?.active) return state;
+        for (const approval of state.pendingApprovals.values()) {
+          yield* kernel.append({
+            type: "approval.resolved",
+            sessionId: id,
+            data: {
+              approvalId: approval.approvalId,
+              decision: "reject",
+              feedback: "server restarted",
+            },
+          });
+        }
+        if (state.activeTurnId) {
+          yield* kernel.append({
+            type: "turn.aborted",
+            sessionId: id,
+            data: {
+              turnId: state.activeTurnId,
+              reason: "server restarted",
+            },
+          });
+        }
+        return (yield* kernel.state(id)) ?? state;
+      });
+
+    const create: SessionManager["create"] = ({ model }) =>
       Effect.gen(function* () {
         const sessionId = newSessionId();
-        const sessionModel = (model ?? infra.defaultModel) || "default";
+        const requested = model ?? infra.defaultModelRef ??
+          (infra.defaultModel || "default");
+        const sessionModel = canonicalModelRef(requested);
+        const runtime = yield* buildRuntime(sessionModel);
         yield* kernel.append({
           type: "session.created",
           sessionId,
           data: {
-            workspace,
+            workspace: infra.defaultWorkspace,
             model: sessionModel,
-            ...(infra.defaultContextWindow !== undefined
-              ? { contextWindow: infra.defaultContextWindow }
+            ...(runtime.contextWindow !== undefined
+              ? { contextWindow: runtime.contextWindow }
               : {}),
             mcpServers: [...env.mcpServers],
           },
         });
-        const info = yield* kernel.projection().pipe(
-          Effect.flatMap((p) => Effect.promise(() => p.getSession(sessionId))),
-        );
-        if (info) return info;
-        return {
-          sessionId,
-          workspace,
-          model: sessionModel,
-          createdAt: now(),
-          updatedAt: now(),
-          status: "idle",
-        } satisfies SessionInfo;
+        yield* Ref.update(runtimes, (map) =>
+          new Map(map).set(sessionId, runtime));
+        const state = yield* kernel.state(sessionId);
+        return state!.info;
       });
 
     const get: SessionManager["get"] = (id) =>
-      Effect.gen(function* () {
-        const p = yield* kernel.projection();
-        return yield* Effect.promise(() => p.getSession(id));
-      });
+      Effect.map(kernel.state(id), (state) =>
+        state?.info);
 
     const list: SessionManager["list"] = () =>
-      Effect.gen(function* () {
-        const p = yield* kernel.projection();
-        return yield* Effect.promise(() => p.listSessions());
-      });
+      Effect.map(kernel.listRecent(), (states) =>
+        states.map((state) =>
+          state.info
+        ));
 
-    const setStatus = (
-      id: string,
-      status: SessionInfo["status"],
-    ): Effect.Effect<void, never, never> =>
-      Effect.gen(function* () {
-        const p = yield* kernel.projection();
-        yield* Effect.promise(() =>
-          p.db
-            .updateTable("sessions")
-            .set({ status, updated_at: now() })
-            .where("session_id", "=", id)
-            .execute()
-        );
-      });
+    const listIds: SessionManager["listIds"] = () => kernel.listIds();
 
-    const setModel: SessionManager["setModel"] = (id, modelRef) =>
-      Effect.gen(function* () {
-        const p = yield* kernel.projection();
-        const info = yield* Effect.promise(() => p.getSession(id));
-        if (!info) {
-          return yield* Effect.fail(new Error(`session ${id} not found`));
-        }
-        const current = (yield* Ref.get(overrides)).get(id);
-        const currentProviderId = current?.providerId ??
-          infra.defaultProviderId;
+    const resume: SessionManager["resume"] = (id) =>
+      withSessionLock(
+        id,
+        Effect.gen(function* () {
+          // Touch first so Resume and Retention have one deterministic race:
+          // whichever acquires the SessionStore lock first wins. A successful
+          // touch makes the Journal fresh before any replay/recovery work.
+          if (!(yield* kernel.touch(id))) return undefined;
+          const current = yield* kernel.state(id);
+          if (!current) return undefined;
+          const recovered = yield* recoverState(id, current);
+          return recovered.info;
+        }),
+      );
 
-        let modelId = modelRef;
-        // Next override; replaces the model-scoped fields wholesale so a
-        // switch AWAY from a tuned model clears its limits/thinking (the
-        // explicit effort override, being a user knob, survives).
-        let next: SessionOverride = {
-          ...(current?.effort !== undefined ? { effort: current.effort } : {}),
-        };
-
-        if (modelRef.includes("/")) {
-          // Full ref: resolve against the boot config for provider + limits.
-          if (!infra.config || !infra.makeProvider) {
-            return yield* Effect.fail(
-              new Error(
-                "setModel: provider-qualified ref needs config + provider " +
-                  "factory, neither is available in this infra",
-              ),
-            );
+    const setModel: SessionManager["setModel"] = (id, requested) =>
+      withSessionLock(
+        id,
+        Effect.gen(function* () {
+          const state = yield* kernel.state(id);
+          if (!state) {
+            return yield* Effect.fail(new Error(`session ${id} not found`));
           }
-          const config = infra.config;
-          const makeProvider = infra.makeProvider;
-          const resolved = yield* Effect.try(() =>
-            resolveModelRef(config, modelRef)
-          );
-          modelId = resolved.modelId;
-          // Rebuild the adapter only when the provider actually changes; a
-          // same-provider switch rides the existing adapter (the model name
-          // travels per-request on ChatRequest).
-          const provider = resolved.provider.id !== currentProviderId
-            ? yield* Effect.tryPromise(() => makeProvider(config, modelRef))
-            : current?.provider;
-          next = {
-            ...next,
-            providerId: resolved.provider.id,
-            ...(provider !== undefined ? { provider } : {}),
-            contextWindow: resolved.model.contextWindow,
-            maxTokens: resolved.model.maxOutput,
-            ...(thinkingFromModelConfig(resolved.model) !== undefined
-              ? { thinking: thinkingFromModelConfig(resolved.model) }
+          const modelRef = canonicalModelRef(requested, state.info.model);
+          const runtime = yield* buildRuntime(modelRef, state.effort);
+          yield* kernel.append({
+            type: "session.model.changed",
+            sessionId: id,
+            data: {
+              model: modelRef,
+              ...(runtime.contextWindow !== undefined
+                ? { contextWindow: runtime.contextWindow }
+                : {}),
+            },
+          });
+          yield* Ref.update(runtimes, (map) => new Map(map).set(id, runtime));
+          return {
+            ok: true as const,
+            model: modelRef,
+            ...(runtime.contextWindow !== undefined
+              ? { contextWindow: runtime.contextWindow }
               : {}),
           };
-        } else if (infra.config && currentProviderId) {
-          // Bare model-id: keep the provider, but pick up the declared
-          // per-model limits/thinking when the config knows the pair.
-          const resolved = yield* Effect.try(() =>
-            resolveModelRef(infra.config!, `${currentProviderId}/${modelRef}`)
-          );
-          next = {
-            ...next,
-            providerId: currentProviderId,
-            ...(current?.provider !== undefined
-              ? { provider: current.provider }
-              : {}),
-            contextWindow: resolved.model.contextWindow,
-            maxTokens: resolved.model.maxOutput,
-            ...(thinkingFromModelConfig(resolved.model) !== undefined
-              ? { thinking: thinkingFromModelConfig(resolved.model) }
-              : {}),
-          };
-        } else {
-          // No config to resolve against (minimal injected infra): just the
-          // model name changes; limits/thinking stay at the boot defaults.
-          next = current ?? {};
-        }
-
-        // Persist the model id: runAgentTurn reads the projection per prompt,
-        // so the NEXT turn picks the new model up.
-        yield* Effect.promise(() =>
-          p.db
-            .updateTable("sessions")
-            .set({ model: modelId, updated_at: now() })
-            .where("session_id", "=", id)
-            .execute()
-        );
-        yield* Ref.update(overrides, (m) => new Map(m).set(id, next));
-
-        return {
-          ok: true as const,
-          model: modelId,
-          ...(next.contextWindow !== undefined
-            ? { contextWindow: next.contextWindow }
-            : {}),
-        };
-      });
+        }),
+      );
 
     const setEffort: SessionManager["setEffort"] = (id, effort) =>
-      Effect.gen(function* () {
-        const p = yield* kernel.projection();
-        const info = yield* Effect.promise(() => p.getSession(id));
-        if (!info) {
-          return yield* Effect.fail(new Error(`session ${id} not found`));
-        }
-        yield* Ref.update(overrides, (m) =>
-          new Map(m).set(id, { ...m.get(id), effort }));
-        return { ok: true as const, effort };
-      });
+      withSessionLock(
+        id,
+        Effect.gen(function* () {
+          const state = yield* kernel.state(id);
+          if (!state) {
+            return yield* Effect.fail(new Error(`session ${id} not found`));
+          }
+          const runtime = yield* buildRuntime(state.info.model, effort);
+          yield* kernel.append({
+            type: "session.effort.changed",
+            sessionId: id,
+            data: { effort },
+          });
+          yield* Ref.update(runtimes, (map) => new Map(map).set(id, runtime));
+          return { ok: true as const, effort };
+        }),
+      );
 
     // Input Coordinator ----------------------------------------------------
     //
@@ -496,17 +558,19 @@ export const makeSessionManager = (
     ): Effect.Effect<void, never, never> =>
       Effect.gen(function* () {
         const token = {};
+        const turnId = crypto.randomUUID();
         const controller = new AbortController();
         const active: ActiveTurn = {
           kind: "turn",
           token,
+          turnId,
           controller,
           phase: "accepting",
           pending: [input],
         };
         state.active = active;
         const fiber = yield* Effect.forkDetach(
-          runAgentTurn(sessionId, token, controller),
+          runAgentTurn(sessionId, token, turnId, controller),
         );
         active.fiber = fiber;
       });
@@ -616,39 +680,46 @@ export const makeSessionManager = (
     const runAgentTurn = (
       sessionId: string,
       token: object,
+      turnId: string,
       controller: AbortController,
     ): Effect.Effect<void, never, never> => {
       let termination: TurnTermination = "failed";
 
       return Effect.gen(function* () {
-        const info = yield* kernel.projection().pipe(
-          Effect.flatMap((p) =>
-            Effect.promise(() => p.getSession(sessionId))
-          ),
-        );
-        const workspace = info?.workspace ?? infra.defaultWorkspace;
-        const model = info?.model ?? infra.defaultModel;
-        const ov = (yield* Ref.get(overrides)).get(sessionId);
-        const provider = ov?.provider ?? infra.provider;
-        const contextWindow = ov?.contextWindow ?? infra.defaultContextWindow;
-        const maxTokens = ov?.maxTokens ?? infra.defaultMaxTokens;
-        const baseThinking = ov?.thinking ?? infra.defaultThinking;
-        const thinking = ov?.effort !== undefined
-          ? { ...baseThinking, effort: ov.effort }
+        const state = yield* kernel.state(sessionId);
+        if (!state) {
+          return yield* Effect.die(
+            new Error(`session ${sessionId} not found`),
+          );
+        }
+        const runtime = yield* runtimeFor(sessionId, state);
+        const baseThinking = runtime.thinking;
+        const thinking = runtime.effort !== undefined
+          ? { ...baseThinking, effort: runtime.effort }
           : baseThinking;
 
         const result = yield* runTurn(sessionId, {
-          event_log: kernelEventLog(kernel),
-          provider,
+          journal: kernelSessionJournal(kernel),
+          provider: runtime.provider,
           tools: infra.tools,
           approvals: kernelApprovalGateway(kernel),
-          model,
-          workspace,
+          model: runtime.modelId,
+          ...(runtime.providerId !== undefined
+            ? { providerId: runtime.providerId }
+            : {}),
+          billingMode: runtime.billingMode,
+          actor: "main",
+          turnId,
+          workspace: state.info.workspace,
           emitLive: kernelEmitLive(kernel),
           signal: controller.signal,
           input: turnInputFor(sessionId, token),
-          ...(contextWindow !== undefined ? { contextWindow } : {}),
-          ...(maxTokens !== undefined ? { maxTokens } : {}),
+          ...(runtime.contextWindow !== undefined
+            ? { contextWindow: runtime.contextWindow }
+            : {}),
+          ...(runtime.maxTokens !== undefined
+            ? { maxTokens: runtime.maxTokens }
+            : {}),
           ...(thinking !== undefined ? { thinking } : {}),
         });
         termination = result.stopReason === "abort"
@@ -674,20 +745,19 @@ export const makeSessionManager = (
               yield* kernel.append({
                 type: "turn.aborted",
                 sessionId,
-                data: { reason: "turn failed" },
+                data: { turnId, reason: "turn failed" },
               });
             } else {
               yield* kernel.append({
                 type: "turn.aborted",
                 sessionId,
-                data: { reason: "signal" },
+                data: { turnId, reason: "signal" },
               });
             }
           })
         ),
         Effect.ensuring(
           Effect.gen(function* () {
-            yield* setStatus(sessionId, "idle");
             const recovered = yield* finalizeTurn(
               sessionId,
               token,
@@ -712,9 +782,9 @@ export const makeSessionManager = (
     };
 
     // Background compaction (the /compact command): compactSession replays
-    // the log, summarizes, and appends a compaction.performed event.
+    // the Journal, summarizes, and appends a compaction.performed event.
     // Failure isolation mirrors runAgentTurn — a failure becomes an
-    // error.occurred event so the JSONL stays the source of truth, with a
+    // error.occurred event so the Journal stays the source of truth, with a
     // last-resort console.error for dep-wiring panics. (compactSession
     // itself already falls back to the template summary when the LLM call
     // fails, so reaching catchCause means replay/append broke.)
@@ -739,20 +809,23 @@ export const makeSessionManager = (
       token: object,
     ): Effect.Effect<void, never, never> =>
       Effect.gen(function* () {
-        const info = yield* kernel.projection().pipe(
-          Effect.flatMap((p) => Effect.promise(() => p.getSession(sessionId))),
-        );
-        const model = info?.model ?? infra.defaultModel;
-        // Same provider/model resolution as runAgentTurn: per-session
-        // overrides (setModel) win over the boot adapter; the model name
-        // comes from the projection, which setModel already updated.
-        const ov = (yield* Ref.get(overrides)).get(sessionId);
-        const provider = ov?.provider ?? infra.provider;
+        const state = yield* kernel.state(sessionId);
+        if (!state) {
+          return yield* Effect.die(
+            new Error(`session ${sessionId} not found`),
+          );
+        }
+        const runtime = yield* runtimeFor(sessionId, state);
 
         yield* compactSession(sessionId, {
-          event_log: kernelEventLog(kernel),
-          provider,
-          model,
+          journal: kernelSessionJournal(kernel),
+          provider: runtime.provider,
+          ...(runtime.providerId !== undefined
+            ? { providerId: runtime.providerId }
+            : {}),
+          model: runtime.modelId,
+          billingMode: runtime.billingMode,
+          actor: "main",
         }).pipe(
           Effect.catchCause((cause) =>
             kernel.append({
@@ -790,10 +863,11 @@ export const makeSessionManager = (
 
     const prompt: SessionManager["prompt"] = (id, input) =>
       Effect.gen(function* () {
-        const info = yield* kernel.projection().pipe(
-          Effect.flatMap((p) => Effect.promise(() => p.getSession(id))),
-        );
-        const workspace = info?.workspace ?? infra.defaultWorkspace;
+        const current = yield* kernel.state(id);
+        const recovered = current
+          ? yield* recoverState(id, current)
+          : undefined;
+        const workspace = recovered?.info.workspace ?? infra.defaultWorkspace;
         const expanded = yield* expandSlashCommand(
           infra,
           workspace,
@@ -911,15 +985,21 @@ export const makeSessionManager = (
         }
       });
 
+    const isActive: SessionManager["isActive"] = (id) =>
+      Effect.sync(() => executions.get(id)?.active !== undefined);
+
     return {
       create,
       get,
       list,
+      listIds,
+      resume,
       setModel,
       setEffort,
       prompt,
       compact,
       interrupt,
       awaitAll,
+      isActive,
     } satisfies SessionManager;
   });

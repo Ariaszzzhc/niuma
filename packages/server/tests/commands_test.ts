@@ -2,30 +2,24 @@ import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { createServerApp } from "../mod.ts";
 import { bootstrap } from "../src/bootstrap.ts";
-import { makeEventLog } from "../src/event_log.ts";
-import { ensureSchema } from "../src/projection.ts";
-import { makeEventBus } from "../src/event_bus.ts";
+import { dataPaths } from "../src/paths.ts";
 import { makeMockProvider } from "@niuma/provider";
 import { parseConfig } from "@niuma/config";
-import { Effect } from "effect";
 
 // Slash command expansion end-to-end: a `/name args` prompt is expanded
 // against the commands/*.md templates before the user.message lands in the
-// event log; the typed input survives as sourceText.
+// Session Journal; the typed input survives as sourceText.
 
 interface Fixture {
   readonly root: string;
-  readonly sessionsDir: string;
   readonly globalConfigDir: string;
   readonly workspace: string;
 }
 
 const makeFixture = async (): Promise<Fixture> => {
   const root = await Deno.makeTempDir({ prefix: "niuma_cmd_" });
-  const sessionsDir = join(root, "sessions");
   const globalConfigDir = join(root, "global-config");
   const workspace = join(root, "ws");
-  await Deno.mkdir(sessionsDir, { recursive: true });
   await Deno.mkdir(join(globalConfigDir, "commands"), { recursive: true });
   await Deno.mkdir(join(workspace, ".niuma", "commands"), { recursive: true });
   await Deno.writeTextFile(
@@ -36,20 +30,12 @@ const makeFixture = async (): Promise<Fixture> => {
     join(workspace, ".niuma", "commands", "review.md"),
     "Review $1 carefully.",
   );
-  return { root, sessionsDir, globalConfigDir, workspace };
+  return { root, globalConfigDir, workspace };
 };
 
 const buildApp = async (f: Fixture) => {
-  const bus = await Effect.runPromise(makeEventBus());
   const boot = await bootstrap({
-    paths: {
-      root: f.root,
-      sessions: f.sessionsDir,
-      db: join(f.root, "niuma.db"),
-    },
-    event_log: makeEventLog({ sessionsDir: f.sessionsDir }),
-    projection: await ensureSchema(join(f.root, "niuma.db")),
-    bus,
+    paths: dataPaths(f.root, f.workspace),
     config: parseConfig(""),
     infra: {
       provider: makeMockProvider(),
@@ -61,13 +47,13 @@ const buildApp = async (f: Fixture) => {
 
 const createSession = async (
   app: { fetch: (req: Request) => Response | Promise<Response> },
-  workspace: string,
+  _workspace: string,
 ): Promise<{ sessionId: string; commands: Array<{ name: string }> }> => {
   const res = await app.fetch(
     new Request("http://niuma.internal/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspace, model: "smoke-model" }),
+      body: JSON.stringify({ model: "smoke-model" }),
     }),
   );
   assertEquals(res.status, 201);

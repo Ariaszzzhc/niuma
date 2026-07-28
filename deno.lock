@@ -23,7 +23,6 @@
     "npm:@modelcontextprotocol/sdk@^1.17.0": "1.29.0_zod@4.4.3",
     "npm:effect@^4.0.0-beta.100": "4.0.0-beta.100",
     "npm:hono@^4.6.0": "4.12.31",
-    "npm:kysely@0.28": "0.28.17",
     "npm:zod@4": "4.4.3"
   },
   "jsr": {
@@ -528,10 +527,6 @@
       "integrity": "sha512-Dew1okvhM/SQcIa2rcgujNndZwU8VnSapDgdxlYoB84ZlpAD43U6KLAFqYo17ykSFGHNPrg0qry0bP+GJd9v7Q==",
       "tarball": "https://registry.npmmirror.com/kubernetes-types/-/kubernetes-types-1.30.0.tgz"
     },
-    "kysely@0.28.17": {
-      "integrity": "sha512-nbD8lB9EB3wNdMhOCdx5Li8DxnLbvKByylRLcJ1h+4SkrowVeECAyZlyiKMThF7xFdRz0jSQ2MoJr+wXux2y0Q==",
-      "tarball": "https://registry.npmmirror.com/kysely/-/kysely-0.28.17.tgz"
-    },
     "math-intrinsics@1.1.0": {
       "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==",
       "tarball": "https://registry.npmmirror.com/math-intrinsics/-/math-intrinsics-1.1.0.tgz"
@@ -849,7 +844,6 @@
       "npm:@modelcontextprotocol/sdk@^1.17.0",
       "npm:effect@^4.0.0-beta.100",
       "npm:hono@^4.6.0",
-      "npm:kysely@0.28",
       "npm:zod@4"
     ]
   }

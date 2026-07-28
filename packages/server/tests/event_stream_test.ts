@@ -2,9 +2,8 @@ import { assertEquals } from "@std/assert";
 import { Effect, Stream } from "effect";
 import type { RecordedEvent, SseEvent } from "@niuma/schema";
 import { makeEventBus } from "../src/event_bus.ts";
-import type { EventLog } from "../src/event_log.ts";
 import { makeKernel } from "../src/kernel.ts";
-import type { Projection } from "../src/projection.ts";
+import type { SessionStore } from "../src/session_store.ts";
 
 Deno.test("kernel event stream buffers the replay-to-live handoff without reordering", async () => {
   const replayStarted = Promise.withResolvers<void>();
@@ -21,22 +20,34 @@ Deno.test("kernel event stream buffers the replay-to-live handoff without reorde
     },
   } satisfies RecordedEvent;
 
-  const eventLog: EventLog = {
-    append: (event) => Promise.resolve(event),
+  let seq = 1;
+  const store: SessionStore = {
+    workspace: "/tmp",
+    sessionsDir: "/tmp/sessions",
+    append: (input) =>
+      Promise.resolve({
+        ...input,
+        seq: ++seq,
+        ts: input.ts ?? seq,
+      } as RecordedEvent),
     replay: async function* (_sessionId, fromSeq = 0) {
       if (initial.seq >= fromSeq) yield initial;
       replayStarted.resolve();
       await releaseReplay.promise;
     },
-    listSessions: () => Promise.resolve(["session"]),
+    read: () => Promise.resolve([initial]),
+    state: () => Promise.resolve(undefined),
+    listRecent: () => Promise.resolve([]),
+    listIds: () => Promise.resolve(["session"]),
     lastSeq: () => Promise.resolve(1),
+    touch: () => Promise.resolve(true),
+    remove: () => Promise.resolve(),
+    removeOlderThan: () => Promise.resolve(false),
+    pathFor: (sessionId) => `/tmp/sessions/${sessionId}.jsonl`,
   };
-  const projection = {
-    apply: () => Promise.resolve(),
-  } as unknown as Projection;
   const bus = await Effect.runPromise(makeEventBus());
   const kernel = await Effect.runPromise(
-    makeKernel({ event_log: eventLog, projection, bus }),
+    makeKernel({ store, bus }),
   );
 
   const collecting = Effect.runPromise(

@@ -63,7 +63,6 @@ export const CommandInfo: Schema.Codec<CommandInfo> = CommandInfo_;
 
 // deno-lint-ignore no-slow-types
 const CreateSessionReq_ = Schema.Struct({
-  workspace: Schema.optional(Schema.String),
   model: Schema.optional(Schema.String),
 });
 export type CreateSessionReq = Schema.Schema.Type<typeof CreateSessionReq_>;
@@ -164,14 +163,13 @@ const SetEffortRes_ = Schema.Struct({
 export type SetEffortRes = Schema.Schema.Type<typeof SetEffortRes_>;
 export const SetEffortRes: Schema.Codec<SetEffortRes> = SetEffortRes_;
 
-// ---- Projection read model (SQLite-backed; rebuildable from the event log) ----
+// ---- Session State read model (folded from one Session Journal) ----
 
 // deno-lint-ignore no-slow-types
 const SessionStatus_ = Schema.Literals([
   "idle",
   "running",
   "waiting_approval",
-  "aborted",
 ]);
 export type SessionStatus = Schema.Schema.Type<typeof SessionStatus_>;
 export const SessionStatus: Schema.Codec<SessionStatus> = SessionStatus_;
@@ -181,12 +179,14 @@ const SessionInfo_ = Schema.Struct({
   sessionId: Schema.String,
   workspace: Schema.String,
   model: Schema.String,
+  effort: Schema.optional(Schema.String),
+  contextWindow: Schema.optional(Schema.Number),
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
   status: SessionStatus,
   lastStopReason: Schema.optional(StopReason),
   // First non-empty user message text (truncated); serves as the display title.
-  // Populated by the projection from the first user.message event.
+  // Derived from the first user.message event.
   title: Schema.optional(Schema.String),
 });
 export type SessionInfo = Schema.Schema.Type<typeof SessionInfo_>;
@@ -194,6 +194,11 @@ export const SessionInfo: Schema.Codec<SessionInfo> = SessionInfo_;
 
 export const SessionListRes = Schema.Array(SessionInfo_);
 export type SessionListRes = Schema.Schema.Type<typeof SessionListRes>;
+
+// Filename-only Session ids for exact/unique-prefix `/resume` resolution.
+// Unlike SessionListRes this does not open or fold every Journal.
+export const SessionIdListRes = Schema.Array(Schema.String);
+export type SessionIdListRes = Schema.Schema.Type<typeof SessionIdListRes>;
 
 export const GetSessionRes = Schema.Struct({
   info: SessionInfo_,

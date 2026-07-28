@@ -8,12 +8,14 @@ Guidance for AI coding agents working in this repository.
 with three faces — a fullscreen interactive TUI, a one-shot prompt mode, and an
 HTTP+SSE server — all driving the same event-sourced agent core.
 
-The architecture is event-sourced: the JSONL event log (one file per session) is
-the source of truth, and a SQLite database (`niuma.db`) is a derived projection.
-The agent loop, permission engine, and tool pipeline are decoupled behind port
-interfaces. [Effect](https://effect.website) (v4 beta) provides concurrency,
-streams, resource scopes, and the server's composition boundary; leaf modules
-use plain interfaces rather than parallel service wrappers.
+The architecture is event-sourced: one append-only JSONL Session Journal per
+Session is the only Session source of truth. Journals and long-lived,
+content-free Usage Archives are grouped by a readable Claude-style Workspace
+Key; there is no operational database. The agent loop, permission engine, and
+tool pipeline are decoupled behind port interfaces.
+[Effect](https://effect.website) (v4 beta) provides concurrency, streams,
+resource scopes, and the server's composition boundary; leaf modules use plain
+interfaces rather than parallel service wrappers.
 
 Runtime flow (one-shot mode as an example):
 
@@ -21,7 +23,7 @@ Runtime flow (one-shot mode as an example):
 CLI (main thread)
   └─ spawns server Worker + in-process fetch tunnel
        └─ Hono HTTP app (packages/server) on an Effect ManagedRuntime
-            └─ Kernel: append / replay / subscribe over the event log
+            └─ Kernel: append / replay / subscribe over the Session Journal
                  └─ agent loop (runTurn) → provider stream → tool pipeline
                       └─ permission engine authorizes each tool call
 ```
@@ -44,7 +46,7 @@ re-exports only), `src/` (implementation), `tests/` (`*_test.ts`).
 | `packages/permission` | Stateless permission policy primitives: glob compilation/matching, sensitive-path detection, and ordered `allow`/`deny`/`ask` evaluation. The session-scoped mutable engine lives in `packages/tools`.                                                                                                                                                                                                          |
 | `packages/tools`      | Built-in tools (`bash`, `read`, `write`, `edit`, `glob`, `grep`, `apply_patch`, `question`, `spawn_subagent`, `update_plan`) under `src/tools/`, plus the tool pipeline (authorize → execute), scheduler, output truncation/spill, and path resolution confined to the workspace root.                                                                                                                          |
 | `packages/agent`      | Agent core: `runTurn` loop, event→message context projection (replay folds `compaction.performed`), history compaction/summarization (`compactSession`), system-prompt builder, and the adapter from the agent tool port to `@niuma/tools`. Session and approval lifecycles belong to `packages/server`; the agent depends only on ports (`deps.ts`).                                                            |
-| `packages/server`     | HTTP+SSE server (Hono): canonical JSONL `EventLog` (source of truth), SQLite `Projection` (via kysely over the vendored `node:sqlite` dialect in `vendor/`), `Kernel` (append/replay/subscribe), Server-owned input coordination and configuration, session manager (prompt/compact/model/effort), event bus, bootstrap wiring (Effect Layers), handlers for sessions and events.                               |
+| `packages/server`     | HTTP+SSE server (Hono): `WorkspaceLayout`, canonical JSONL `SessionStore`, pure `SessionState` fold, content-free `UsageArchive`, time-based `Retention`, `Kernel` (append/replay/subscribe), Server-owned input coordination and configuration, Session manager (prompt/compact/model/effort), event bus, bootstrap wiring (Effect Layers), handlers for Sessions and events.                                  |
 | `packages/config`     | Configuration: `config.toml` parsing, user/project merge and closest-level writes, built-in providers (`builtin.ts`: kimi/openai login-and-go definitions + user-table overlay), `auth.json` credentials (API keys + OAuth), OAuth flows (ChatGPT in `oauth.ts`, Kimi device-code in `kimi_oauth.ts`), MCP config, custom slash commands (`commands/*.md` discovery + template expansion), paths and `VERSION`. |
 | `packages/mcp`        | MCP client: connects to configured MCP servers and adapts MCP tools into niuma tools (`@modelcontextprotocol/sdk`).                                                                                                                                                                                                                                                                                              |
 | `packages/cli`        | Entrypoint (`src/main.ts`): subcommands `tui` (default), `-p` one-shot, `serve`, `auth`; argument parsing; server-worker spawn + fetch tunnel; stdin approval plumbing.                                                                                                                                                                                                                                         |
@@ -108,22 +110,21 @@ Notes:
 - Tests must be network-free. Use `MockProvider` from `@niuma/provider` for
   anything that would otherwise call an LLM API, and isolate file state with
   temp dirs plus the `NIUMA_DATA_DIR` override (see `scripts/smoke.ts` for the
-  pattern). In-memory fakes honour the port interfaces (`EventLog`,
+  pattern). In-memory fakes honour the port interfaces (`SessionJournal`,
   `ToolPipeline`, ...) — `packages/agent/tests/agent_test.ts` is the reference
   example.
 - `scripts/smoke.ts` is the end-to-end harness:
   `deno run --allow-all scripts/smoke.ts` spawns the real CLI against a temp
   workspace with the mock provider and a scripted 3-turn flow, feeds the bash
-  approval via stdin, and asserts on both the JSONL log and the SQLite
-  projection.
+  approval via stdin, asserts on the Workspace-scoped Session Journal and Model
+  Call records, and verifies that no obsolete `niuma.db` is created.
 - When changing behavior, extend the tests in the same package rather than
   adding new harnesses.
 
 ## Code style guidelines
 
 - TypeScript with `strict: true`; Deno-first (JSR `@std/*` + npm via the root
-  import map; `node:` builtins only where already established, e.g.
-  `node:sqlite`). No new third-party dependencies without discussion.
+  import map). No new third-party dependencies without discussion.
 - House style is functional: `const f = (x): T => ...`, `readonly` interfaces,
   discriminated unions with `{ type, data }` shapes, no classes except where
   Effect services make them idiomatic.
@@ -145,8 +146,11 @@ Notes:
 ## Configuration and environment
 
 - User data root is `~/.niuma` (override with `NIUMA_DATA_DIR`): it holds
-  `config.toml`, `mcp.json`, `auth.json`, `commands/`, `log/`, `sessions/`
-  (JSONL event logs), and `niuma.db`. Project-level
+  `config.toml`, `mcp.json`, `auth.json`, `commands/`, `log/`,
+  `sessions/<workspace-key>/` (Session Journals + `workspace.json`) and
+  `usage/<workspace-key>/` (content-free Usage Archives). A Workspace Key is the
+  normalized absolute path flattened with `-`, for example `/Users/a/work` →
+  `-Users-a-work`; it is never hashed. Project-level
   `<workspace>/.niuma/config.toml` merges over the user config but never holds
   data.
 - Configuration is Server-owned. The CLI/TUI do not read or merge `config.toml`;
@@ -174,6 +178,18 @@ Notes:
   different sessions. Concurrent cross-process mutation of the same session is
   deliberately undefined behavior; do not add locks, leases, or recovery
   machinery for it unless that product decision changes.
+- Session discovery and Resume are scoped to the current Workspace. Default
+  startup creates a new Session without enumerating Journals. `--resume <id>`
+  and TUI `/resume [id]` are the only recovery paths; ID-prefix resolution lists
+  filenames before opening exactly one Journal. There is no cross-Workspace
+  Resume.
+- Optional top-level `session_retention_days = <positive integer>` enables one
+  silent background, age-only Retention sweep. It first atomically writes and
+  verifies a content-free Usage Archive, then deletes the expired Session
+  Journal. The setting is disabled when absent; Usage Archives never expire.
+- Every agent, subagent, and compaction sampling operation records exactly one
+  terminal `model.call.completed` or `model.call.failed` event. Missing provider
+  token counts remain `null`, never fabricated zeroes.
 - Custom slash commands are markdown prompt templates: user-level
   `~/.niuma/commands/*.md` plus project-level `<dir>/.niuma/commands/*.md` (same
   upward discovery + closest-wins merge as `config.toml`/`mcp.json`). Optional
@@ -195,15 +211,15 @@ Notes:
 - Built-in slash commands (`packages/tui/src/commands.ts` registry) are
   dispatched TUI-locally on submit and take priority over same-named custom
   commands: `/help`, `/exit` (alias `/quit`), `/model [ref]` (server
-  `POST /sessions/:id/model`; persists to the projection, rebuilds the provider
+  `POST /sessions/:id/model`; persists as an event, rebuilds the provider
   adapter on cross-provider refs), `/effort [level]` (server
   `POST /sessions/:id/effort`; per-session thinking override),
   `/delivery [mode]` (Server config read/write; mode is `steer` or `queue`),
   `/compact` (server `POST /sessions/:id/compact` → `compactSession` in
   `@niuma/agent`; `compaction.performed` carries the summary so replay folds
   history across turns), `/clear` (new session), `/resume [id]` (list /
-  re-attach a past session and rebuild from its history), `/mcp` (list MCP
-  servers). Their output renders as `notice` rows in the transcript.
+  re-attach a current-Workspace Session and rebuild from its Journal), `/mcp`
+  (list MCP servers). Their output renders as `notice` rows in the transcript.
 - Model selection is `provider/model-id` via `--model` or the top-level `model`
   key in `config.toml`; credentials live in `auth.json` (managed by
   `niuma auth login|logout|status`).
@@ -242,14 +258,13 @@ Notes:
   every `extern fn` must `catch_unwind` and return the sentinel; the TS side
   (`ffi.ts`) raises `TuikitError` on it. The crate intentionally has no external
   dependencies except `windows-sys`.
-- `packages/server/vendor/` is vendored third-party code: excluded from
-  type-check/lint; do not hand-edit beyond syncing it.
 - The HTTP server validates session ids and binds locally by default; keep input
   validation in `handlers/` when adding endpoints.
 
 ## Current Status
 
 The project is currently under active development and has not had any official
-releases yet. With the exception of the database, do not introduce any backward
-compatibility code, technical debt, or data migration logic. If any corrupted
-user data is found in niuma, simply delete the corrupted data.
+releases yet. Do not introduce backward compatibility code, technical debt, or
+data migration logic. The former flat Session directory and `niuma.db` have no
+reader or migration path. If any corrupted user data is found in niuma, simply
+delete the corrupted data.
