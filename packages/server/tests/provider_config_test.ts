@@ -11,8 +11,8 @@ import { createServerApp } from "../src/app.ts";
 import { bootstrap, buildProvider } from "../src/bootstrap.ts";
 import { dataPaths } from "../src/paths.ts";
 
-// Exercises the server-side wiring (contract §6) that makeProviderFromConfig
-// delegates to: the three-way auth lookup (api / oauth / {env:VAR}) and the
+// Exercises the server-side wiring that makeProviderFromConfig delegates to:
+// the three-way auth lookup (api / oauth / {env:VAR}) and the
 // dispatch to makeResponsesAdapter for type="responses" providers. The auth
 // path is injected via buildProvider (the auth-path-injectable core) so the
 // tests never touch NIUMA_DATA_DIR or ~/.niuma. Each case drives the built

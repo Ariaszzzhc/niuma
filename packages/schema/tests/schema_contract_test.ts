@@ -437,7 +437,7 @@ Deno.test("parseEventLine: rejects unknown event type (closed RecordedEventType 
 });
 
 // ============================================================================
-// Thinking / reasoning support — plans §3, §8, §9.
+// Thinking / reasoning support.
 // ThinkingPart + thinking.delta live event are the schema's surface for the
 // provider-neutral reasoning abstraction (text + opaque `encrypted` credential
 // the client must never surface as text). `encrypted` is OPTIONAL so JSONL
