@@ -7,7 +7,7 @@
 #
 # Downloads niuma-windows-amd64.exe.zip from GitHub Releases, verifies it
 # against the release's SHA256SUMS, installs niuma.exe to
-# $NIUMA_INSTALL\bin (default ~\.niuma\bin), and adds that directory to the
+# $NIUMA_INSTALL\bin (default ~\.local\bin), and adds that directory to the
 # user PATH when missing. PowerShell 5.1+.
 
 $ErrorActionPreference = "Stop"
@@ -41,7 +41,7 @@ try {
   if ($actual -ne $expected) { throw "checksum mismatch for $Asset" }
 
   $Root = $env:NIUMA_INSTALL
-  if (-not $Root) { $Root = Join-Path $HOME ".niuma" }
+  if (-not $Root) { $Root = Join-Path $HOME ".local" }
   $BinDir = Join-Path $Root "bin"
   New-Item -ItemType Directory -Force $BinDir | Out-Null
   Expand-Archive (Join-Path $Tmp $Asset) -DestinationPath $BinDir -Force

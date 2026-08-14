@@ -111,7 +111,7 @@ Notes:
   GitHub Release with the archives plus SHA256SUMS. `scripts/install.sh`
   (curl|sh) / `scripts/install.ps1` (irm|iex) are the end-user installers: they
   download the matching release archive, verify it against SHA256SUMS, and
-  install into `$NIUMA_INSTALL/bin` (default `~/.niuma/bin`).
+  install into `$NIUMA_INSTALL/bin` (default `~/.local/bin`).
 
 ## Testing instructions
 

@@ -38,7 +38,7 @@ irm https://raw.githubusercontent.com/Ariaszzzhc/niuma/main/scripts/install.ps1 
 
 安装器会从 [GitHub Releases](https://github.com/Ariaszzzhc/niuma/releases)
 下载对应平台的压缩包，对照该版本的 `SHA256SUMS` 校验，然后安装到
-`~/.niuma/bin`。可以用 `NIUMA_INSTALL` 修改安装根目录，用版本参数（或
+`~/.local/bin`。可以用 `NIUMA_INSTALL` 修改安装根目录，用版本参数（或
 `NIUMA_VERSION`）锁定版本。也可以直接从 releases 页面下载压缩包。
 
 ### 从源码构建

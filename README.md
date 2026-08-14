@@ -41,7 +41,7 @@ irm https://raw.githubusercontent.com/Ariaszzzhc/niuma/main/scripts/install.ps1 
 
 The installer downloads the matching archive from
 [GitHub Releases](https://github.com/Ariaszzzhc/niuma/releases), verifies it
-against the release's `SHA256SUMS`, and installs to `~/.niuma/bin`. Set
+against the release's `SHA256SUMS`, and installs to `~/.local/bin`. Set
 `NIUMA_INSTALL` to change the install root, or pass a version argument (or
 `NIUMA_VERSION`) to pin a release. You can also download an archive from the
 releases page directly.

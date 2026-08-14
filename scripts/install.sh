@@ -8,7 +8,7 @@
 #
 # Downloads the matching prebuilt archive from GitHub Releases, verifies it
 # against the release's SHA256SUMS, and installs the binary as
-# $NIUMA_INSTALL/bin/niuma (default ~/.niuma/bin). Supported targets:
+# $NIUMA_INSTALL/bin/niuma (default ~/.local/bin). Supported targets:
 # linux-amd64, darwin-aarch64 (Windows: use scripts/install.ps1).
 # Requires the repository to be public (anonymous release downloads).
 
@@ -74,7 +74,7 @@ else
 fi
 
 # ---- Install ----
-bin_dir="${NIUMA_INSTALL:-$HOME/.niuma}/bin"
+bin_dir="${NIUMA_INSTALL:-$HOME/.local}/bin"
 mkdir -p "$bin_dir"
 tar -xzf "$tmp/$asset" -C "$bin_dir"
 chmod +x "$bin_dir/niuma"
