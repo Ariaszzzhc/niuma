@@ -8,13 +8,16 @@ import type {
   UserMessageEvent,
 } from "@niuma/schema";
 import { compactSession, runTurn } from "@niuma/agent";
+import type { SkillInfo } from "@niuma/agent";
 import {
   expandCommandTemplate,
   loadCommands,
   resolveModelRef,
+  type SkillDef,
 } from "@niuma/config";
 import type { ProviderAdapter, ThinkingConfig } from "@niuma/provider";
 import { Kernel } from "./kernel.ts";
+import { mergeSkillCommands } from "./skill_commands.ts";
 import {
   type AgentInfra,
   kernelApprovalGateway,
@@ -179,11 +182,13 @@ const thinkingFromModelConfig = (
 // A prompt whose text is `/name args...` is expanded server-side against the
 // user/project `commands/*.md` templates (@niuma/config) so every client —
 // TUI, one-shot, serve — shares one code path and the Session Journal records
-// expanded text (replay-safe). The typed input is preserved as `sourceText`
-// on the user.message event for display surfaces. An unmatched `/whatever`
-// passes through as a plain message (no error), and any discovery failure
-// degrades to the same pass-through — a broken commands dir must never sink
-// a turn.
+// expanded text (replay-safe). Bootstrap-discovered skills are merged into
+// the lookup table (mergeSkillCommands; commands/*.md wins on a name tie), so
+// a skill also answers to `/name args`. The typed input is preserved as
+// `sourceText` on the user.message event for display surfaces. An unmatched
+// `/whatever` passes through as a plain message (no error), and any discovery
+// failure degrades to the same pass-through — a broken commands dir must
+// never sink a turn.
 
 const SLASH_COMMAND_REGEX = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/;
 
@@ -214,7 +219,8 @@ const expandSlashCommand = (
       // must never sink a turn.
     }).catch(() => new Map() as Awaited<ReturnType<typeof loadCommands>>)
   ).pipe(
-    Effect.map((commands) => {
+    Effect.map((loaded) => {
+      const commands = mergeSkillCommands(loaded, infra.skills ?? new Map());
       const def = commands.get(m[1]);
       if (!def) return { parts } satisfies ExpandedPrompt;
       const text = expandCommandTemplate(def.template, m[2] ?? "");
@@ -262,7 +268,23 @@ export const getSessionEnv = (
   sm: SessionManager,
 ): SessionManagerEnv => sessionEnv.get(sm) ?? { mcpServers: [] };
 
-export interface SessionManagerInfra extends AgentInfra {}
+export interface SessionManagerInfra extends AgentInfra {
+  /** Bootstrap-discovered skills, shared by every turn: the system-prompt
+   * <available_skills> listing is derived from it at each construction
+   * point, and expandSlashCommand merges it into the command table so a
+   * skill also answers to `/name args`. */
+  readonly skills?: ReadonlyMap<string, SkillDef>;
+  /** Cross-tool agents skills dir (~/.agents/skills) override — consumed only
+   * by bootstrap's skill discovery; tests inject a temp dir so the real home
+   * directory is never scanned. */
+  readonly agentsSkillsDir?: string;
+}
+
+/** Derive the system-prompt listing from the skills map. */
+const skillInfosOf = (
+  skills: ReadonlyMap<string, SkillDef>,
+): ReadonlyArray<SkillInfo> =>
+  [...skills.values()].map(({ name, description }) => ({ name, description }));
 
 interface PendingInput {
   /** Expanded content recorded and sent to the provider on consumption. */
@@ -743,6 +765,9 @@ export const makeSessionManager = (
           actor: "main",
           turnId,
           workspace: state.info.workspace,
+          ...(infra.skills !== undefined
+            ? { skills: skillInfosOf(infra.skills) }
+            : {}),
           emitLive: kernelEmitLive(kernel),
           signal: controller.signal,
           input: turnInputFor(sessionId, token),

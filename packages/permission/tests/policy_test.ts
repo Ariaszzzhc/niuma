@@ -24,7 +24,7 @@ Deno.test("policy: empty rules + non-readonly tool → Ask (default)", () => {
 });
 
 Deno.test("policy: read-only tool allowed by default", () => {
-  for (const tool of ["read", "grep", "glob", "update_plan"]) {
+  for (const tool of ["read", "grep", "glob", "update_plan", "skill"]) {
     const v = runPolicy([], tool, "/tmp/x", CWD);
     assertEquals(v.kind, "allow", `${tool} should be auto-allowed`);
   }

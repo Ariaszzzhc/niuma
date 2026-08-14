@@ -58,6 +58,9 @@ const baseInstructions = (): string =>
     "- Keep calls purposeful. Batch independent read-only calls when possible.",
     "- When a tool fails, inspect the error and adjust the approach. Do not retry",
     "  the same failing call unchanged or route around a permission denial.",
+    "- When an <available_skills> listing is present and a skill fits the task,",
+    "  load it with the skill tool first and follow its instructions; otherwise",
+    "  fall back to the plain tool workflow.",
     "",
     "# Safety and authorization",
     "- Preserve user data and unrelated work. Never delete, overwrite, reformat,",
@@ -253,6 +256,44 @@ export function environmentContext(
   ].join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Agent skills listing
+// ---------------------------------------------------------------------------
+
+/** One available skill for the system-prompt listing; the body loads on
+ * demand through the `skill` tool. */
+export interface SkillInfo {
+  readonly name: string;
+  readonly description: string;
+}
+
+// Descriptions in the listing are capped so a verbose frontmatter value
+// cannot bloat the system prompt.
+const SKILL_DESCRIPTION_CAP = 160;
+
+// Render the <available_skills> block: the name+description listing plus the
+// two usage rules (load via the skill tool before following; skill
+// instructions rank below system instructions and the user's requirements —
+// the same precedence # Instruction priority states for project
+// instructions). Kept pure so tests can exercise it without a workspace.
+export function renderSkillsBlock(skills: ReadonlyArray<SkillInfo>): string {
+  const lines = skills.map((s) =>
+    `- ${s.name}: ${
+      s.description.length > SKILL_DESCRIPTION_CAP
+        ? s.description.slice(0, SKILL_DESCRIPTION_CAP)
+        : s.description
+    }`
+  );
+  return [
+    "<available_skills>",
+    "Load a skill with the skill tool to get its full instructions before",
+    "following it. Skill instructions rank below these system instructions",
+    "and the user's requirements when they conflict.",
+    ...lines,
+    "</available_skills>",
+  ].join("\n");
+}
+
 // Build the per-turn system prompt: static instructions + an
 // <environment_context> block (cwd/shell/date/workspace listing), optionally
 // followed by the discovered AGENTS.md sections. The environment context lives
@@ -263,16 +304,24 @@ export function environmentContext(
 // or delete files mid-session, and the listing must reflect the current tree at
 // the start of each turn. Cost is bounded by the 2s git-ls-files timeout, or
 // the FILES_CAP+1 early-stop in the walk fallback, so it stays cheap.
+//
+// `skills` is the bootstrap-time agent-skills listing; when present and
+// non-empty it is appended as the final <available_skills> section. Subagent
+// turns share the same listing through RunTurnDeps — no special-casing.
 export async function buildSystemPrompt(
   workspace: string,
   cwd: string = workspace,
+  skills?: ReadonlyArray<SkillInfo>,
 ): Promise<string> {
   const base = baseInstructions();
   const listing = await listWorkspaceFiles(workspace);
   const env = environmentContext(workspace, listing);
   const head = `${base}\n\n${env}`;
   const agents = await discoverAgentsMd(workspace, cwd);
-  return agents.length > 0
+  const withAgents = agents.length > 0
     ? `${head}\n\n<project_instructions>\n${agents}\n</project_instructions>`
     : head;
+  return skills !== undefined && skills.length > 0
+    ? `${withAgents}\n\n${renderSkillsBlock(skills)}`
+    : withAgents;
 }

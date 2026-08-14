@@ -35,6 +35,8 @@ export const READ_ONLY_ALLOWED: ReadonlySet<string> = new Set([
   "glob",
   "update_plan",
   "question",
+  // `skill` is a pure lookup over the bootstrap-time skills map (zero IO).
+  "skill",
 ]);
 
 // ---- Tool execution context ----

@@ -27,6 +27,9 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   // auto-allowing it here avoids a redundant permission prompt before the
   // real one. Kept in sync with @niuma/tools' READ_ONLY_ALLOWED.
   "question",
+  // `skill` loads bootstrap-discovered instruction text from an in-memory
+  // map — zero IO — so it never warrants a permission prompt.
+  "skill",
 ]);
 
 /**

@@ -5,7 +5,8 @@
   "imports": {
     "@niuma/schema": "../schema/mod.ts",
     "@niuma/permission": "../permission/mod.ts",
-    "@niuma/provider": "../provider/mod.ts"
+    "@niuma/provider": "../provider/mod.ts",
+    "@niuma/config": "../config/mod.ts"
   },
   "lint": {
     "rules": {

@@ -4,6 +4,7 @@ import {
   buildSystemPrompt,
   environmentContext,
   listWorkspaceFiles,
+  renderSkillsBlock,
 } from "../src/prompt.ts";
 
 const scrub = async (tmp: string) => {
@@ -222,6 +223,71 @@ Deno.test("buildSystemPrompt: still appends AGENTS.md (regression)", async () =>
     );
     // environment block still present alongside AGENTS.md
     assertEquals(prompt.includes("<environment_context>"), true);
+  } finally {
+    await scrub(tmp);
+  }
+});
+
+Deno.test("buildSystemPrompt: skills listing renders after project_instructions", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(join(tmp, "AGENTS.md"), "# Rules\n\nbe nice");
+    const prompt = await buildSystemPrompt(tmp, undefined, [
+      { name: "review", description: "Review a file" },
+      { name: "commit", description: "Craft a commit" },
+    ]);
+    // Block form only: the base instructions also mention <available_skills>
+    // inline, so assert on the line-anchored block markers.
+    const open = "\n<available_skills>\n";
+    assertEquals(prompt.includes(open), true);
+    assertEquals(prompt.includes("- review: Review a file"), true);
+    assertEquals(prompt.includes("- commit: Craft a commit"), true);
+    assertEquals(prompt.includes("</available_skills>"), true);
+    // The listing is the final section, after the project instructions.
+    assertEquals(
+      prompt.indexOf("</project_instructions>") < prompt.indexOf(open),
+      true,
+    );
+  } finally {
+    await scrub(tmp);
+  }
+});
+
+Deno.test("buildSystemPrompt: no skills or empty skills omits the block", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    const without = await buildSystemPrompt(tmp);
+    assertEquals(without.includes("\n<available_skills>\n"), false);
+    const empty = await buildSystemPrompt(tmp, undefined, []);
+    assertEquals(empty.includes("\n<available_skills>\n"), false);
+  } finally {
+    await scrub(tmp);
+  }
+});
+
+Deno.test("renderSkillsBlock: descriptions are capped at 160 chars", () => {
+  const long = "d".repeat(200);
+  const block = renderSkillsBlock([{ name: "big", description: long }]);
+  assertEquals(block.includes(`- big: ${"d".repeat(160)}`), true);
+  assertEquals(block.includes("d".repeat(161)), false);
+});
+
+Deno.test("renderSkillsBlock: usage rules rank skills below system/user", () => {
+  const block = renderSkillsBlock([{ name: "s", description: "d" }]);
+  assertEquals(block.includes("skill tool"), true);
+  assertEquals(block.includes("rank below these system instructions"), true);
+});
+
+Deno.test("buildSystemPrompt: base instructions carry the skills usage rule", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    const prompt = await buildSystemPrompt(tmp);
+    assertEquals(
+      prompt.includes(
+        "load it with the skill tool first and follow its instructions",
+      ),
+      true,
+    );
   } finally {
     await scrub(tmp);
   }

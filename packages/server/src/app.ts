@@ -70,6 +70,7 @@ export const createServerApp = async (
     ...(boot.infra.globalConfigDir !== undefined
       ? { globalConfigDir: boot.infra.globalConfigDir }
       : {}),
+    ...(boot.infra.skills !== undefined ? { skills: boot.infra.skills } : {}),
     configuration: boot.configuration,
   });
   const retentionLog = log("niuma.server.retention");

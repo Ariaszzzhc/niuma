@@ -200,6 +200,28 @@ Notes:
   `sourceText` on the `user.message` event, and an unmatched `/whatever` passes
   through as plain text. The TUI palette (ctrl+p) lists them and seeds the
   editor with `/name`.
+- Agent skills are `SKILL.md` instruction packs discovered once at bootstrap
+  (`packages/config/src/skills.ts`), then memory-resident: user-level
+  `~/.agents/skills` and `~/.niuma/skills` (the latter wins), plus project-level
+  `<dir>/.niuma/skills` on the same upward discovery + closest-wins path as
+  `config.toml`/`commands` (all project levels beat the user levels).
+  `~/.claude/skills` is deliberately NOT read. Each level is scanned recursively
+  for `SKILL.md` down to depth 4; frontmatter `name` + `description` are both
+  required (a file missing either is skipped silently), the name comes from
+  frontmatter (not the directory name), and bodies are capped at 32 KiB with a
+  `[truncated: ...]` marker. The system prompt carries only an
+  `<available_skills>` name+description listing as its final section (omitted
+  when empty); the model loads a body on demand through the `skill` tool —
+  registered at bootstrap from the same map (factory closure, not in
+  `builtins()`), auto-allowed as a read-only tool, and exposed to read-only
+  subagents, which also inherit the listing. The tool's optional `args` reuse
+  `expandCommandTemplate` (`$ARGUMENTS` / `$1..$N`, no-placeholder append) with
+  slash-command semantics. A skill also answers to `/name args` typed by a
+  human: `mergeSkillCommands` (`packages/server/src/skill_commands.ts`) merges
+  the skills map into the slash-command table for both expansion
+  (`expandSlashCommand`) and the create-session commands listing (so the `/`
+  completion menu and ctrl+p palette show skills, TUI unchanged); precedence per
+  name is built-in commands > `commands/*.md` > skill.
 - Slash-command completion menu (`packages/tui/src/components/completion.ts`):
   typing a `/partial` token auto-pops a candidate list above the editor
   (built-ins + aliases + custom commands, prefix-filtered live via

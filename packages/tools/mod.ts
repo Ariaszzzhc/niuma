@@ -62,3 +62,4 @@ export {
   SpawnSubagentInput,
   spawnSubagentTool,
 } from "./src/tools/spawn_subagent.ts";
+export { makeSkillTool, SkillInput } from "./src/tools/skill.ts";

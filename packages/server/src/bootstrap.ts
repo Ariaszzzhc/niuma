@@ -1,4 +1,5 @@
 import { Effect, Exit, Layer, Stream } from "effect";
+import { join } from "@std/path";
 import type { RecordedEvent } from "@niuma/schema";
 import { Kernel, makeKernel } from "./kernel.ts";
 import { type EventBus, makeEventBus } from "./event_bus.ts";
@@ -28,6 +29,7 @@ import {
   KIMI_PROVIDER_ID,
   loadMergedConfig,
   loadMergedMcpConfig,
+  loadSkills,
   type McpConfig,
   readAuthFile,
   refreshKimiTokens,
@@ -37,11 +39,13 @@ import {
 } from "@niuma/config";
 import { connectMcpServers, type McpServerHandle } from "@niuma/mcp";
 import {
+  makeSkillTool,
   MemoryPermissionEngine,
   type SubagentResult,
   ToolRegistry,
 } from "@niuma/tools";
 import { makeToolPipeline, runTurn } from "@niuma/agent";
+import type { SkillInfo } from "@niuma/agent";
 import { buildSubagentTrace, lastCompletedUsage } from "./subagent_trace.ts";
 import {
   kernelApprovalGateway,
@@ -243,6 +247,26 @@ export const bootstrap = async (
   const store = deps.store ?? makeSessionStore({ layout: paths });
   const bus = deps.bus ?? await Effect.runPromise(makeEventBus());
 
+  // ---- Agent skills: discovered once here, memory-resident. ----
+  // The same map backs the `skill` tool (factory closure) and the
+  // system-prompt listing (skillInfos); subagents share both via the one
+  // registry and the runChild closure below. ~/.claude/skills is never read.
+  const globalConfigDir = deps.infra?.globalConfigDir ?? niumaPaths().config;
+  const agentsSkillsDir = deps.infra?.agentsSkillsDir ??
+    join(
+      envGet("HOME") ?? envGet("USERPROFILE") ?? Deno.cwd(),
+      ".agents",
+      "skills",
+    );
+  const skills = await loadSkills({
+    globalConfigDir,
+    agentsSkillsDir,
+    workspace,
+  });
+  const skillInfos: SkillInfo[] = [...skills.values()].map((
+    { name, description },
+  ) => ({ name, description }));
+
   // ---- Configuration: config.toml + auth.json. ----
   // The provider package takes an explicit config; where it comes from is
   // resolved here, once, at boot. Tests/smoke inject `deps.config` and a
@@ -254,6 +278,7 @@ export const bootstrap = async (
   // a project can pick its own default model or tune per-model limits without
   // restating provider credentials.
   const registry = new ToolRegistry();
+  registry.register("skill", makeSkillTool(skills));
   const config = deps.config ??
     await loadMergedConfig(niumaPaths().configFile, { projectDir: workspace });
   const configuration = makeConfigurationRuntime({
@@ -366,6 +391,7 @@ export const bootstrap = async (
           billingMode: defaultBillingMode,
           actor: "subagent",
           workspace,
+          skills: skillInfos,
           mode,
           ...(defaultContextWindow !== undefined
             ? { contextWindow: defaultContextWindow }
@@ -409,7 +435,8 @@ export const bootstrap = async (
     defaultBillingMode,
     defaultWorkspace: workspace,
     inputDelivery: () => configuration.clientConfig().inputDelivery,
-    globalConfigDir: deps.infra?.globalConfigDir ?? niumaPaths().config,
+    globalConfigDir,
+    skills,
     // Runtime model switching (SessionManager.setModel): the merged config
     // resolves provider/model-id refs, the factory rebuilds the adapter on a
     // cross-provider switch. Tests may inject both through deps.infra.

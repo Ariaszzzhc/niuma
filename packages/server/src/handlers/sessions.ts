@@ -12,9 +12,10 @@ import {
   SetModelReq,
   SetTitleReq,
 } from "@niuma/schema";
-import { loadCommands } from "@niuma/config";
+import { loadCommands, type SkillDef } from "@niuma/config";
 import { Effect, Exit, type ManagedRuntime, Result, Stream } from "effect";
 import { Kernel } from "../kernel.ts";
+import { mergeSkillCommands } from "../skill_commands.ts";
 import {
   getSessionEnv,
   type RenameResult,
@@ -34,6 +35,9 @@ export interface HandlersOptions {
   /** Global niuma config dir; level-1 root for command discovery. When
    * absent (injected test infra) only project-level commands are listed. */
   readonly globalConfigDir?: string;
+  /** Bootstrap-discovered skills, merged into the command listing so a skill
+   * also appears as a `/name` candidate (commands/*.md wins on a name tie). */
+  readonly skills?: ReadonlyMap<string, SkillDef>;
   /** Server-owned config snapshot + explicit write path. */
   readonly configuration: ConfigurationRuntime;
 }
@@ -141,20 +145,21 @@ const requireSession = async (
   return info;
 };
 
-// List the custom slash commands a workspace sees (user + project levels).
-// Best-effort: a broken commands dir yields an empty list, never a failed
-// session create.
+// List the custom slash commands a workspace sees (user + project levels),
+// with skills merged in as `/name` candidates. Best-effort: a broken commands
+// dir yields an empty list, never a failed session create.
 const listCommands = async (
   opts: HandlersOptions,
   workspace: string,
 ): Promise<ReadonlyArray<CommandInfo>> => {
   try {
-    const table = await loadCommands({
+    const loaded = await loadCommands({
       ...(opts.globalConfigDir !== undefined
         ? { globalConfigDir: opts.globalConfigDir }
         : {}),
       workspace,
     });
+    const table = mergeSkillCommands(loaded, opts.skills ?? new Map());
     return Array.from(table.values(), (c) => ({
       name: c.name,
       ...(c.description !== undefined ? { description: c.description } : {}),

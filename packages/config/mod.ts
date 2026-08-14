@@ -65,6 +65,17 @@ export type {
 } from "./src/commands.ts";
 
 export {
+  loadSkills,
+  parseSkillFile,
+  SKILL_BODY_CAP_BYTES,
+  SKILL_BODY_TRUNCATED_MARKER,
+  SKILL_FILE_BASENAME,
+  SKILLS_DIR_BASENAME,
+  SKILLS_MAX_DEPTH,
+} from "./src/skills.ts";
+export type { LoadSkillsOptions, SkillDef } from "./src/skills.ts";
+
+export {
   getAuth,
   readAuthFile,
   removeAuth,

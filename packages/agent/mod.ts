@@ -7,6 +7,7 @@ export type {
 } from "./src/compact.ts";
 
 export { buildSystemPrompt, environmentContext } from "./src/prompt.ts";
+export type { SkillInfo } from "./src/prompt.ts";
 export {
   ABORTED_TOOL_OUTPUT,
   estimateRequestTokens,

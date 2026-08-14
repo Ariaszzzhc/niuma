@@ -13,6 +13,7 @@ import type {
   ThinkingConfig,
   ToolDef as ProviderToolDef,
 } from "@niuma/provider";
+import type { SkillInfo } from "./prompt.ts";
 
 // ---------------------------------------------------------------------------
 // Ports. The agent package owns these contracts; @niuma/tools provides the
@@ -132,6 +133,10 @@ export interface RunTurnDeps {
   // Thinking/reasoning request config; `keep` also gates reasoningContent
   // projection in the context layer (see context.ts projectEvent).
   readonly thinking?: ThinkingConfig;
+  /** Available agent skills (name+description) for the system-prompt
+   * <available_skills> listing; bodies load on demand via the `skill` tool.
+   * Server-owned (bootstrap discovery), shared by main and subagent turns. */
+  readonly skills?: ReadonlyArray<SkillInfo>;
   readonly signal?: AbortSignal;
   readonly input?: TurnInput;
   // Live-only sink (SSE). Never persisted; server routes to the frontend.

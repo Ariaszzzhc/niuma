@@ -376,7 +376,7 @@ export function runTurn(
 
   return Effect.gen(function* () {
     const system = yield* Effect.promise(() =>
-      buildSystemPrompt(deps.workspace)
+      buildSystemPrompt(deps.workspace, undefined, deps.skills)
     );
     const tools = deps.tools.defs(mode);
 
