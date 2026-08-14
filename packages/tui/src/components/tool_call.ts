@@ -42,6 +42,13 @@ export interface ToolCallView {
   readonly activity?: string | null;
   /** Derived assistant-sampling step for compact parallel-call grouping. */
   readonly batchId?: number;
+  /** Subagent lifecycle badge, present on spawn_subagent cards. */
+  readonly subagent?: {
+    readonly status: "running" | "done" | "failed";
+    readonly durationMs: number;
+    readonly tokensIn: number | null;
+    readonly tokensOut: number | null;
+  };
 }
 
 type DetailTone =
@@ -342,9 +349,24 @@ const presentationFor = (call: ToolCallView): Presentation => {
     case "spawn_subagent": {
       const mode = stringValue(input, "mode") ?? "default";
       const prompt = stringValue(input, "prompt") ?? call.inputSummary;
+      const sa = call.subagent;
+      const badge = sa === undefined
+        ? ""
+        : sa.status === "running"
+        ? " ◌ running"
+        : sa.status === "failed"
+        ? " ◍ failed"
+        : " ● done";
+      const usage =
+        sa !== undefined && sa.tokensIn !== null && sa.tokensOut !== null
+          ? ` · ${sa.tokensIn}/${sa.tokensOut} tok`
+          : "";
+      const duration = sa !== undefined && sa.durationMs > 0
+        ? ` · ${formatDuration(sa.durationMs)}`
+        : "";
       return {
         title: "Subagent",
-        summary: `${mode} · ${compact(prompt, 140)}`,
+        summary: `${mode} · ${compact(prompt, 140)}${badge}${usage}${duration}`,
         details: resultDetails(call),
         previewRows: 2,
       };

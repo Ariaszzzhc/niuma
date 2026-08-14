@@ -1,4 +1,5 @@
-import { Effect, Layer } from "effect";
+import { Effect, Exit, Layer, Stream } from "effect";
+import type { RecordedEvent } from "@niuma/schema";
 import { Kernel, makeKernel } from "./kernel.ts";
 import { type EventBus, makeEventBus } from "./event_bus.ts";
 import {
@@ -41,6 +42,7 @@ import {
   ToolRegistry,
 } from "@niuma/tools";
 import { makeToolPipeline, runTurn } from "@niuma/agent";
+import { buildSubagentTrace, lastCompletedUsage } from "./subagent_trace.ts";
 import {
   kernelApprovalGateway,
   kernelEmitLive,
@@ -113,8 +115,12 @@ const newSessionId = (): string => {
 
 export interface SubagentRequest {
   readonly prompt: string;
+  /** Short display name recorded on subagent.spawned (TUI strip label). */
+  readonly name: string;
   readonly mode?: "default" | "read-only";
   readonly parentSessionId: string;
+  /** The tool call that triggered the spawn; recorded on the lineage events. */
+  readonly callId: string;
 }
 
 export interface SubagentSpawnerDeps {
@@ -126,7 +132,7 @@ export interface SubagentSpawnerDeps {
     sessionId: string,
     prompt: string,
     mode: "full" | "read-only",
-  ) => Promise<string>;
+  ) => Promise<{ text: string; ok: boolean; reason?: string }>;
 }
 
 // Own the child-session lifecycle in one server seam. The tool adapter only
@@ -142,11 +148,13 @@ export const makeSubagentSpawner = (
       return {
         sessionId: req.parentSessionId,
         text: "Subagent depth limit reached; cannot spawn further subagents.",
+        ok: false,
       };
     }
 
     const childId = newSessionId();
     depthBySession.set(childId, parentDepth + 1);
+    const startedAt = Date.now();
     try {
       await Effect.runPromise(deps.kernel.append({
         type: "session.created",
@@ -155,6 +163,7 @@ export const makeSubagentSpawner = (
           workspace: deps.workspace,
           model: deps.model,
           mcpServers: [...deps.mcpServers],
+          parentSessionId: req.parentSessionId,
         },
       }));
       await Effect.runPromise(deps.kernel.append({
@@ -164,6 +173,8 @@ export const makeSubagentSpawner = (
           parentSessionId: req.parentSessionId,
           childSessionId: childId,
           prompt: req.prompt,
+          name: req.name,
+          callId: req.callId,
         },
       }));
       await Effect.runPromise(deps.kernel.append({
@@ -172,12 +183,49 @@ export const makeSubagentSpawner = (
         data: { parts: [{ type: "text", text: req.prompt }] },
       }));
 
-      const text = await deps.runChild(
+      const run = await deps.runChild(
         childId,
         req.prompt,
         req.mode === "read-only" ? "read-only" : "full",
       );
-      return { sessionId: childId, text };
+      const childEvents = await Effect.runPromise(
+        Effect.gen(function* () {
+          const out: RecordedEvent[] = [];
+          yield* deps.kernel.replay(childId).pipe(
+            Stream.runForEach((event) => {
+              out.push(event);
+              return Effect.void;
+            }),
+          );
+          return out;
+        }),
+      );
+      const usage = lastCompletedUsage(childEvents);
+      const durationMs = Date.now() - startedAt;
+      await Effect.runPromise(deps.kernel.append({
+        type: "subagent.completed",
+        sessionId: req.parentSessionId,
+        data: {
+          parentSessionId: req.parentSessionId,
+          childSessionId: childId,
+          callId: req.callId,
+          ok: run.ok,
+          usage,
+          durationMs,
+        },
+      }));
+      if (run.ok) {
+        return { sessionId: childId, text: run.text, ok: true };
+      }
+      const trace = buildSubagentTrace(childEvents);
+      return {
+        sessionId: childId,
+        ok: false,
+        text: `subagent failed. reason: ${run.reason ?? "unknown"}\n` +
+          `execution trace:\n${
+            trace.length > 0 ? trace : "(no events recorded)"
+          }`,
+      };
     } finally {
       depthBySession.delete(childId);
     }
@@ -304,7 +352,7 @@ export const bootstrap = async (
       toolCount: server.tools.length,
     })),
     runChild: async (childId, _prompt, mode) => {
-      const result = await Effect.runPromise(
+      const outcome = await Effect.runPromise(
         runTurn(childId, {
           journal: kernelSessionJournal(kernel),
           provider,
@@ -329,22 +377,13 @@ export const bootstrap = async (
             ? { thinking: defaultThinking }
             : {}),
         }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.sync(() => ({
-              stopReason: "stop" as const,
-              usage: {
-                inputTokens: 0,
-                outputTokens: 0,
-                reasoningTokens: 0,
-                cachedInputTokens: 0,
-                cacheWriteTokens: 0,
-              },
-              text: `error: ${String(cause)}`,
-            }))
-          ),
+          Effect.exit,
         ),
       );
-      return result.text;
+      if (Exit.isFailure(outcome)) {
+        return { text: "", ok: false, reason: String(outcome.cause) };
+      }
+      return { text: outcome.value.text, ok: true };
     },
   });
 

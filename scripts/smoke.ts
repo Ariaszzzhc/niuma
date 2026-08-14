@@ -5,10 +5,15 @@
 //     agent loop → tool pipeline → bash/read tool path is wired and runs.
 //   - The MockProvider (injected via the CLI's --mock-provider flag, which
 //     forwards to the worker over the tunnel init message) drives a scripted
-//     3-turn flow without touching the network: read → bash → final text.
-//   - The MANUAL permission UX works end-to-end: bash triggers an
-//     approval.requested event, the CLI reads "y\n" from stdin, the
-//     approval is resolved, and the bash tool executes.
+//     flow without touching the network. The "run the smoke with subagent"
+//     prompt selects the extended script: read → bash → spawn_subagent →
+//     final text, so the real pipeline runs a child session end-to-end.
+//   - The MANUAL permission UX works end-to-end: bash and spawn_subagent
+//     trigger approval.requested events, the CLI reads "y" lines from stdin,
+//     the approvals are resolved, and the tools execute.
+//   - Subagent observability: the parent journal records subagent.spawned
+//     (with callId) and subagent.completed (ok/usage/durationMs), and the
+//     child's own journal is complete with parentSessionId lineage.
 //   - The Workspace-scoped Session Journal is the only Session truth and
 //     contains durable Model Call usage facts.
 //
@@ -52,7 +57,7 @@ const main = async (): Promise<void> => {
     "task",
     "cli",
     "-p",
-    "run the smoke",
+    "run the smoke with subagent",
     "--workspace",
     workspace,
     "--mock-provider",
@@ -80,12 +85,13 @@ const main = async (): Promise<void> => {
   });
   const child = cmd.spawn();
 
-  // ---- 3. Feed "y\n" to stdin for the bash approval. ----
+  // ---- 3. Feed "y\ny\n" to stdin for the bash + spawn_subagent approvals. ----
   // The CLI's promptApproval reads byte-by-byte and returns once it sees the
-  // newline. Only one approval arrives (turn 2's bash; turn 1's read is in
-  // READ_ONLY_TOOLS and auto-allowed), so a single "y\n" is sufficient.
+  // newline. Exactly two approvals arrive (turn 2's bash, then turn 3's
+  // spawn_subagent; turn 1's read is in READ_ONLY_TOOLS and auto-allowed, and
+  // the spawned child calls no tools), so two "y" lines are sufficient.
   const writer = child.stdin.getWriter();
-  await writer.write(ENCODER.encode("y\n"));
+  await writer.write(ENCODER.encode("y\ny\n"));
   // Closing stdin signals EOF — the CLI only reads stdin inside promptApproval,
   // so this is safe and prevents the reader from blocking on a second prompt.
   await writer.close();
@@ -111,7 +117,7 @@ const main = async (): Promise<void> => {
     fail("stdout", `expected stdout to contain "smoke done"; got: ${stdout}`);
   }
 
-  // ---- 6. Inspect the current Workspace's Session Journal. ----
+  // ---- 6. Inspect the current Workspace's Session Journals. ----
   const workspaceKey = workspaceKeyFromAbsolutePath(workspace);
   const sessionsDir = join(dataDir, "sessions", workspaceKey);
   const jsonlFiles: string[] = [];
@@ -124,32 +130,53 @@ const main = async (): Promise<void> => {
   } catch (e) {
     fail("jsonl", `failed to list ${sessionsDir}: ${(e as Error).message}`);
   }
-  if (jsonlFiles.length === 0) {
-    fail("jsonl", `no .jsonl files in ${sessionsDir}`);
+  // The run writes two journals: the top-level session and the spawned child.
+  if (jsonlFiles.length < 2) {
+    fail(
+      "jsonl",
+      `expected >=2 .jsonl files (parent + child) in ${sessionsDir}, got ${jsonlFiles.length}`,
+    );
   }
-  // Pick the newest by mtime — usually there is exactly one for a fresh data dir.
-  let newest = jsonlFiles[0]!;
-  for (const p of jsonlFiles) {
-    if ((await Deno.stat(p)).mtime! > (await Deno.stat(newest)).mtime!) {
-      newest = p;
+  // Parse every journal and pick the parent by its first line: a top-level
+  // session.created carries no parentSessionId, the child's does. (mtime is
+  // too coarse to order journals written within the same millisecond.)
+  interface ParsedJournal {
+    readonly path: string;
+    readonly events: Array<{
+      type: string;
+      sessionId?: string;
+      data?: unknown;
+    }>;
+  }
+  const journals: ParsedJournal[] = [];
+  for (const path of jsonlFiles) {
+    const text = await Deno.readTextFile(path);
+    const events: ParsedJournal["events"][number][] = [];
+    for (const line of text.split("\n").filter((l) => l.length > 0)) {
+      try {
+        events.push(JSON.parse(line));
+      } catch (e) {
+        fail(
+          "jsonl",
+          `non-JSON line in ${path}: ${line} (${(e as Error).message})`,
+        );
+      }
     }
+    journals.push({ path, events });
   }
-  console.error(`[smoke] newest Session Journal: ${newest}`);
+  const createdData = (j: ParsedJournal): { parentSessionId?: string } =>
+    (j.events[0]?.type === "session.created" ? j.events[0].data ?? {} : {}) as {
+      parentSessionId?: string;
+    };
+  const parent = journals.find((j) =>
+    createdData(j).parentSessionId === undefined
+  );
+  if (!parent) {
+    fail("jsonl", "no top-level Session Journal found");
+  }
+  console.error(`[smoke] parent Session Journal: ${parent.path}`);
 
-  const text = await Deno.readTextFile(newest);
-  const lines = text.split("\n").filter((l) => l.length > 0);
-  const events: Array<{ type: string; sessionId?: string; data?: unknown }> =
-    [];
-  for (const line of lines) {
-    try {
-      events.push(JSON.parse(line));
-    } catch (e) {
-      fail(
-        "jsonl",
-        `non-JSON line in ${newest}: ${line} (${(e as Error).message})`,
-      );
-    }
-  }
+  const events = parent.events;
   const types = new Set(events.map((e) => e.type));
   const requiredTypes = [
     "session.created",
@@ -226,6 +253,84 @@ const main = async (): Promise<void> => {
   }
   console.error(`[smoke] read result: ${truncate(readContent, 80)}`);
   console.error(`[smoke] bash result: ${truncate(bashContent, 80)}`);
+
+  // ---- 6c. Subagent observability: lineage + completion on the parent
+  // journal, a complete child journal, and the child's final text as the
+  // spawn_subagent tool result. ----
+  const spawned = events.find((e) => e.type === "subagent.spawned");
+  if (!spawned) fail("jsonl", "missing subagent.spawned");
+  const spawnedData = spawned!.data as {
+    childSessionId?: string;
+    callId?: string;
+    name?: string;
+  };
+  if (spawnedData.callId !== "call_mock_spawn") {
+    fail(
+      "jsonl",
+      `subagent.spawned callId mismatch: ${spawnedData.callId}`,
+    );
+  }
+  if (spawnedData.name !== "smoke-child") {
+    fail(
+      "jsonl",
+      `subagent.spawned name mismatch: ${spawnedData.name}`,
+    );
+  }
+  const completed = events.find((e) => e.type === "subagent.completed");
+  if (!completed) fail("jsonl", "missing subagent.completed");
+  const completedData = completed!.data as {
+    ok?: boolean;
+    childSessionId?: string;
+    usage?: { inputTokens: number; outputTokens: number } | null;
+    durationMs?: number;
+  };
+  if (
+    completedData.ok !== true ||
+    completedData.childSessionId !== spawnedData.childSessionId
+  ) {
+    fail(
+      "jsonl",
+      `subagent.completed mismatch: ${JSON.stringify(completedData)}`,
+    );
+  }
+  const childJournal = journals.find((j) =>
+    j.events[0]?.sessionId === spawnedData.childSessionId
+  );
+  if (!childJournal) {
+    fail(
+      "jsonl",
+      `child Session Journal ${spawnedData.childSessionId} not found`,
+    );
+  }
+  if (childJournal.events[0]?.type !== "session.created") {
+    fail("jsonl", "child journal missing session.created");
+  }
+  if (createdData(childJournal).parentSessionId !== sessionId) {
+    fail(
+      "jsonl",
+      `child session.created parentSessionId: ${
+        JSON.stringify(createdData(childJournal))
+      }`,
+    );
+  }
+  const spawnResult = toolResults.find((r) =>
+    r.data.callId === "call_mock_spawn"
+  );
+  if (!spawnResult) fail("jsonl", "missing tool.result for call_mock_spawn");
+  const spawnContent = stringifyContent(spawnResult!.data.content);
+  if (spawnResult!.data.isError || !spawnContent.includes("smoke child done")) {
+    fail(
+      "jsonl",
+      `spawn_subagent result unexpected (isError=${
+        spawnResult!.data.isError
+      }): ${spawnContent}`,
+    );
+  }
+  console.error(
+    `[smoke] subagent: child ${spawnedData.childSessionId} ok, usage ${
+      JSON.stringify(completedData.usage)
+    }`,
+  );
 
   // ---- 7. Assert the removed SQLite sidecar is not recreated. ----
   const dbPath = join(dataDir, "niuma.db");

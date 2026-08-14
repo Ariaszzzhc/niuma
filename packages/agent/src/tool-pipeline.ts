@@ -30,8 +30,10 @@ export interface MakeToolPipelineOptions {
   // spawn_subagent tool can dispatch to the server's child-session runner.
   readonly spawnSubagent?: (req: {
     readonly prompt: string;
+    readonly name: string;
     readonly mode?: "default" | "read-only";
     readonly parentSessionId: string;
+    readonly callId: string;
   }) => Promise<SubagentResult>;
   // Max parallel tool calls; forwarded to the scheduler (default 8).
   readonly concurrency?: number;

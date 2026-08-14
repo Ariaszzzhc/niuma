@@ -66,8 +66,14 @@ import {
   reduceEvent,
   reduceEventSequence,
   type SseEvent,
+  type TuiModelState,
   type TuiToolCall,
 } from "./reduce_event.ts";
+import {
+  type AgentStripEntry,
+  moveAgentSelection,
+  renderAgentStrip,
+} from "./components/agent_strip.ts";
 import {
   type ApprovalDecision,
   parseSseStream,
@@ -144,6 +150,17 @@ const themeColors = (theme: Theme): ThemeColors => ({
 // ---------------------------------------------------------------------------
 
 type SseMsg = { readonly type: "tui:sse"; readonly event: SseEvent };
+type ChildHistoryMsg = {
+  readonly type: "tui:child-history";
+  readonly childSessionId: string;
+  readonly events?: ReadonlyArray<RecordedEvent>;
+  readonly error?: string;
+};
+type ChildSseMsg = {
+  readonly type: "tui:child-sse";
+  readonly childSessionId: string;
+  readonly event: SseEvent;
+};
 type PromptedMsg = {
   readonly type: "tui:prompted";
   readonly ok: boolean;
@@ -222,6 +239,8 @@ type CommandResultMsg = {
 type Msg =
   | LoopMsg
   | SseMsg
+  | ChildHistoryMsg
+  | ChildSseMsg
   | PromptedMsg
   | ApprovalReplyMsg
   | InterruptDoneMsg
@@ -234,8 +253,32 @@ type Msg =
 // Model
 // ---------------------------------------------------------------------------
 
+/** One open subagent channel: the child's own TuiModelState (fed by its own
+ * history fetch + SSE subscription) plus the badge fields shown in the strip. */
+interface ChildChannel {
+  readonly childSessionId: string;
+  /** Short display name from subagent.spawned; the strip label. */
+  readonly name: string;
+  state: TuiModelState;
+  status: "running" | "done" | "failed";
+  tokensIn: number | null;
+  tokensOut: number | null;
+  durationMs: number | null;
+  /** Set when the child's history/stream could not be loaded. */
+  streamError: string | null;
+}
+
 interface AppModel {
   readonly state: ReturnType<typeof initialModelState>;
+  /** Open subagent channels, in spawn order. */
+  readonly channels: readonly ChildChannel[];
+  /** The channel the transcript currently shows ("main" or a child id). */
+  readonly channel: "main" | string;
+  /** Agent selector state while the ↓-activated channel list is open. */
+  readonly agentSelector: {
+    readonly active: boolean;
+    readonly selected: number;
+  } | null;
   readonly editor: EditorState;
   /** Recovered messages after the one currently visible in the editor.
    * Each remains an independent draft and is surfaced after an explicit
@@ -302,6 +345,9 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
 
   const initialModel: AppModel = {
     state: initialModelState(),
+    channels: [],
+    channel: "main",
+    agentSelector: null,
     editor: createEditorState(),
     draftBacklog: [],
     restoredDraftActive: false,
@@ -337,6 +383,16 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     (n) => ({ type: "tuikit:git-tick", n }) as Msg,
   );
 
+  // Child-stream registry: update() registers a child SSE stream at
+  // subagent.spawned and drops it at subagent.completed; sseSub's poll
+  // reconciles running child pumps against it (version counter, 100ms cadence
+  // — same pattern as the main pump's streamVersion watch).
+  const childPumps = new Map<
+    string,
+    { readonly stream: ReadableStream<Uint8Array> }
+  >();
+  let pumpsVersion = 0;
+
   // SSE pump with session-switch support: tuikit calls `subscriptions()` once,
   // so the Sub itself watches `client.streamVersion` (bumped by newSession /
   // resume — the /clear and /resume commands) and swaps pumps when it changes.
@@ -348,12 +404,17 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       let disposed = false;
       let pumpVersion = -1;
       let cancelPump: (() => void) | null = null;
+      const activeChildPumps = new Map<string, () => void>();
+      let seenPumpsVersion = -1;
 
-      const startPump = (): void => {
-        pumpVersion = client.streamVersion;
-        const reader = client.eventsStream.getReader();
-        // Bridge so parseSseStream can lock its own reader while WE keep the
-        // real one for cancellation.
+      // One pump body serves the main stream and every child stream: bridge so
+      // parseSseStream can lock its own reader while WE keep the real one for
+      // cancellation.
+      const pumpStream = (
+        stream: ReadableStream<Uint8Array>,
+        onEvent: (event: SseEvent) => void,
+      ): () => void => {
+        const reader = stream.getReader();
         const bridge = new ReadableStream<Uint8Array>({
           pull: async (controller) => {
             const { value, done } = await reader.read();
@@ -369,26 +430,32 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
               if (cancelled) break;
               if (frame.event === "ping") continue;
               if (frame.data.length === 0) continue;
-              let event: SseEvent;
               try {
                 const wire = decode(WireSseEvent)({
                   cursor: Number(frame.id),
                   event: JSON.parse(frame.data),
                 });
-                event = wire.event;
+                onEvent(wire.event);
               } catch {
                 continue;
               }
-              emit({ type: "tui:sse", event });
             }
           } catch {
-            // stream closed / errored — the turn-aborted path handles UI.
+            // stream closed / errored — the completion path owns channel UI.
           }
         })();
-        cancelPump = () => {
+        return () => {
           cancelled = true;
           void reader.cancel().catch(() => {});
         };
+      };
+
+      const startPump = (): void => {
+        pumpVersion = client.streamVersion;
+        cancelPump = pumpStream(
+          client.eventsStream,
+          (event) => emit({ type: "tui:sse", event }),
+        );
       };
 
       startPump();
@@ -398,12 +465,36 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           cancelPump?.();
           startPump();
         }
+        // Reconcile child pumps with the registry: start pumps for newly
+        // registered streams, cancel the ones update() dropped.
+        if (seenPumpsVersion !== pumpsVersion) {
+          seenPumpsVersion = pumpsVersion;
+          for (const [id, cancel] of activeChildPumps) {
+            if (!childPumps.has(id)) {
+              cancel();
+              activeChildPumps.delete(id);
+            }
+          }
+          for (const [id, entry] of childPumps) {
+            if (activeChildPumps.has(id)) continue;
+            activeChildPumps.set(
+              id,
+              pumpStream(
+                entry.stream,
+                (event) =>
+                  emit({ type: "tui:child-sse", childSessionId: id, event }),
+              ),
+            );
+          }
+        }
       }, 100);
 
       return () => {
         disposed = true;
         clearInterval(poll);
         cancelPump?.();
+        for (const cancel of activeChildPumps.values()) cancel();
+        activeChildPumps.clear();
       };
     },
   };
@@ -511,8 +602,12 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       batchId: c.batchId,
     };
     return c.status === "running"
-      ? view
-      : { ...view, durationMs: c.durationMs };
+      ? (c.subagent === null ? view : { ...view, subagent: { ...c.subagent } })
+      : {
+        ...view,
+        durationMs: c.durationMs,
+        ...(c.subagent === null ? {} : { subagent: { ...c.subagent } }),
+      };
   };
 
   const editorTheme = {
@@ -606,7 +701,10 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     const H = Math.max(1, model.height);
     const inputH = renderInputSurface(model).lines.length;
     const footerH = Math.min(2, Math.max(0, H - inputH));
-    const transcriptH = Math.max(0, H - footerH - inputH);
+    // The agent strip occupies one row per channel (plus the main row) above
+    // the input surface when subagent channels exist.
+    const stripH = model.channels.length > 0 ? model.channels.length + 1 : 0;
+    const transcriptH = Math.max(0, H - footerH - inputH - stripH);
     return { transcriptH, inputH };
   };
 
@@ -623,7 +721,17 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
    * preserves the event chronology while allowing each channel's reducer to
    * update its own entries in place.
    */
-  const buildTranscriptMessages = (model: AppModel): ChatMessage[] => {
+  /** The TuiModelState of the channel currently on screen (main or a child). */
+  const activeState = (model: AppModel): TuiModelState =>
+    model.channel === "main"
+      ? model.state
+      : model.channels.find((ch) => ch.childSessionId === model.channel)
+        ?.state ?? model.state;
+
+  const buildTranscriptMessages = (
+    state: TuiModelState,
+    model: AppModel,
+  ): ChatMessage[] => {
     // The numeric id suffix is a total chronological order across every
     // transcript channel.
     const seqOf = (id: string): number => {
@@ -631,7 +739,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       return Number.isFinite(n) ? n : 0;
     };
     const timed: Array<{ seq: number; msg: ChatMessage }> = [
-      ...model.state.messages.map((m) => ({
+      ...state.messages.map((m) => ({
         seq: seqOf(m.id),
         msg: m.role === "user"
           ? { role: "user", text: m.text } as ChatMessage
@@ -641,11 +749,11 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
             thinking: m.thinking,
           } as ChatMessage,
       })),
-      ...model.state.notices.map((n) => ({
+      ...state.notices.map((n) => ({
         seq: seqOf(n.id),
         msg: { role: "notice", text: n.text, kind: n.kind } as ChatMessage,
       })),
-      ...model.state.toolCalls.map((c) => ({
+      ...state.toolCalls.map((c) => ({
         seq: seqOf(c.id),
         msg: {
           role: "tool",
@@ -653,7 +761,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
         } as ChatMessage,
       })),
     ];
-    const streaming = model.state.streaming;
+    const streaming = state.streaming;
     if (
       streaming && (streaming.text.length > 0 || streaming.thinking.length > 0)
     ) {
@@ -690,7 +798,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
   };
 
   const toTranscriptState = (model: AppModel): TranscriptState => ({
-    messages: buildTranscriptMessages(model),
+    messages: buildTranscriptMessages(activeState(model), model),
     scrollOffset: model.transcriptScroll,
     followTail: model.followTail,
   });
@@ -717,7 +825,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     const W = Math.max(1, model.width);
     const contentLines = transcriptContentHeight(ts, W, theme, {
       spinnerFrame: model.spinnerFrame,
-      streaming: model.state.streaming !== null,
+      streaming: activeState(model).streaming !== null,
     });
     const viewportHeight = transcriptViewportHeight(model);
     const next = transcriptReducer(ts, msg, { contentLines, viewportHeight });
@@ -834,6 +942,35 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
         return dispatch(model, decision.decision, decision.feedback);
       }
       return [model]; // swallow everything else while the panel is active
+    }
+
+    // Agent selector: while active it owns up/down/enter/esc; every other
+    // event is swallowed so the underlying editor buffer stays untouched.
+    if (model.agentSelector !== null) {
+      const selector = model.agentSelector;
+      if (event.kind === "key") {
+        if (event.key === "up" || event.key === "down") {
+          return [{
+            ...model,
+            agentSelector: {
+              active: true,
+              selected: moveAgentSelection(
+                selector.selected,
+                model.channels.length + 1,
+                event.key === "up" ? -1 : 1,
+              ),
+            },
+          }];
+        }
+        if (event.key === "enter") {
+          const target = selector.selected === 0
+            ? "main"
+            : model.channels[selector.selected - 1]?.childSessionId ?? "main";
+          return [{ ...model, channel: target, agentSelector: null }];
+        }
+      }
+      if (event.kind === "esc") return [{ ...model, agentSelector: null }];
+      return [model];
     }
 
     // 3) palette: when OPEN it owns input (the completion menu is derived
@@ -1050,6 +1187,27 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       }];
     }
 
+    // 10.5) agent selector activation: down at the newest editor history
+    //       position (historyCursor === null) opens the channel list. Only
+    //       when channels exist; single-line buffers only (multi-line down
+    //       moves the row cursor).
+    if (
+      event.kind === "key" && event.key === "down" &&
+      model.editor.historyCursor === null &&
+      model.editor.lines.length <= 1 &&
+      model.channels.length > 0
+    ) {
+      const currentIndex = model.channel === "main" ? 0 : Math.max(
+        0,
+        model.channels.findIndex((ch) => ch.childSessionId === model.channel) +
+          1,
+      );
+      return [{
+        ...model,
+        agentSelector: { active: true, selected: currentIndex },
+      }];
+    }
+
     // 11) editor: everything else. A buffer change re-arms the completion
     //    menu (clears an esc dismissal and resets the selection) so filtering
     //    follows the typed prefix live.
@@ -1123,6 +1281,8 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       ...model,
       ...advanced,
       completion: initialCompletionState,
+      // A submit always goes to the main session; return the view to it.
+      channel: "main",
     };
     const builtin = runSlashCommand(withEditor, text);
     if (builtin !== null) return builtin;
@@ -1431,6 +1591,9 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           },
           approval: null,
           question: null,
+          channels: [],
+          channel: "main",
+          agentSelector: null,
           draftBacklog: [],
           restoredDraftActive: false,
           effort: undefined,
@@ -1472,6 +1635,9 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           },
           approval: null,
           question: null,
+          channels: [],
+          channel: "main",
+          agentSelector: null,
           draftBacklog: [],
           restoredDraftActive: false,
           effort: undefined,
@@ -1574,12 +1740,128 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           approval = null;
           question = null;
         }
-        const next = { ...model, state: newState, approval, question, palette };
+        let next: AppModel = {
+          ...model,
+          state: newState,
+          approval,
+          question,
+          palette,
+        };
+        // Subagent lifecycle: open a channel at spawn (fetching its history +
+        // opening its SSE stream in a Cmd), finalize the badge at completion.
+        if (msg.event.type === "subagent.spawned") {
+          const d = msg.event.data;
+          if (
+            !next.channels.some((ch) => ch.childSessionId === d.childSessionId)
+          ) {
+            next = {
+              ...next,
+              channels: [...next.channels, {
+                childSessionId: d.childSessionId,
+                name: d.name,
+                state: initialModelState(),
+                status: "running",
+                tokensIn: null,
+                tokensOut: null,
+                durationMs: null,
+                streamError: null,
+              }],
+            };
+            return [
+              next,
+              cmd(async () => {
+                try {
+                  const events = await client.subagentHistory(d.childSessionId);
+                  const cursor = events.reduce(
+                    (max, e) => Math.max(max, e.seq),
+                    0,
+                  ) + 1;
+                  const stream = await client.openSubagentStream(
+                    d.childSessionId,
+                    cursor,
+                  );
+                  childPumps.set(d.childSessionId, { stream });
+                  pumpsVersion += 1;
+                  return {
+                    type: "tui:child-history",
+                    childSessionId: d.childSessionId,
+                    events,
+                  } as Msg;
+                } catch (err) {
+                  return {
+                    type: "tui:child-history",
+                    childSessionId: d.childSessionId,
+                    error: err instanceof Error ? err.message : String(err),
+                  } as Msg;
+                }
+              }),
+            ];
+          }
+        }
+        if (msg.event.type === "subagent.completed") {
+          const d = msg.event.data;
+          next = {
+            ...next,
+            channels: next.channels.map((ch) =>
+              ch.childSessionId !== d.childSessionId ? ch : {
+                ...ch,
+                status: d.ok ? "done" as const : "failed" as const,
+                durationMs: d.durationMs,
+                tokensIn: d.usage?.inputTokens ?? null,
+                tokensOut: d.usage?.outputTokens ?? null,
+              }
+            ),
+          };
+          childPumps.delete(d.childSessionId);
+          pumpsVersion += 1;
+          return [next];
+        }
         return [
           msg.event.type === "input.recovered"
             ? restoreInputs(next, msg.event.data.inputs)
             : next,
         ];
+      }
+
+      case "tui:child-history": {
+        const idx = model.channels.findIndex((ch) =>
+          ch.childSessionId === msg.childSessionId
+        );
+        if (idx < 0) return [model];
+        const channels = [...model.channels];
+        if (msg.error !== undefined) {
+          channels[idx] = {
+            ...channels[idx],
+            streamError: msg.error,
+            state: {
+              ...channels[idx].state,
+              notices: [...channels[idx].state.notices, {
+                id: nextEventId("n"),
+                kind: "error" as const,
+                text: `subagent unavailable: ${msg.error}`,
+              }],
+            },
+          };
+        } else {
+          channels[idx] = {
+            ...channels[idx],
+            state: reduceEventSequence(msg.events ?? []),
+          };
+        }
+        return [{ ...model, channels }];
+      }
+
+      case "tui:child-sse": {
+        const idx = model.channels.findIndex((ch) =>
+          ch.childSessionId === msg.childSessionId
+        );
+        if (idx < 0) return [model];
+        const channels = [...model.channels];
+        channels[idx] = {
+          ...channels[idx],
+          state: reduceEvent(channels[idx].state, msg.event),
+        };
+        return [{ ...model, channels }];
       }
 
       case "tui:prompted":
@@ -1646,10 +1928,11 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
     const lines: StyledLine[] = [];
     const layout = computeLayout(model);
     const transcriptH = layout.transcriptH;
-    const hasTranscript = model.state.messages.length > 0 ||
-      model.state.notices.length > 0 ||
-      model.state.toolCalls.length > 0 ||
-      model.state.streaming !== null;
+    const active = activeState(model);
+    const hasTranscript = active.messages.length > 0 ||
+      active.notices.length > 0 ||
+      active.toolCalls.length > 0 ||
+      active.streaming !== null;
 
     // transcript
     if (transcriptH > 0) {
@@ -1677,7 +1960,7 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
             theme,
             {
               spinnerFrame: model.spinnerFrame,
-              streaming: model.state.streaming !== null,
+              streaming: active.streaming !== null,
             },
           );
         } catch {
@@ -1686,6 +1969,51 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       }
       for (let i = 0; i < transcriptH; i++) {
         lines.push(tlines[i] ?? blankLine());
+      }
+    }
+
+    // -- agent strip (persistent row; expanded selector stamps over the tail) --
+    if (model.channels.length > 0) {
+      const entries: AgentStripEntry[] = [
+        {
+          id: "main",
+          label: "main",
+          status: "main",
+          tokensIn: model.state.tokensIn,
+          tokensOut: model.state.tokensOut,
+          durationMs: null,
+        },
+        ...model.channels.map((ch) => ({
+          id: ch.childSessionId,
+          label: ch.name,
+          status: ch.status,
+          tokensIn: ch.tokensIn,
+          tokensOut: ch.tokensOut,
+          durationMs: ch.durationMs,
+        })),
+      ];
+      const selectorActive = model.agentSelector?.active ?? false;
+      const stripLines = renderAgentStrip(
+        entries,
+        selectorActive,
+        model.agentSelector?.selected ?? 0,
+        W,
+        {
+          text: colors.text,
+          muted: colors.muted,
+          accent: colors.accent,
+          border: colors.border,
+        },
+      );
+      if (!selectorActive) {
+        for (const line of stripLines) lines.push(line);
+      } else {
+        // Overlay the expanded selector on the transcript rows directly above
+        // the input surface (same stamp pattern as the completion menu).
+        const top = Math.max(0, lines.length - stripLines.length);
+        for (let i = 0; i < stripLines.length; i++) {
+          if (top + i < lines.length) lines[top + i] = stripLines[i];
+        }
       }
     }
 
@@ -1716,7 +2044,9 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
       }
     }
 
-    const footerHints = model.question !== null
+    const footerHints = model.agentSelector !== null
+      ? ["↑↓ choose", "enter switch", "esc cancel"]
+      : model.question !== null
       ? ["↑↓ choose", "type another answer", "enter send", "esc decline"]
       : model.approval !== null
       ? ["↑↓ choose", "enter confirm", "esc reject"]

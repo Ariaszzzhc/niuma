@@ -52,19 +52,24 @@ Deno.test("server subagent spawner records lineage and rejects depth two", async
         const nested = await spawn({
           parentSessionId: childSessionId,
           prompt,
+          name: "nested",
+          callId: "nested-call",
         });
-        return `child completed: ${nested.text}`;
+        return { text: `child completed: ${nested.text}`, ok: true };
       },
     });
 
   const result = await spawn({
     parentSessionId,
     prompt: "inspect the code",
+    name: "explorer",
     mode: "read-only",
+    callId: "call-1",
   });
 
   assert(result.sessionId !== parentSessionId);
   assertEquals(runChildMode, "read-only");
+  assertEquals(result.ok, true);
   assertStringIncludes(result.text, "Subagent depth limit reached");
 
   const parentEvents = await replay(store, parentSessionId);
@@ -77,25 +82,110 @@ Deno.test("server subagent spawner records lineage and rejects depth two", async
   }
   assertEquals(lineage.data.childSessionId, result.sessionId);
   assertEquals(lineage.data.prompt, "inspect the code");
+  assertEquals(lineage.data.name, "explorer");
+  assertEquals(lineage.data.callId, "call-1");
+
+  const completed = parentEvents.find((event) =>
+    event.type === "subagent.completed"
+  );
+  assertEquals(completed?.type, "subagent.completed");
+  if (completed?.type !== "subagent.completed") {
+    throw new Error("missing subagent.completed event");
+  }
+  assertEquals(completed.data.childSessionId, result.sessionId);
+  assertEquals(completed.data.callId, "call-1");
+  assertEquals(completed.data.ok, true);
+  assertEquals(completed.data.usage, null);
+  assertEquals(typeof completed.data.durationMs, "number");
 
   const childEvents = await replay(store, result.sessionId);
   assertEquals(
     childEvents.map((event) => event.type),
     ["session.created", "user.message"],
   );
-  const childInput = childEvents[1];
-  assertEquals(childInput?.type, "user.message");
-  if (childInput?.type === "user.message") {
-    assertEquals(childInput.data.parts, [{
-      type: "text",
-      text: "inspect the code",
-    }]);
+  const childCreated = childEvents[0];
+  if (childCreated?.type !== "session.created") {
+    throw new Error("missing child session.created");
   }
+  assertEquals(childCreated.data.parentSessionId, parentSessionId);
+
   assertEquals(
     await store.listIds(),
-    [
-      parentSessionId,
-      result.sessionId,
-    ].sort(),
+    [parentSessionId],
   );
+});
+
+Deno.test("store listIds excludes child sessions via first-line probe", async () => {
+  const root = await Deno.makeTempDir({ prefix: "niuma_subagent_" });
+  const workspace = join(root, "workspace");
+  await Deno.mkdir(workspace, { recursive: true });
+
+  const layout = makeWorkspaceLayout(root, workspace);
+  await ensureWorkspaceLayout(layout);
+  const store = makeSessionStore({ layout });
+  const kernel = await Effect.runPromise(makeKernel({
+    store,
+    bus: await Effect.runPromise(makeEventBus()),
+  }));
+  await Effect.runPromise(kernel.append({
+    type: "session.created",
+    sessionId: "parent",
+    data: { workspace, model: "m", mcpServers: [] },
+  }));
+  await Effect.runPromise(kernel.append({
+    type: "session.created",
+    sessionId: "child-a",
+    data: {
+      workspace,
+      model: "m",
+      mcpServers: [],
+      parentSessionId: "parent",
+    },
+  }));
+  await Effect.runPromise(kernel.append({
+    type: "session.created",
+    sessionId: "top",
+    data: { workspace, model: "m", mcpServers: [] },
+  }));
+  assertEquals(await store.listIds(), ["parent", "top"]);
+});
+
+Deno.test("server subagent spawner composes failure reason and trace into the result", async () => {
+  const root = await Deno.makeTempDir({ prefix: "niuma_subagent_" });
+  const workspace = join(root, "workspace");
+  await Deno.mkdir(workspace, { recursive: true });
+
+  const layout = makeWorkspaceLayout(root, workspace);
+  await ensureWorkspaceLayout(layout);
+  const store = makeSessionStore({ layout });
+  const kernel = await Effect.runPromise(makeKernel({
+    store,
+    bus: await Effect.runPromise(makeEventBus()),
+  }));
+  const parentSessionId = "parent";
+  await Effect.runPromise(kernel.append({
+    type: "session.created",
+    sessionId: parentSessionId,
+    data: { workspace, model: "test-model", mcpServers: [] },
+  }));
+
+  const spawn = makeSubagentSpawner({
+    kernel,
+    workspace,
+    model: "test-model",
+    mcpServers: [],
+    runChild: () =>
+      // Simulate the child loop terminating abnormally.
+      Promise.resolve({ text: "", ok: false, reason: "provider exploded" }),
+  });
+  const result = await spawn({
+    parentSessionId,
+    prompt: "p",
+    name: "n",
+    callId: "c",
+  });
+  assertEquals(result.ok, false);
+  assertStringIncludes(result.text, "provider exploded");
+  assertStringIncludes(result.text, "execution trace:");
+  assertStringIncludes(result.text, "(no events recorded)");
 });

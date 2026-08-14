@@ -63,8 +63,11 @@ export interface ApprovalDecision {
 
 export interface SubagentResult {
   sessionId: string;
-  /** Final assistant text from the child run. */
+  /** Final text for the parent model. On failure the server spawner
+   * composes the reason + execution trace into this text. */
   text: string;
+  /** False when the child refused to start or terminated abnormally. */
+  ok: boolean;
 }
 
 export interface ToolCtx {
@@ -86,8 +89,12 @@ export interface ToolCtx {
   /** Optional subagent spawner (wired by the agent package). */
   spawnSubagent?(req: {
     prompt: string;
+    /** Short display name invented by the parent model; recorded on
+     * subagent.spawned and shown in the TUI agent strip. */
+    name: string;
     mode?: "default" | "read-only";
     parentSessionId: string;
+    callId: string;
   }): Promise<SubagentResult>;
 }
 

@@ -506,3 +506,87 @@ describe("reduce_event: purity", () => {
     assertStrictEquals(JSON.stringify(start), snap);
   });
 });
+
+describe("reduce_event: subagent lifecycle", () => {
+  it("subagent.spawned attaches channel info to the spawn_subagent card by callId", () => {
+    let model = reduceEvent(
+      initialModelState(),
+      ev("tool.call.requested", {
+        callId: "c1",
+        name: "spawn_subagent",
+        input: { prompt: "p" },
+      }),
+    );
+    model = reduceEvent(
+      model,
+      ev("subagent.spawned", {
+        parentSessionId: "main",
+        childSessionId: "child-1",
+        prompt: "p",
+        callId: "c1",
+      }),
+    );
+    assertEquals(model.toolCalls[0].subagent, {
+      childSessionId: "child-1",
+      prompt: "p",
+      status: "running",
+      durationMs: 0,
+      tokensIn: null,
+      tokensOut: null,
+    });
+  });
+
+  it("subagent.completed flips the card badge and fills usage", () => {
+    let model = reduceEvent(
+      initialModelState(),
+      ev("tool.call.requested", {
+        callId: "c1",
+        name: "spawn_subagent",
+        input: { prompt: "p" },
+      }),
+    );
+    model = reduceEvent(
+      model,
+      ev("subagent.spawned", {
+        parentSessionId: "main",
+        childSessionId: "child-1",
+        prompt: "p",
+        callId: "c1",
+      }),
+    );
+    model = reduceEvent(
+      model,
+      ev("subagent.completed", {
+        parentSessionId: "main",
+        childSessionId: "child-1",
+        callId: "c1",
+        ok: false,
+        usage: { inputTokens: 12, outputTokens: 3 },
+        durationMs: 900,
+      }),
+    );
+    assertEquals(model.toolCalls[0].subagent, {
+      childSessionId: "child-1",
+      prompt: "p",
+      status: "failed",
+      durationMs: 900,
+      tokensIn: 12,
+      tokensOut: 3,
+    });
+  });
+
+  it("subagent.completed with unknown childSessionId is a no-op", () => {
+    const start = initialModelState();
+    const model = reduceEvent(
+      start,
+      ev("subagent.completed", {
+        parentSessionId: "main",
+        childSessionId: "ghost",
+        ok: true,
+        usage: null,
+        durationMs: 1,
+      }),
+    );
+    assertStrictEquals(model, start);
+  });
+});

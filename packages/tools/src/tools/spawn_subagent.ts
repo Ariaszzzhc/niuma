@@ -6,6 +6,9 @@ import { zodToJsonSchema } from "../json_schema.ts";
 // deno-lint-ignore no-slow-types
 const SpawnSubagentInput_ = z.object({
   prompt: z.string().min(1).describe("Task to hand off to the subagent."),
+  name: z.string().min(1).max(40).describe(
+    'Short display name for the subagent, shown in the UI (e.g. "explore-auth").',
+  ),
   mode: z.enum(["default", "read-only"]).optional()
     .describe("Restrict the child to read-only tools; default unrestricted."),
 });
@@ -24,8 +27,7 @@ export const spawnSubagentTool: Tool<SpawnSubagentInput> = {
   },
   accesses: { process: false }, // child runs in the same process — not a separate exec.
   inputSchema: SpawnSubagentInput,
-  normalize: (i) =>
-    `subagent(${i.mode ?? "default"}): ${truncate(i.prompt, 60)}`,
+  normalize: (i) => `subagent(${i.name})`,
   async execute(input, ctx): Promise<ToolOutput> {
     const spillId = `${ctx.sessionId}:${ctx.callId}`;
     if (!ctx.spawnSubagent) {
@@ -38,10 +40,16 @@ export const spawnSubagentTool: Tool<SpawnSubagentInput> = {
     try {
       const r = await ctx.spawnSubagent({
         prompt: input.prompt,
+        name: input.name,
         mode: input.mode ?? "default",
         parentSessionId: ctx.sessionId,
+        callId: ctx.callId,
       });
-      return await toolOutput(r.text || "(empty)", spillId);
+      return await toolOutput(
+        r.text || "(empty)",
+        spillId,
+        r.ok ? {} : { isError: true },
+      );
     } catch (e) {
       return await toolOutput(`error: ${(e as Error).message}`, spillId, {
         isError: true,
@@ -49,7 +57,3 @@ export const spawnSubagentTool: Tool<SpawnSubagentInput> = {
     }
   },
 };
-
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : s.slice(0, n - 1) + "…";
-}

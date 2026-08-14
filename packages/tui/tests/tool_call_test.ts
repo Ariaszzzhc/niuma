@@ -138,3 +138,24 @@ Deno.test("specialized tool detail never exceeds narrow widths", () => {
     );
   }
 });
+
+Deno.test("spawn_subagent card shows status badge, duration and tokens", () => {
+  const view = call({
+    name: "spawn_subagent",
+    input: { prompt: "inspect", mode: "default" },
+    inputSummary: "inspect",
+    resultLines: ["ok"],
+    durationMs: 1200,
+    subagent: {
+      status: "failed",
+      durationMs: 1200,
+      tokensIn: 40,
+      tokensOut: 7,
+    },
+  });
+  const output = text(renderToolCall(view, 80, darkTheme));
+  assert(output.includes("Subagent"));
+  assert(output.includes("◍"), "failed badge");
+  assert(output.includes("40/7"), "token counts");
+  assert(output.includes("1.2s"), "duration");
+});

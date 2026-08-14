@@ -33,6 +33,9 @@ const SessionCreatedData_ = Schema.Struct({
   effort: Schema.optional(Schema.String),
   contextWindow: Schema.optional(Schema.Number),
   mcpServers: Schema.Array(McpServerStatus_),
+  // Set only on child sessions spawned via spawn_subagent; top-level sessions
+  // omit it. Session listing filters on its presence.
+  parentSessionId: Schema.optional(Schema.String),
 });
 export type SessionCreatedData = Schema.Schema.Type<typeof SessionCreatedData_>;
 export const SessionCreatedData: Schema.Codec<SessionCreatedData> =
@@ -387,6 +390,12 @@ export const SubagentSpawnedData = Schema.Struct({
   parentSessionId: Schema.String,
   childSessionId: Schema.String,
   prompt: Schema.String,
+  // Short display name invented by the parent model at spawn time; shown in
+  // the TUI agent strip.
+  name: Schema.String,
+  // The tool.call.requested id that triggered the spawn; links the parent
+  // tool card to the child session.
+  callId: Schema.String,
 });
 export type SubagentSpawnedData = Schema.Schema.Type<
   typeof SubagentSpawnedData
@@ -399,6 +408,35 @@ export const SubagentSpawnedEvent = Schema.Struct({
 });
 export type SubagentSpawnedEvent = Schema.Schema.Type<
   typeof SubagentSpawnedEvent
+>;
+
+// deno-lint-ignore no-slow-types
+const SubagentCompletedData_ = Schema.Struct({
+  parentSessionId: Schema.String,
+  childSessionId: Schema.String,
+  callId: Schema.String,
+  ok: Schema.Boolean,
+  // Token totals from the child's last model.call.completed; null when the
+  // child recorded none (never fabricated zeroes).
+  usage: Schema.NullOr(Schema.Struct({
+    inputTokens: Schema.Number,
+    outputTokens: Schema.Number,
+  })),
+  durationMs: Schema.Number,
+});
+export type SubagentCompletedData = Schema.Schema.Type<
+  typeof SubagentCompletedData_
+>;
+export const SubagentCompletedData: Schema.Codec<SubagentCompletedData> =
+  SubagentCompletedData_;
+
+export const SubagentCompletedEvent = Schema.Struct({
+  ...recordedBase,
+  type: Schema.Literal("subagent.completed"),
+  data: SubagentCompletedData_,
+});
+export type SubagentCompletedEvent = Schema.Schema.Type<
+  typeof SubagentCompletedEvent
 >;
 
 // deno-lint-ignore no-slow-types
@@ -440,6 +478,7 @@ const RecordedEvent_ = Schema.Union([
   ApprovalRequestedEvent,
   ApprovalResolvedEvent,
   SubagentSpawnedEvent,
+  SubagentCompletedEvent,
   ErrorOccurredEvent,
 ]);
 export type RecordedEvent = Schema.Schema.Type<typeof RecordedEvent_>;
@@ -465,6 +504,7 @@ const RecordedEventType_ = Schema.Literals([
   "approval.requested",
   "approval.resolved",
   "subagent.spawned",
+  "subagent.completed",
   "error.occurred",
 ]);
 export type RecordedEventType = Schema.Schema.Type<typeof RecordedEventType_>;

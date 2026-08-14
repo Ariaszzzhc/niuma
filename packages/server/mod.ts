@@ -7,6 +7,7 @@ export * from "./src/retention.ts";
 export * from "./src/event_bus.ts";
 export * from "./src/kernel.ts";
 export * from "./src/session.ts";
+export * from "./src/subagent_trace.ts";
 export * from "./src/bootstrap.ts";
 export * from "./src/error.ts";
 export * from "./src/logger.ts";

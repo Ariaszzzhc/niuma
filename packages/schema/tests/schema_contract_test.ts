@@ -339,7 +339,13 @@ Deno.test("parseEventLine/stringifyEventLine: round-trip every RecordedEvent var
       ts: 14,
       sessionId: "s",
       type: "subagent.spawned",
-      data: { parentSessionId: "p", childSessionId: "c", prompt: "go" },
+      data: {
+        parentSessionId: "p",
+        childSessionId: "c",
+        prompt: "go",
+        name: "scout",
+        callId: "c1",
+      },
     },
     {
       seq: 15,
@@ -564,6 +570,62 @@ Deno.test("parseEventLine/stringifyEventLine: assistant.message with a ThinkingP
     },
   };
   assertEquals(parseEventLine(stringifyEventLine(textOnly)), textOnly);
+});
+
+Deno.test("subagent observability: created.parentSessionId, spawned.callId and subagent.completed round-trip", () => {
+  const created = {
+    seq: 1,
+    ts: 1,
+    sessionId: "child",
+    type: "session.created" as const,
+    data: {
+      workspace: "/w",
+      model: "m",
+      mcpServers: [],
+      parentSessionId: "parent",
+    },
+  };
+  const spawned = {
+    seq: 1,
+    ts: 2,
+    sessionId: "parent",
+    type: "subagent.spawned" as const,
+    data: {
+      parentSessionId: "parent",
+      childSessionId: "child",
+      prompt: "p",
+      name: "explorer",
+      callId: "call-1",
+    },
+  };
+  const completed = {
+    seq: 2,
+    ts: 3,
+    sessionId: "parent",
+    type: "subagent.completed" as const,
+    data: {
+      parentSessionId: "parent",
+      childSessionId: "child",
+      callId: "call-1",
+      ok: true,
+      usage: { inputTokens: 10, outputTokens: 20 },
+      durationMs: 1500,
+    },
+  };
+  for (const event of [created, spawned, completed]) {
+    assertEquals(parseEventLine(stringifyEventLine(event)), event);
+  }
+});
+
+Deno.test("session.created without parentSessionId decodes (top-level session)", () => {
+  const created = {
+    seq: 1,
+    ts: 1,
+    sessionId: "s",
+    type: "session.created" as const,
+    data: { workspace: "/w", model: "m", mcpServers: [] },
+  };
+  assertEquals(parseEventLine(stringifyEventLine(created)), created);
 });
 
 // deno-lint-ignore no-explicit-any

@@ -212,6 +212,17 @@ export interface TuiClient {
   /** Ask the server to compact the current session's context. Rejected with
    * `code: "turn_in_flight"` while a turn is active. */
   readonly compact: () => Promise<CompactResult>;
+  /** Read a subagent session's recorded history. Read-only: never switches
+   * or otherwise touches the current session. */
+  readonly subagentHistory: (
+    sessionId: string,
+  ) => Promise<ReadonlyArray<RecordedEvent>>;
+  /** Open the SSE /events stream for a subagent session at `cursor`. Does
+   * NOT touch current-session state. */
+  readonly openSubagentStream: (
+    sessionId: string,
+    cursor: number,
+  ) => Promise<ReadableStream<Uint8Array>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -671,6 +682,30 @@ export const createTuiClient = async (
     }
   };
 
+  const subagentHistory = async (
+    sessionId: string,
+  ): Promise<ReadonlyArray<RecordedEvent>> => {
+    const res = await fetchImpl(`${BASE}/sessions/${enc(sessionId)}/history`);
+    if (!res.ok) {
+      throw new Error(
+        `niuma: subagent history failed (${res.status}) ${await safeText(res)}`,
+      );
+    }
+    const body = tryParseJson(await safeText(res)) as
+      | { events?: unknown }
+      | undefined;
+    if (!Array.isArray(body?.events)) {
+      throw new Error("niuma: subagent history malformed");
+    }
+    return body.events as RecordedEvent[];
+  };
+
+  const openSubagentStream = (
+    sessionId: string,
+    cursor: number,
+  ): Promise<ReadableStream<Uint8Array>> =>
+    openEventStream(fetchImpl, sessionId, cursor);
+
   return {
     get sessionId() {
       return state.sessionId;
@@ -704,6 +739,8 @@ export const createTuiClient = async (
     setEffort,
     setInputDelivery,
     compact,
+    subagentHistory,
+    openSubagentStream,
   };
 };
 

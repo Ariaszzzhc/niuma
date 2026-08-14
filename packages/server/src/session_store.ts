@@ -201,6 +201,39 @@ export const makeSessionStore = (opts: SessionStoreOptions): SessionStore => {
     }
   };
 
+  // First-line probe: a Journal's very first line (session.created) is enough
+  // to tell a child session from a top-level one. Cheap — no full replay.
+  // Fail-open: an unreadable first line keeps the session listed.
+  const readCreatedData = async (
+    sessionId: string,
+  ): Promise<{ parentSessionId?: string } | undefined> => {
+    const path = pathFor(sessionId);
+    let file: Deno.FsFile;
+    try {
+      file = await Deno.open(path);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return undefined;
+      throw error;
+    }
+    try {
+      const buf = new Uint8Array(64 * 1024);
+      const n = await file.read(buf);
+      const firstLine = new TextDecoder("utf-8", { fatal: false })
+        .decode(buf.subarray(0, n ?? 0))
+        .split("\n")[0] ?? "";
+      if (firstLine.trim().length === 0) return undefined;
+      try {
+        const event = parseEventLine(firstLine);
+        if (event.type !== "session.created") return undefined;
+        return { parentSessionId: event.data.parentSessionId };
+      } catch {
+        return undefined;
+      }
+    } finally {
+      file.close();
+    }
+  };
+
   // Reads share the Session-local lock with append/touch/removal. Otherwise a
   // replay could observe an in-progress final write, mistake it for a crashed
   // append, and truncate bytes that the writer still owns.
@@ -287,7 +320,13 @@ export const makeSessionStore = (opts: SessionStoreOptions): SessionStore => {
         const id = entry.name.slice(0, -".jsonl".length);
         if (isSafeId(id)) ids.push(id);
       }
-      return ids.sort();
+      // Child sessions (spawn_subagent) are reachable by id but never listed.
+      const visible: string[] = [];
+      for (const id of ids) {
+        const created = await readCreatedData(id);
+        if (created?.parentSessionId === undefined) visible.push(id);
+      }
+      return visible.sort();
     } catch (error) {
       if (error instanceof Deno.errors.NotFound) return [];
       throw error;

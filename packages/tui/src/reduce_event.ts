@@ -53,6 +53,15 @@ export interface TuiToolCall {
   readonly durationMs: number;
   /** Derived assistant-sampling step; groups parallel calls without schema IO. */
   readonly batchId: number;
+  /** Subagent channel info attached by subagent.spawned/completed. */
+  readonly subagent: {
+    readonly childSessionId: string;
+    readonly prompt: string;
+    readonly status: "running" | "done" | "failed";
+    readonly durationMs: number;
+    readonly tokensIn: number | null;
+    readonly tokensOut: number | null;
+  } | null;
 }
 
 /** In-flight streaming assistant text (accumulated from text.delta). */
@@ -451,6 +460,7 @@ export const reduceEvent = (
         isError: false,
         durationMs: 0,
         batchId: model.toolBatch,
+        subagent: null,
       };
       return { ...model, toolCalls: [...model.toolCalls, call] };
     }
@@ -566,9 +576,50 @@ export const reduceEvent = (
       };
     }
 
-    // -- subagent lifecycle: currently has no dedicated row ----------------
-    case "subagent.spawned":
-      return model;
+    // -- subagent lifecycle: badge state on the spawn_subagent card --------
+    case "subagent.spawned": {
+      const childSessionId = asString(d["childSessionId"]);
+      const target = asString(d["callId"]);
+      if (childSessionId === null || target === null) return model;
+      const info = {
+        childSessionId,
+        prompt: asString(d["prompt"]) ?? "",
+        status: "running" as const,
+        durationMs: 0,
+        tokensIn: null,
+        tokensOut: null,
+      };
+      return updateToolCall(
+        model,
+        target,
+        (c) => c.subagent !== null ? c : { ...c, subagent: info },
+      );
+    }
+    case "subagent.completed": {
+      const childSessionId = asString(d["childSessionId"]);
+      if (childSessionId === null) return model;
+      const usage = extractUsage(d["usage"]);
+      let matched = false;
+      const toolCalls = model.toolCalls.map((c) => {
+        if (
+          c.subagent === null || c.subagent.childSessionId !== childSessionId
+        ) {
+          return c;
+        }
+        matched = true;
+        return {
+          ...c,
+          subagent: {
+            ...c.subagent,
+            status: asBool(d["ok"]) ? "done" as const : "failed" as const,
+            durationMs: asNumber(d["durationMs"]) ?? c.subagent.durationMs,
+            tokensIn: usage?.input ?? null,
+            tokensOut: usage?.output ?? null,
+          },
+        };
+      });
+      return matched ? { ...model, toolCalls } : model;
+    }
     default: {
       const exhaustive: never = ev;
       return exhaustive;

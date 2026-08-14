@@ -101,6 +101,15 @@ const fakeClient: TuiClient = {
   setInputDelivery: (inputDelivery) =>
     Promise.resolve({ ok: true, inputDelivery }),
   compact: () => Promise.resolve({ ok: true }),
+  subagentHistory: () => Promise.resolve([]),
+  openSubagentStream: () =>
+    Promise.resolve(
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          c.close();
+        },
+      }),
+    ),
 };
 
 const newProgram = (): Built =>
@@ -1615,4 +1624,108 @@ Deno.test("slash dispatch: /resume with an unknown id posts an error", async () 
     ),
     true,
   );
+});
+
+// ---------------------------------------------------------------------------
+// subagent channels (spawned -> channel; completed -> finalized; selector)
+// ---------------------------------------------------------------------------
+
+const childJournal: RecordedEvent[] = [
+  {
+    seq: 1,
+    ts: 1,
+    sessionId: "c1",
+    type: "session.created",
+    data: {
+      workspace: "/w",
+      model: "m",
+      mcpServers: [],
+      parentSessionId: "s1",
+    },
+  },
+  {
+    seq: 2,
+    ts: 2,
+    sessionId: "c1",
+    type: "user.message",
+    data: { parts: [{ type: "text", text: "child prompt" }] },
+  },
+];
+
+Deno.test("subagent.spawned creates a channel and child-history builds its transcript", () => {
+  const { update, init } = programWith({
+    ...fakeClient,
+    subagentHistory: () => Promise.resolve(childJournal),
+  });
+  let [model] = init();
+  [model] = update(
+    model,
+    sse("subagent.spawned", {
+      parentSessionId: "s1",
+      childSessionId: "c1",
+      prompt: "child prompt",
+      name: "explorer",
+      callId: "call-1",
+    }),
+  );
+  assertEquals(model.channels.length, 1);
+  assertEquals(model.channels[0].status, "running");
+  assertEquals(model.channels[0].name, "explorer");
+  [model] = update(model, {
+    type: "tui:child-history",
+    childSessionId: "c1",
+    events: childJournal,
+  } as Msg);
+  assertEquals(model.channels[0].state.messages[0].text, "child prompt");
+});
+
+Deno.test("down activates the selector at newest editor history and enter switches channels", () => {
+  const { update, init } = programWith(fakeClient);
+  let [model] = init();
+  [model] = update(
+    model,
+    sse("subagent.spawned", {
+      parentSessionId: "s1",
+      childSessionId: "c1",
+      prompt: "p",
+      callId: "call-1",
+    }),
+  );
+  [model] = update(model, keyMsg(key("down")));
+  assertEquals(model.agentSelector, { active: true, selected: 0 });
+  [model] = update(model, keyMsg(key("down")));
+  [model] = update(model, keyMsg(key("enter")));
+  assertEquals(model.channel, "c1");
+  assertEquals(model.agentSelector, null);
+});
+
+Deno.test("subagent.completed finalizes the channel and esc deactivates the selector", () => {
+  const { update, init } = programWith(fakeClient);
+  let [model] = init();
+  [model] = update(
+    model,
+    sse("subagent.spawned", {
+      parentSessionId: "s1",
+      childSessionId: "c1",
+      prompt: "p",
+      callId: "call-1",
+    }),
+  );
+  [model] = update(
+    model,
+    sse("subagent.completed", {
+      parentSessionId: "s1",
+      childSessionId: "c1",
+      callId: "call-1",
+      ok: false,
+      usage: { inputTokens: 4, outputTokens: 2 },
+      durationMs: 500,
+    }),
+  );
+  assertEquals(model.channels[0].status, "failed");
+  assertEquals(model.channels[0].tokensIn, 4);
+  [model] = update(model, keyMsg(key("down")));
+  assertEquals(model.agentSelector !== null, true);
+  [model] = update(model, keyMsg({ kind: "esc" }));
+  assertEquals(model.agentSelector, null);
 });

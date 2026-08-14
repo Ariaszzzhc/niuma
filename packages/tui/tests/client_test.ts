@@ -524,3 +524,85 @@ Deno.test("compact reports accepted, then turn_in_flight on the busy session", a
   assertEquals(r.code, "turn_in_flight");
   assertEquals(r.error, "turn in flight");
 });
+
+// ===========================================================================
+// Subagent read-only access: subagentHistory / openSubagentStream never touch
+// the current-session state.
+// ===========================================================================
+
+/** Boot routes (POST /sessions + GET /events) plus caller-supplied extras. */
+const bootFake = (
+  extra: (url: string, method: string) => Response | undefined,
+) => {
+  const json = (body: unknown, status = 200): Response =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  return (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (method === "POST" && url === `${BASE}/sessions`) {
+      return Promise.resolve(json({
+        sessionId: "s1",
+        workspace: "/w",
+        model: "default",
+        mcpServers: [],
+        commands: [],
+        clientConfig: { inputDelivery: "steer" },
+      }, 201));
+    }
+    if (method === "GET" && url.startsWith(`${BASE}/events?`)) {
+      return Promise.resolve(new Response(closedStream()));
+    }
+    const hit = extra(url, method);
+    if (hit !== undefined) return Promise.resolve(hit);
+    throw new Error(`unexpected url ${url}`);
+  };
+};
+
+Deno.test("subagentHistory reads child history without touching the current session", async () => {
+  const event = {
+    seq: 1,
+    ts: 1,
+    sessionId: "child-1",
+    type: "session.created" as const,
+    data: {
+      workspace: "/w",
+      model: "m",
+      mcpServers: [],
+      parentSessionId: "main",
+    },
+  };
+  const fetchImpl = bootFake((url, method) => {
+    if (method === "GET" && url === `${BASE}/sessions/child-1/history`) {
+      return new Response(JSON.stringify({ events: [event] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return undefined;
+  });
+  const client = await createTuiClient(fetchImpl, { workspace: "/w" });
+  const sessionBefore = client.sessionId;
+  const events = await client.subagentHistory("child-1");
+  assertEquals(events, [event]);
+  assertEquals(client.sessionId, sessionBefore);
+});
+
+Deno.test("subagentHistory throws on non-ok", async () => {
+  const fetchImpl = bootFake((url, method) => {
+    if (method === "GET" && url === `${BASE}/sessions/gone/history`) {
+      return new Response(
+        JSON.stringify({ error: { code: "session_not_found" } }),
+        { status: 404 },
+      );
+    }
+    return undefined;
+  });
+  const client = await createTuiClient(fetchImpl, { workspace: "/w" });
+  await assertRejects(() => client.subagentHistory("gone"));
+});

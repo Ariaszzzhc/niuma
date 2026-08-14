@@ -215,10 +215,11 @@ Deno.test("spawn_subagent wires ctx.spawnSubagent", async () => {
       Promise.resolve({
         sessionId: "child-1",
         text: `done: ${req.prompt}`,
+        ok: true,
       }),
   });
   const out = await spawnSubagentTool.execute(
-    { prompt: "find the answer" },
+    { prompt: "find the answer", name: "finder" },
     c,
   );
   assertStringIncludes(out.content, "done: find the answer");
@@ -628,11 +629,7 @@ Deno.test("scheduler serialises write/read on the same path", async () => {
 interface MkOpts {
   cwd?: string;
   askImpl?: (info: ApprovalInfo) => Promise<ApprovalDecision>;
-  spawnImpl?: (req: {
-    prompt: string;
-    mode?: "default" | "read-only";
-    parentSessionId: string;
-  }) => Promise<{ sessionId: string; text: string }>;
+  spawnImpl?: ToolCtx["spawnSubagent"];
 }
 
 function mkCtx(overrides: MkOpts = {}): ToolCtx {
