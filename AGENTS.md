@@ -99,7 +99,9 @@ Notes:
   `packages/tuikit/native/target/release/`. `dist/` is gitignored.
 - CI (`.github/workflows/ci.yml`) runs on pushes to main and PRs: the Deno gates
   (`deno fmt --check`, `deno lint`, `deno task check`, `deno task test`, the
-  network-free smoke test) plus the three Rust commands above.
+  network-free smoke test) plus the three Rust commands above. The Deno job
+  builds the native cdylib first — the full test suite includes TUI/tuikit tests
+  that call into it.
 - Releases (`.github/workflows/release.yml`) are tag-driven: bump the root
   `deno.json` `version` (the single VERSION source, embedded at compile time),
   commit, then push a matching `v*` tag. The workflow refuses a tag that doesn't

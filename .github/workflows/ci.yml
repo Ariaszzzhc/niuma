@@ -17,6 +17,13 @@ jobs:
         with:
           deno-version: v2.x
           cache: true
+      # The full test suite includes TUI/tuikit tests that call into the
+      # native cdylib — build it before `deno task test`.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: packages/tuikit/native
+      - run: deno task build:native
       - run: deno fmt --check
       - run: deno lint
       - run: deno task check
