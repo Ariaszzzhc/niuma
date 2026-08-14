@@ -5,7 +5,12 @@
 import { z } from "zod";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Tool as McpTool } from "@modelcontextprotocol/sdk/types.js";
-import type { Accesses, JsonSchemaObject, Tool, ToolOutput } from "@niuma/tools";
+import type {
+  Accesses,
+  JsonSchemaObject,
+  Tool,
+  ToolOutput,
+} from "@niuma/tools";
 
 /**
  * LLM tool APIs restrict names to [a-zA-Z0-9_-]. Encode every disallowed

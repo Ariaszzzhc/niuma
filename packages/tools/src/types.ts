@@ -205,4 +205,8 @@ export interface PermissionEngine {
 }
 
 // ---- Schema helpers (re-exported for the registry) ----
-export type { Decision, PermissionRule, ToolResultContent } from "@niuma/schema";
+export type {
+  Decision,
+  PermissionRule,
+  ToolResultContent,
+} from "@niuma/schema";

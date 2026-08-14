@@ -26,11 +26,11 @@ export {
   writeInputDelivery,
 } from "./src/config.ts";
 export type {
-  NiumaConfig,
   CoreConfig,
   LoadMergedOptions,
   LogLevel,
   ModelConfig,
+  NiumaConfig,
   ProviderConfig,
   ProviderType,
   ResolvedModel,

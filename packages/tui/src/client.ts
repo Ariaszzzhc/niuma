@@ -353,7 +353,9 @@ const openEventStream = async (
   }
   if (!sseRes.ok || !sseRes.body) {
     throw new Error(
-      `niuma: events stream failed (${sseRes.status}) ${await safeText(sseRes)}`,
+      `niuma: events stream failed (${sseRes.status}) ${await safeText(
+        sseRes,
+      )}`,
     );
   }
   return sseRes.body;

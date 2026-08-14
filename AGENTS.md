@@ -45,10 +45,10 @@ re-exports only), `src/` (implementation), `tests/` (`*_test.ts`).
 | `packages/provider`   | LLM provider layer: provider-agnostic domain (`ChatRequest`, `Message`, `ToolCall`, `StreamEvent`), adapters for OpenAI chat completions, OpenAI Responses, and Anthropic, plus SSE parsing, retry policy, error taxonomy (`RateLimited`, `Overloaded`, `ContextOverflow`, ...), and a scripted `MockProvider` for network-free tests.                                                                          |
 | `packages/permission` | Stateless permission policy primitives: glob compilation/matching, sensitive-path detection, and ordered `allow`/`deny`/`ask` evaluation. The session-scoped mutable engine lives in `packages/tools`.                                                                                                                                                                                                          |
 | `packages/tools`      | Built-in tools (`bash`, `read`, `write`, `edit`, `glob`, `grep`, `apply_patch`, `question`, `spawn_subagent`, `update_plan`) under `src/tools/`, plus the tool pipeline (authorize → execute), scheduler, output truncation/spill, and path resolution confined to the workspace root.                                                                                                                          |
-| `packages/agent`      | Agent core: `runTurn` loop, event→message context projection (replay folds `compaction.performed`), history compaction/summarization (`compactSession`), system-prompt builder, and the adapter from the agent tool port to `@niuma/tools`. Session and approval lifecycles belong to `packages/server`; the agent depends only on ports (`deps.ts`).                                                            |
+| `packages/agent`      | Agent core: `runTurn` loop, event→message context projection (replay folds `compaction.performed`), history compaction/summarization (`compactSession`), system-prompt builder, and the adapter from the agent tool port to `@niuma/tools`. Session and approval lifecycles belong to `packages/server`; the agent depends only on ports (`deps.ts`).                                                           |
 | `packages/server`     | HTTP+SSE server (Hono): `WorkspaceLayout`, canonical JSONL `SessionStore`, pure `SessionState` fold, content-free `UsageArchive`, time-based `Retention`, `Kernel` (append/replay/subscribe), Server-owned input coordination and configuration, Session manager (prompt/compact/model/effort), event bus, bootstrap wiring (Effect Layers), handlers for Sessions and events.                                  |
 | `packages/config`     | Configuration: `config.toml` parsing, user/project merge and closest-level writes, built-in providers (`builtin.ts`: kimi/openai login-and-go definitions + user-table overlay), `auth.json` credentials (API keys + OAuth), OAuth flows (ChatGPT in `oauth.ts`, Kimi device-code in `kimi_oauth.ts`), MCP config, custom slash commands (`commands/*.md` discovery + template expansion), paths and `VERSION`. |
-| `packages/mcp`        | MCP client: connects to configured MCP servers and adapts MCP tools into niuma tools (`@modelcontextprotocol/sdk`).                                                                                                                                                                                                                                                                                              |
+| `packages/mcp`        | MCP client: connects to configured MCP servers and adapts MCP tools into niuma tools (`@modelcontextprotocol/sdk`).                                                                                                                                                                                                                                                                                             |
 | `packages/cli`        | Entrypoint (`src/main.ts`): subcommands `tui` (default), `-p` one-shot, `serve`, `auth`; argument parsing; server-worker spawn + fetch tunnel; stdin approval plumbing.                                                                                                                                                                                                                                         |
 | `packages/tuikit`     | Terminal toolkit: TEA-style `run` loop, `Frame`, `KeyParser`, `Terminal`, width/style helpers. Hot paths (width, cell buffer, diff, keys, SGR) live in a Rust cdylib (`native/`) loaded via `Deno.dlopen`; `src/binding_contract.ts` is the authoritative FFI symbol contract.                                                                                                                                  |
 | `packages/tui`        | Interactive TUI: `runTui` entrypoint, built-in slash command dispatch (`src/commands.ts`), components (welcome, transcript/thinking, specialized tool renderers, editor, completion, footer, bottom approval/question/command surfaces), theme detection, markdown rendering, multi-session SSE client.                                                                                                         |
@@ -173,8 +173,8 @@ Notes:
   while a Turn is active and defaults to `steer`. `/delivery [steer|queue]`
   updates it through `PUT /config/input-delivery`. The write target is the
   closest existing project `.niuma/config.toml` found by the same upward walk
-  used for reads; if none exists, the user config (or `NIUMA_CONFIG`) is updated.
-  Other TOML content and comments are preserved.
+  used for reads; if none exists, the user config (or `NIUMA_CONFIG`) is
+  updated. Other TOML content and comments are preserved.
 - Prompt admission is coordinated per session by the Server. A response
   disposition is `started`, `steered`, or `queued`; queue entries are FIFO, each
   becomes its own Turn, survive interrupt/failure, and continue automatically.
@@ -258,17 +258,17 @@ Notes:
   key in `config.toml`; credentials live in `auth.json` (managed by
   `niuma auth login|logout|status`).
 - Built-in providers (`packages/config/src/builtin.ts`) make login-and-go work:
-  `niuma auth login kimi` (Kimi device-code OAuth against `auth.kimi.com`, tokens
-  valid against `https://api.kimi.com/coding/v1`; a pasted Kimi API key instead
-  targets the open platform `https://api.moonshot.cn/v1` — the credential kind
-  picks both the endpoint and the default model) and `niuma auth login openai`
-  (ChatGPT) need NO `[provider.*]` table. When neither `--model` nor config
-  `model` is set, the unique logged-in built-in supplies the default model ref.
-  A same-named `[provider.<id>]` table in `config.toml` overlays the built-in
-  (scalar fields and per-model entries, user wins); provider tables otherwise
-  declare custom providers. OAuth credentials are legal for `type="responses"`
-  providers and for the built-in `kimi` provider's `type="openai"` lane; any
-  other pairing is a ConfigError at bootstrap.
+  `niuma auth login kimi` (Kimi device-code OAuth against `auth.kimi.com`,
+  tokens valid against `https://api.kimi.com/coding/v1`; a pasted Kimi API key
+  instead targets the open platform `https://api.moonshot.cn/v1` — the
+  credential kind picks both the endpoint and the default model) and
+  `niuma auth login openai` (ChatGPT) need NO `[provider.*]` table. When neither
+  `--model` nor config `model` is set, the unique logged-in built-in supplies
+  the default model ref. A same-named `[provider.<id>]` table in `config.toml`
+  overlays the built-in (scalar fields and per-model entries, user wins);
+  provider tables otherwise declare custom providers. OAuth credentials are
+  legal for `type="responses"` providers and for the built-in `kimi` provider's
+  `type="openai"` lane; any other pairing is a ConfigError at bootstrap.
 - Deliberately small env surface: `NIUMA_DATA_DIR`, `NIUMA_CONFIG`,
   `NIUMA_WORKSPACE` (main→worker side-channel). There is no `.env` loading —
   don't add one.

@@ -43,7 +43,6 @@ import { join } from "@std/path";
 import type { AuthArgs } from "./args.ts";
 import { readSecretLine, readStdinLine } from "./stdin.ts";
 import {
-  niumaPaths,
   buildAuthorizeUrl,
   BUILTIN_PROVIDERS,
   exchangeCode,
@@ -51,6 +50,7 @@ import {
   getAuth,
   KIMI_PROVIDER_ID,
   makeKimiDeviceHeaders,
+  niumaPaths,
   // OAuth flow functions live in @niuma/config/oauth.ts (the oauth lane) and
   // are imported here per the binding contract — NOT reimplemented in cli.
   // They are pure/injected-fetch on the config side; this module supplies the
@@ -68,7 +68,11 @@ import {
   toOAuthAuth,
   VERSION,
 } from "@niuma/config";
-import type { AuthInfo, DeviceCodeResponse, TokenResponse } from "@niuma/config";
+import type {
+  AuthInfo,
+  DeviceCodeResponse,
+  TokenResponse,
+} from "@niuma/config";
 
 // ===========================================================================
 // runAuth — dispatch

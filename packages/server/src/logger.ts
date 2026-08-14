@@ -15,7 +15,7 @@
 // terminal and the file is the durable record either way.
 
 import { configure, getLogger, type Sink } from "@logtape/logtape";
-import { niumaPaths, loadConfigFile, type LogLevel } from "@niuma/config";
+import { loadConfigFile, type LogLevel, niumaPaths } from "@niuma/config";
 import { join } from "@std/path";
 
 let configured = false;

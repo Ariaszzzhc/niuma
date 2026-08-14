@@ -9,8 +9,8 @@
 
 import type { ClientConfigView, InputDelivery } from "@niuma/schema";
 import {
-  type NiumaConfig,
   DEFAULT_INPUT_DELIVERY,
+  type NiumaConfig,
   writeInputDelivery,
 } from "@niuma/config";
 

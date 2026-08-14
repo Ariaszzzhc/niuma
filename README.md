@@ -1,12 +1,15 @@
-# niuma
+# Niuma Agent
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-niuma is an AI coding agent that runs in your terminal. It can read and edit
-code, run shell commands, search files, and plan and adjust its next step based
-on the feedback it receives. Everything drives a single event-sourced core: each
-session is an append-only JSONL journal on disk, with no database to run or
-migrate.
+Niuma Agent is an AI coding agent that runs in your terminal. It can read and
+edit code, run shell commands, search files, and plan and adjust its next step
+based on the feedback it receives. Everything drives a single event-sourced
+core: each session is an append-only JSONL journal on disk, with no database to
+run or migrate.
+
+_The name: niúmǎ (牛马) is Chinese internet slang for the tireless beast of
+burden that does all the work. This one works for you._
 
 One binary, three interfaces on the same core: a fullscreen interactive TUI, a
 one-shot prompt mode, and an HTTP+SSE server.
@@ -68,8 +71,8 @@ niuma -p "explain the main modules of this repo"
 ```
 
 Configuration lives in `~/.niuma/config.toml`, with per-project overrides in
-`<project>/.niuma/config.toml`. Models are referenced as `provider/model-id`, via
-`--model` or the top-level `model` key in `config.toml`.
+`<project>/.niuma/config.toml`. Models are referenced as `provider/model-id`,
+via `--model` or the top-level `model` key in `config.toml`.
 
 ## Features
 
@@ -82,11 +85,11 @@ Configuration lives in `~/.niuma/config.toml`, with per-project overrides in
   `[provider.*]` tables in `config.toml`.
 - **Resumable sessions.** `/resume` continues a previous session; `/compact`
   folds history when the context fills up.
-- **Agent skills.** Drop a `SKILL.md` into `~/.niuma/skills/` or `.niuma/skills/`
-  and the model loads it on demand; you can also invoke it directly as
-  `/name args`.
-- **Custom slash commands.** Markdown prompt templates in `~/.niuma/commands/` or
-  `.niuma/commands/`, with `$ARGUMENTS` / `$1..$N` placeholders.
+- **Agent skills.** Drop a `SKILL.md` into `~/.niuma/skills/` or
+  `.niuma/skills/` and the model loads it on demand; you can also invoke it
+  directly as `/name args`.
+- **Custom slash commands.** Markdown prompt templates in `~/.niuma/commands/`
+  or `.niuma/commands/`, with `$ARGUMENTS` / `$1..$N` placeholders.
 - **MCP support.** Servers configured in `mcp.json` appear as niuma tools.
 - **HTTP+SSE server.** `niuma serve` exposes the same agent core for custom
   clients and debugging.
@@ -101,3 +104,7 @@ deno task cli     # run the CLI from source
 
 See [AGENTS.md](AGENTS.md) for the architecture overview, package map, and
 repository conventions.
+
+## License
+
+[MIT](LICENSE) © Ariaszzzhc

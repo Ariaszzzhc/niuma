@@ -1,10 +1,13 @@
-# niuma
+# Niuma Agent
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-niuma 是一个运行在终端里的 AI 编码 agent。它能读写代码、执行 shell
+Niuma Agent 是一个运行在终端里的 AI 编码 agent。它能读写代码、执行 shell
 命令、搜索文件，并根据执行反馈自主规划和调整下一步动作。整个系统由同一个事件溯源（event-sourced）内核驱动：每个会话都是磁盘上的一份
 append-only JSONL journal，没有需要运行或迁移的数据库。
+
+_名字由来：牛马（niúmǎ），中文互联网自嘲用语，指任劳任怨替人干活的那位——现在轮到
+AI 了。_
 
 同一个二进制提供三种界面：全屏交互式 TUI、一次性提示模式，以及一个 HTTP+SSE
 服务器。
@@ -92,3 +95,7 @@ deno task cli     # 从源码运行 CLI
 ```
 
 架构概览、包地图和仓库约定见 [AGENTS.md](AGENTS.md)。
+
+## 证书
+
+[MIT](LICENSE) © Ariaszzzhc

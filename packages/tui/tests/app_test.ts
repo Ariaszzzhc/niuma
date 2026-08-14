@@ -222,7 +222,10 @@ Deno.test("app layout: welcome/editor/footer fit target sizes in dark and light 
       const output = program.view(model).lines
         .map((line) => line.spans.map((span) => span.text).join(""))
         .join("\n");
-      assert(output.includes("niuma"), `${cols}x${rows} welcome shows identity`);
+      assert(
+        output.includes("niuma"),
+        `${cols}x${rows} welcome shows identity`,
+      );
     }
   }
 });

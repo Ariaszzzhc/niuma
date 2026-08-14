@@ -5,7 +5,11 @@ import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { Effect, Stream } from "effect";
 import { parseConfig } from "@niuma/config";
-import type { ChatRequest, ProviderAdapter, StreamEvent } from "@niuma/provider";
+import type {
+  ChatRequest,
+  ProviderAdapter,
+  StreamEvent,
+} from "@niuma/provider";
 import { createServerApp } from "../src/app.ts";
 import { bootstrap } from "../src/bootstrap.ts";
 import { dataPaths } from "../src/paths.ts";

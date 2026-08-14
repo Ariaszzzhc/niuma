@@ -1,7 +1,11 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { Effect, Stream } from "effect";
-import type { ChatRequest, ProviderAdapter, StreamEvent } from "@niuma/provider";
+import type {
+  ChatRequest,
+  ProviderAdapter,
+  StreamEvent,
+} from "@niuma/provider";
 import { type NiumaConfig, parseConfig } from "@niuma/config";
 import { createServerApp } from "../mod.ts";
 import { bootstrap } from "../src/bootstrap.ts";

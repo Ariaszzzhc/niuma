@@ -27,8 +27,8 @@
 // (16_384) and RESPONSES_DEFAULT_BASE_URL from config.ts; keep them in sync.
 
 import type {
-  NiumaConfig,
   ModelConfig,
+  NiumaConfig,
   ProviderConfig,
   ProviderType,
 } from "./config.ts";

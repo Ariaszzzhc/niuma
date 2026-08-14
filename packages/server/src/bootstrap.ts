@@ -21,8 +21,6 @@ import {
 } from "@niuma/provider";
 import {
   ANTHROPIC_DEFAULT_BASE_URL,
-  type NiumaConfig,
-  niumaPaths,
   builtinBaseUrlFor,
   ConfigError,
   defaultModelRef,
@@ -31,6 +29,8 @@ import {
   loadMergedMcpConfig,
   loadSkills,
   type McpConfig,
+  type NiumaConfig,
+  niumaPaths,
   readAuthFile,
   refreshKimiTokens,
   refreshTokens,
@@ -705,7 +705,8 @@ const buildProvider = async (
 export const makeProviderFromConfig = (
   config: NiumaConfig,
   ref?: string,
-): Promise<ProviderAdapter> => buildProvider(config, niumaPaths().authFile, ref);
+): Promise<ProviderAdapter> =>
+  buildProvider(config, niumaPaths().authFile, ref);
 
 export { buildProvider };
 
