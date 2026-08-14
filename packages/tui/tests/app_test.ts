@@ -98,6 +98,7 @@ const fakeClient: TuiClient = {
     Promise.reject(new Error("fake client: resume not implemented")),
   setModel: () => Promise.resolve({ ok: true }),
   setEffort: () => Promise.resolve({ ok: true }),
+  renameTitle: () => Promise.resolve({ ok: true }),
   setInputDelivery: (inputDelivery) =>
     Promise.resolve({ ok: true, inputDelivery }),
   compact: () => Promise.resolve({ ok: true }),
@@ -927,7 +928,7 @@ Deno.test("completion menu: arrows/ctrl+n/ctrl+p move the selection (and ctrl+p 
   let model = program.init()[0];
 
   model = typeText(update, model, "/");
-  // 10 candidates (9 builtins + /quit), sorted; selection starts at 0.
+  // 12 candidates (10 builtins + /quit + /new), sorted; selection starts at 0.
   model = update(model, keyMsg(key("down")))[0];
   assertEquals(model.completion.selected, 1);
   model = update(model, textMsg("n", { ctrl: true }))[0];
@@ -939,7 +940,7 @@ Deno.test("completion menu: arrows/ctrl+n/ctrl+p move the selection (and ctrl+p 
   assertEquals(model.palette.open, false, "palette stayed closed");
   // wraps around both ends
   model = update(model, keyMsg(key("up")))[0];
-  assertEquals(model.completion.selected, 9, "up from 0 wraps to the last");
+  assertEquals(model.completion.selected, 11, "up from 0 wraps to the last");
 });
 
 Deno.test("completion menu: esc dismisses; arrows fall back to editor history", async () => {

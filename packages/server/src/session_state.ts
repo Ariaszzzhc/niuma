@@ -81,6 +81,9 @@ export const foldSessionState = (
       case "session.effort.changed":
         effort = event.data.effort;
         break;
+      case "session.title.changed":
+        title = event.data.title;
+        break;
       case "user.message":
         title ??= firstUserText(event);
         break;

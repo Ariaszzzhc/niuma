@@ -163,6 +163,23 @@ const SetEffortRes_ = Schema.Struct({
 export type SetEffortRes = Schema.Schema.Type<typeof SetEffortRes_>;
 export const SetEffortRes: Schema.Codec<SetEffortRes> = SetEffortRes_;
 
+// Custom session title (/rename). Length is validated BEFORE trim (the
+// manager trims); trim must leave a non-empty title of at most 80 chars.
+// deno-lint-ignore no-slow-types
+const SetTitleReq_ = Schema.Struct({
+  title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(80)),
+});
+export type SetTitleReq = Schema.Schema.Type<typeof SetTitleReq_>;
+export const SetTitleReq: Schema.Codec<SetTitleReq> = SetTitleReq_;
+
+// deno-lint-ignore no-slow-types
+const SetTitleRes_ = Schema.Struct({
+  ok: Schema.Literal(true),
+  title: Schema.String,
+});
+export type SetTitleRes = Schema.Schema.Type<typeof SetTitleRes_>;
+export const SetTitleRes: Schema.Codec<SetTitleRes> = SetTitleRes_;
+
 // ---- Session State read model (folded from one Session Journal) ----
 
 // deno-lint-ignore no-slow-types
@@ -185,8 +202,8 @@ const SessionInfo_ = Schema.Struct({
   updatedAt: Schema.Number,
   status: SessionStatus,
   lastStopReason: Schema.optional(StopReason),
-  // First non-empty user message text (truncated); serves as the display title.
-  // Derived from the first user.message event.
+  // First non-empty user message text (truncated), or the custom title once a
+  // session.title.changed event lands — the custom title always wins.
   title: Schema.optional(Schema.String),
 });
 export type SessionInfo = Schema.Schema.Type<typeof SessionInfo_>;

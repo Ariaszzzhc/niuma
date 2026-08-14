@@ -10,12 +10,14 @@ import {
   SetEffortReq,
   SetInputDeliveryReq,
   SetModelReq,
+  SetTitleReq,
 } from "@niuma/schema";
 import { loadCommands } from "@niuma/config";
 import { Effect, Exit, type ManagedRuntime, Result, Stream } from "effect";
 import { Kernel } from "../kernel.ts";
 import {
   getSessionEnv,
+  type RenameResult,
   SessionManager,
   type SetEffortResult,
   type SetModelResult,
@@ -76,6 +78,7 @@ export interface Handlers {
   ) => Promise<{ ok: true; config: ClientConfigView }>;
   readonly setModel: (id: string, raw: unknown) => Promise<SetModelResult>;
   readonly setEffort: (id: string, raw: unknown) => Promise<SetEffortResult>;
+  readonly rename: (id: string, raw: unknown) => Promise<RenameResult>;
   readonly compact: (id: string) => Promise<{ accepted: true }>;
   readonly approval: (
     sessionId: string,
@@ -313,6 +316,30 @@ export const makeHandlers = (
         return yield* sm.setEffort(id, req.effort);
       }),
       "set_effort_failed",
+    );
+  },
+
+  rename: async (id, raw) => {
+    // Title violations are client errors: map schema decode failures AND the
+    // trim-to-empty case to 400 (a bare decode ParseError would land on the
+    // onError 500 branch otherwise).
+    let req: SetTitleReq;
+    try {
+      req = decode(SetTitleReq)(raw);
+    } catch (e) {
+      throw httpError("bad_request", `invalid title: ${String(e)}`);
+    }
+    if (req.title.trim() === "") {
+      throw httpError("bad_request", "title must not be empty");
+    }
+    await requireSession(runtime, id);
+    return await runEffect(
+      runtime,
+      Effect.gen(function* () {
+        const sm = yield* SessionManager;
+        return yield* sm.rename(id, req.title);
+      }),
+      "rename_failed",
     );
   },
 

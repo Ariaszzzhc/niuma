@@ -57,6 +57,7 @@ import {
   SetEffortRes as SetEffortResponse,
   SetInputDeliveryRes as SetInputDeliveryResponse,
   SetModelRes as SetModelResponse,
+  SetTitleRes as SetTitleResponse,
 } from "@niuma/schema";
 
 export { parseSseStream, type SseFrame } from "@niuma/schema";
@@ -124,6 +125,14 @@ export interface SetModelResult {
 export interface SetEffortResult {
   readonly ok: boolean;
   readonly effort?: string;
+  readonly code?: string;
+  readonly error?: string;
+}
+
+/** Parsed outcome of POST /sessions/:id/title (same contract as SetEffortResult). */
+export interface SetTitleResult {
+  readonly ok: boolean;
+  readonly title?: string;
   readonly code?: string;
   readonly error?: string;
 }
@@ -204,6 +213,9 @@ export interface TuiClient {
   /** Set the current session's thinking effort (provider-defined string,
    * passed through verbatim). */
   readonly setEffort: (effort: string) => Promise<SetEffortResult>;
+  /** Set the current session's custom title (/rename). The server trims;
+   * the returned title is authoritative. */
+  readonly renameTitle: (title: string) => Promise<SetTitleResult>;
   /** Request an explicit Server config update. The returned value is the
    * authoritative mode after persistence succeeds. */
   readonly setInputDelivery: (
@@ -628,6 +640,35 @@ export const createTuiClient = async (
     }
   };
 
+  const renameTitle = async (title: string): Promise<SetTitleResult> => {
+    try {
+      const res = await fetchImpl(
+        `${BASE}/sessions/${enc(state.sessionId)}/title`,
+        {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify({ title }),
+        },
+      );
+      const text = await safeText(res);
+      if (!res.ok) {
+        const { code, message } = errorFields(text);
+        return {
+          ok: false,
+          ...(code !== undefined ? { code } : {}),
+          error: message ?? (text || `rename failed (${res.status})`),
+        };
+      }
+      const body = decode(SetTitleResponse)(tryParseJson(text));
+      return { ok: true, title: body.title };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  };
+
   const setInputDelivery = async (
     inputDelivery: InputDelivery,
   ): Promise<SetInputDeliveryResult> => {
@@ -737,6 +778,7 @@ export const createTuiClient = async (
     resume,
     setModel,
     setEffort,
+    renameTitle,
     setInputDelivery,
     compact,
     subagentHistory,

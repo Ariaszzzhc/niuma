@@ -205,6 +205,13 @@ type CommandOutcome =
     readonly error?: string;
   }
   | {
+    readonly kind: "rename";
+    readonly ok: boolean;
+    readonly ref: string;
+    readonly title?: string;
+    readonly error?: string;
+  }
+  | {
     readonly kind: "compact";
     readonly ok: boolean;
     readonly code?: string;
@@ -1403,6 +1410,21 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
           }),
         ];
       }
+      case "rename": {
+        if (parsed.args === "") {
+          return [
+            withNotice(model, `title: ${model.state.title ?? "(auto)"}`),
+          ];
+        }
+        const ref = parsed.args;
+        return [
+          model,
+          cmd(async () => {
+            const r = await client.renameTitle(ref);
+            return commandMsg({ kind: "rename", ref, ...r });
+          }),
+        ];
+      }
       case "delivery": {
         if (parsed.args === "") {
           return [withNotice(model, `delivery: ${client.inputDelivery}`)];
@@ -1555,6 +1577,18 @@ export const buildProgram = (deps: AppDeps): Program<AppModel, Msg> => {
         const effort = o.effort ?? o.ref;
         return [
           withNotice({ ...model, effort }, `effort: ${effort}`),
+        ];
+      }
+      case "rename": {
+        if (!o.ok) {
+          return [withNotice(model, o.error ?? "rename failed", "error")];
+        }
+        const title = o.title ?? o.ref;
+        return [
+          withNotice({
+            ...model,
+            state: { ...model.state, title },
+          }, `title: ${title}`),
         ];
       }
       case "delivery": {

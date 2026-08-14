@@ -113,3 +113,62 @@ Deno.test("SessionState requires session.created first", () => {
     InvalidSessionJournalError,
   );
 });
+
+Deno.test("SessionState: custom title overrides the auto title, last write wins", () => {
+  const events: RecordedEvent[] = [
+    {
+      ...base,
+      seq: 1,
+      type: "session.created",
+      data: { workspace: "/tmp/work", model: "m", mcpServers: [] },
+    },
+    {
+      ...base,
+      seq: 2,
+      ts: 2,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "first prompt" }] },
+    },
+    {
+      ...base,
+      seq: 3,
+      ts: 3,
+      type: "session.title.changed",
+      data: { title: "custom one" },
+    },
+    {
+      ...base,
+      seq: 4,
+      ts: 4,
+      type: "session.title.changed",
+      data: { title: "custom two" },
+    },
+  ];
+  assertEquals(foldSessionState(events).info.title, "custom two");
+});
+
+Deno.test("SessionState: auto title never overwrites a custom title", () => {
+  const events: RecordedEvent[] = [
+    {
+      ...base,
+      seq: 1,
+      type: "session.created",
+      data: { workspace: "/tmp/work", model: "m", mcpServers: [] },
+    },
+    {
+      ...base,
+      seq: 2,
+      ts: 2,
+      type: "session.title.changed",
+      data: { title: "named early" },
+    },
+    {
+      ...base,
+      seq: 3,
+      ts: 3,
+      type: "user.message",
+      data: { parts: [{ type: "text", text: "first prompt" }] },
+    },
+  ];
+  assertEquals(foldSessionState(events).info.title, "named early");
+});

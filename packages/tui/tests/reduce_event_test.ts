@@ -54,6 +54,38 @@ describe("reduce_event: session + user", () => {
     assertStrictEquals(m.messages.length, 1);
     assertStrictEquals(m.messages[0].text, "/review src/foo.ts");
   });
+
+  it("user.message derives an auto title (trimmed, truncated to 120)", () => {
+    const m = reduceEventSequence([
+      ev("user.message", {
+        parts: [{ type: "text", text: `  ${"x".repeat(150)}  ` }],
+      }),
+    ]);
+    assertStrictEquals(m.title, "x".repeat(120));
+  });
+
+  it("user.message with blank text sets no title", () => {
+    const m = reduceEventSequence([
+      ev("user.message", { parts: [{ type: "text", text: "   " }] }),
+    ]);
+    assertStrictEquals(m.title, undefined);
+  });
+
+  it("session.title.changed overrides the auto title", () => {
+    const m = reduceEventSequence([
+      ev("user.message", { parts: [{ type: "text", text: "auto" }] }),
+      ev("session.title.changed", { title: "custom" }),
+    ]);
+    assertStrictEquals(m.title, "custom");
+  });
+
+  it("session.title.changed before the first user.message is not overwritten", () => {
+    const m = reduceEventSequence([
+      ev("session.title.changed", { title: "custom" }),
+      ev("user.message", { parts: [{ type: "text", text: "auto" }] }),
+    ]);
+    assertStrictEquals(m.title, "custom");
+  });
 });
 
 describe("reduce_event: streaming text accumulation", () => {

@@ -18,7 +18,7 @@ import {
   slashCommandCandidates,
 } from "../src/commands.ts";
 
-Deno.test("registry covers the nine built-ins", () => {
+Deno.test("registry covers the ten built-ins", () => {
   assertEquals(
     BUILTIN_COMMANDS.map((c) => c.name),
     [
@@ -26,6 +26,7 @@ Deno.test("registry covers the nine built-ins", () => {
       "exit",
       "model",
       "effort",
+      "rename",
       "delivery",
       "compact",
       "clear",
@@ -51,6 +52,19 @@ Deno.test("parseBuiltinCommand parses name and argument text", () => {
 Deno.test("parseBuiltinCommand resolves the /quit alias to exit", () => {
   assertEquals(parseBuiltinCommand("/quit"), { name: "exit", args: "" });
   assertEquals(parseBuiltinCommand("/exit"), { name: "exit", args: "" });
+});
+
+Deno.test("parseBuiltinCommand resolves the /new alias to clear", () => {
+  assertEquals(parseBuiltinCommand("/new"), { name: "clear", args: "" });
+  assertEquals(parseBuiltinCommand("/clear"), { name: "clear", args: "" });
+});
+
+Deno.test("parseBuiltinCommand parses /rename with and without args", () => {
+  assertEquals(parseBuiltinCommand("/rename foo bar"), {
+    name: "rename",
+    args: "foo bar",
+  });
+  assertEquals(parseBuiltinCommand("/rename"), { name: "rename", args: "" });
 });
 
 Deno.test("parseBuiltinCommand returns null for non-builtins and plain text", () => {
@@ -103,8 +117,8 @@ Deno.test("formatSessionList renders id/status/model/title rows", () => {
 
 Deno.test("slashCommandCandidates: prefix filter, sorted, with descriptions", () => {
   const all = slashCommandCandidates("", []);
-  // 9 built-ins + the /quit alias
-  assertEquals(all.length, 10);
+  // 10 built-ins + the /quit and /new aliases
+  assertEquals(all.length, 12);
   assertEquals(all[0].name, "clear");
   assertEquals(
     all.every((c) => c.description !== undefined && c.builtin),

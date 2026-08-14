@@ -90,6 +90,25 @@ export type SessionEffortChangedEvent = Schema.Schema.Type<
 >;
 
 // deno-lint-ignore no-slow-types
+const SessionTitleChangedData_ = Schema.Struct({
+  title: Schema.String,
+});
+export type SessionTitleChangedData = Schema.Schema.Type<
+  typeof SessionTitleChangedData_
+>;
+export const SessionTitleChangedData: Schema.Codec<SessionTitleChangedData> =
+  SessionTitleChangedData_;
+
+export const SessionTitleChangedEvent = Schema.Struct({
+  ...recordedBase,
+  type: Schema.Literal("session.title.changed"),
+  data: SessionTitleChangedData,
+});
+export type SessionTitleChangedEvent = Schema.Schema.Type<
+  typeof SessionTitleChangedEvent
+>;
+
+// deno-lint-ignore no-slow-types
 const UserMessageData_ = Schema.Struct({
   parts: Schema.Array(Part),
   // The text the user actually typed, when it differs from the message
@@ -463,6 +482,7 @@ const RecordedEvent_ = Schema.Union([
   SessionCreatedEvent,
   SessionModelChangedEvent,
   SessionEffortChangedEvent,
+  SessionTitleChangedEvent,
   UserMessageEvent,
   AssistantMessageEvent,
   ToolCallRequestedEvent,
@@ -489,6 +509,7 @@ const RecordedEventType_ = Schema.Literals([
   "session.created",
   "session.model.changed",
   "session.effort.changed",
+  "session.title.changed",
   "user.message",
   "assistant.message",
   "tool.call.requested",

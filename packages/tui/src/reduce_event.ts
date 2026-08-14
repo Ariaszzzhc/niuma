@@ -114,6 +114,10 @@ export interface TuiModelState {
   readonly compactionCount: number;
   /** Monotonic assistant.message count used to tag following tool batches. */
   readonly toolBatch: number;
+  /** Display title: auto-derived from the first user message, overridden by
+   * session.title.changed. Lives in the replayable state so /resume restores
+   * it by folding history. */
+  readonly title?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +149,7 @@ export const initialModelState = (): TuiModelState => ({
   lastError: null,
   compactionCount: 0,
   toolBatch: 0,
+  title: undefined,
 });
 
 // ---------------------------------------------------------------------------
@@ -335,6 +340,9 @@ export const reduceEvent = (
     case "session.effort.changed":
       return model;
 
+    case "session.title.changed":
+      return { ...model, title: asString(d["title"]) ?? model.title };
+
     case "turn.started":
       return { ...model, turnActive: true };
 
@@ -343,8 +351,12 @@ export const reduceEvent = (
       // A slash-command-expanded message carries the typed input in
       // sourceText — show that, not the expanded template blob.
       const text = asString(d["sourceText"]) ?? joinTextParts(d["parts"]);
+      // Auto title mirrors the server's firstUserText (trim + 120 truncation)
+      // and only fills a still-empty title — a custom title always wins.
+      const t = text.trim();
       return {
         ...model,
+        ...(t !== "" ? { title: model.title ?? t.slice(0, 120) } : {}),
         messages: [
           ...model.messages,
           { id: nextId("u"), role: "user", text },

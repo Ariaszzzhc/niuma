@@ -57,6 +57,12 @@ export interface SessionManager {
     id: string,
     effort: string,
   ) => Effect.Effect<SetEffortResult, Error, never>;
+  /** Set the session's custom title (/rename). Last write wins; the title is
+   * display-only, so no provider runtime is touched. */
+  readonly rename: (
+    id: string,
+    title: string,
+  ) => Effect.Effect<RenameResult, Error, never>;
   readonly prompt: (
     id: string,
     input: SubmittedInput,
@@ -103,6 +109,11 @@ export interface SetModelResult {
 export interface SetEffortResult {
   readonly ok: true;
   readonly effort: string;
+}
+
+export interface RenameResult {
+  readonly ok: true;
+  readonly title: string;
 }
 
 export interface SubmittedInput {
@@ -541,6 +552,27 @@ export const makeSessionManager = (
           });
           yield* Ref.update(runtimes, (map) => new Map(map).set(id, runtime));
           return { ok: true as const, effort };
+        }),
+      );
+
+    const rename: SessionManager["rename"] = (id, title) =>
+      withSessionLock(
+        id,
+        Effect.gen(function* () {
+          const state = yield* kernel.state(id);
+          if (!state) {
+            return yield* Effect.fail(new Error(`session ${id} not found`));
+          }
+          const trimmed = title.trim();
+          if (trimmed === "") {
+            return yield* Effect.fail(new Error("title must not be empty"));
+          }
+          yield* kernel.append({
+            type: "session.title.changed",
+            sessionId: id,
+            data: { title: trimmed },
+          });
+          return { ok: true as const, title: trimmed };
         }),
       );
 
@@ -996,6 +1028,7 @@ export const makeSessionManager = (
       resume,
       setModel,
       setEffort,
+      rename,
       prompt,
       compact,
       interrupt,

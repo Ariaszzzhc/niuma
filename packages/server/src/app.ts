@@ -14,6 +14,7 @@ import {
   SetEffortRes,
   SetInputDeliveryRes,
   SetModelRes,
+  SetTitleRes,
 } from "@niuma/schema";
 import { Kernel } from "./kernel.ts";
 import { SessionManager } from "./session.ts";
@@ -196,6 +197,13 @@ export const createServerApp = async (
     const raw = await safeJson(c);
     const out = await handlers.setEffort(id, raw);
     return c.json(decode(SetEffortRes)(out));
+  });
+
+  app.post("/sessions/:id/title", async (c) => {
+    const id = ensureSessionId(c.req.param("id"));
+    const raw = await safeJson(c);
+    const out = await handlers.rename(id, raw);
+    return c.json(decode(SetTitleRes)(out));
   });
 
   app.post("/sessions/:id/compact", async (c) => {
