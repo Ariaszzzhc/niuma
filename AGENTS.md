@@ -108,7 +108,10 @@ Notes:
   match `deno.json`, re-runs the gates, builds one binary per target on its
   native runner (linux-amd64, darwin-aarch64, windows-amd64 — asset names use
   the standard amd64/aarch64 spellings), smoke-runs each binary, and publishes a
-  GitHub Release with the archives plus SHA256SUMS.
+  GitHub Release with the archives plus SHA256SUMS. `scripts/install.sh`
+  (curl|sh) / `scripts/install.ps1` (irm|iex) are the end-user installers: they
+  download the matching release archive, verify it against SHA256SUMS, and
+  install into `$NIUMA_INSTALL/bin` (default `~/.niuma/bin`).
 
 ## Testing instructions
 
