@@ -97,9 +97,16 @@ Notes:
   compile time. `--target <triple>` cross-compiles the JS side, but the cdylib
   must match the TARGET platform and already sit in
   `packages/tuikit/native/target/release/`. `dist/` is gitignored.
-- There is no CI configuration in the repo at present. The gates are
-  `deno fmt --check`, `deno lint`, `deno task check`, `deno task test`, the
-  three Rust commands above, the network-free smoke test, and `deno task build`.
+- CI (`.github/workflows/ci.yml`) runs on pushes to main and PRs: the Deno gates
+  (`deno fmt --check`, `deno lint`, `deno task check`, `deno task test`, the
+  network-free smoke test) plus the three Rust commands above.
+- Releases (`.github/workflows/release.yml`) are tag-driven: bump the root
+  `deno.json` `version` (the single VERSION source, embedded at compile time),
+  commit, then push a matching `v*` tag. The workflow refuses a tag that doesn't
+  match `deno.json`, re-runs the gates, builds one binary per target on its
+  native runner (linux-amd64, darwin-aarch64, windows-amd64 — asset names use
+  the standard amd64/aarch64 spellings), smoke-runs each binary, and publishes a
+  GitHub Release with the archives plus SHA256SUMS.
 
 ## Testing instructions
 
